@@ -1,43 +1,113 @@
 import { Link } from 'react-router-dom'
-import AuthLayout from '../../components/authlayout'
+import { ArrowRight, Coffee, Clock, Sparkles } from 'lucide-react'
+import Background from '../../components/background'
 
 export default function Home() {
   return (
-    <AuthLayout>
-      <section className="grid min-h-[380px] items-center gap-10 md:grid-cols-2">
-        {/* Coffee image */}
-        <div className="flex items-center justify-center">
-          <img
-            src="/cafe-coffee.png"
-            alt="Coffee and cinnamon"
-            className="w-full max-w-md object-contain drop-shadow-xl"
-          />
+    <Background>
+      <main className="flex min-h-screen items-center justify-center px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mx-auto w-full max-w-6xl">
+          <section className="relative grid min-h-[560px] items-center gap-8 overflow-hidden py-8 md:grid-cols-2 md:gap-10 md:py-12">
+
+            {/* Decorative background elements */}
+            <div className="pointer-events-none absolute -left-20 top-10 h-64 w-64 rounded-full bg-[#EAD5C0]/30 blur-3xl" />
+            <div className="pointer-events-none absolute -bottom-20 right-0 h-72 w-72 rounded-full bg-[#D7B18D]/20 blur-3xl" />
+
+            {/* LEFT: Coffee image */}
+            <div className="relative z-10 flex items-center justify-center">
+              <div className="absolute h-72 w-72 rounded-full bg-[#E8D2BC]/40 blur-2xl sm:h-96 sm:w-96" />
+
+              <img
+                src="/cafe-coffee.png"
+                alt="Freshly brewed coffee with cinnamon"
+                className="relative w-full max-w-md object-contain drop-shadow-2xl transition duration-700 hover:scale-105 sm:max-w-lg"
+              />
+
+              {/* Floating coffee badge */}
+              <div className="absolute bottom-4 left-2 flex items-center gap-3 rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-xl backdrop-blur-md sm:bottom-8 sm:left-4">
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F1E3D5] text-[#70452D]">
+                  <Coffee size={23} />
+                </div>
+
+                <div>
+                  <p className="text-sm font-bold text-[#38251A]">
+                    Your Coffee Break
+                  </p>
+                  <p className="text-xs text-[#907967]">
+                    Just a few clicks away
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* RIGHT: Welcome content */}
+            <div className="relative z-10 mx-auto w-full max-w-lg px-2 md:px-0">
+
+              {/* Small label */}
+              <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#E9D7C6] bg-white/80 px-4 py-2 text-sm font-medium text-[#80563C] shadow-sm">
+                <Sparkles size={16} />
+                Your workplace café experience
+              </div>
+
+              {/* Heading */}
+              <h1 className="text-4xl font-bold leading-tight tracking-tight text-[#342219] sm:text-5xl lg:text-6xl">
+                Welcome to
+                <span className="mt-2 block text-[#8B5738]">
+                  Cafe4X<span className="text-[#C99A6B]">.</span>
+                </span>
+              </h1>
+
+              {/* Description */}
+              <p className="mt-6 max-w-md text-base leading-8 text-[#8A7667] sm:text-lg">
+                Great coffee, delicious refreshments, and effortless ordering.
+                Make every workplace break a little more enjoyable with Cafe4X.
+              </p>
+
+              {/* Feature highlights */}
+              <div className="mt-7 flex flex-wrap gap-3">
+                <div className="flex items-center gap-2 rounded-xl border border-[#E9DACE] bg-white/80 px-3 py-2.5 text-sm text-[#70523E]">
+                  <Coffee size={17} className="text-[#956341]" />
+                  Fresh refreshments
+                </div>
+
+                <div className="flex items-center gap-2 rounded-xl border border-[#E9DACE] bg-white/80 px-3 py-2.5 text-sm text-[#70523E]">
+                  <Clock size={17} className="text-[#956341]" />
+                  Easy ordering
+                </div>
+              </div>
+
+              {/* Action buttons */}
+              <div className="mt-9 flex flex-col gap-3 sm:flex-row">
+
+                <Link
+                  to="/login"
+                  className="group inline-flex min-h-12 items-center justify-center gap-3 rounded-xl bg-gradient-to-r from-[#6F4228] to-[#A66C43] px-8 py-3.5 text-center font-semibold text-white shadow-lg shadow-[#70452D]/20 transition duration-300 hover:-translate-y-1 hover:shadow-xl"
+                >
+                  Login to Cafe4X
+                  <ArrowRight
+                    size={19}
+                    className="transition-transform duration-300 group-hover:translate-x-1"
+                  />
+                </Link>
+
+                <Link
+                  to="/signup"
+                  className="inline-flex min-h-12 items-center justify-center rounded-xl border border-[#CDB49F] bg-white/80 px-8 py-3.5 text-center font-semibold text-[#6F4228] transition duration-300 hover:-translate-y-1 hover:border-[#6F4228] hover:bg-[#F5EBE1]"
+                >
+                  Create Account
+                </Link>
+
+              </div>
+
+              {/* Footer note */}
+              <div className="mt-8 flex items-center gap-3 text-sm text-[#9B8879]">
+                <span className="h-px w-10 bg-[#D6BCA5]" />
+                A better break starts here.
+              </div>
+            </div>
+          </section>
         </div>
-
-        {/* Welcome content */}
-        <div className="mx-auto w-full max-w-md">
-          <p className="mb-6 text-lg leading-relaxed text-[#9b765e]">
-            Let's make your ordering as breeze so your guests will enjoy and
-            remember your hospitality.
-          </p>
-
-          <div className="flex flex-wrap gap-4">
-            <Link
-              to="/login"
-              className="min-w-28 rounded-full border border-[#704b35] px-8 py-2 text-center text-[#593a28] transition hover:bg-[#593a28] hover:text-white"
-            >
-              Login
-            </Link>
-
-            <Link
-              to="/signup"
-              className="min-w-28 rounded-full border border-[#704b35] px-8 py-2 text-center text-[#593a28] transition hover:bg-[#593a28] hover:text-white"
-            >
-              Sign up
-            </Link>
-          </div>
-        </div>
-      </section>
-    </AuthLayout>
+      </main>
+    </Background>
   )
 }

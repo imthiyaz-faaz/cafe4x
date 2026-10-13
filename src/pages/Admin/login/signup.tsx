@@ -16,7 +16,7 @@ import {
   Sparkles,
   ShieldCheck,
 } from 'lucide-react'
-import Background from '../../components/background'
+import Background from '../../../components/background'
 
 interface SignupData {
   username: string
@@ -137,10 +137,10 @@ export default function Signup() {
                     <div className="relative z-10 mx-auto flex h-10 w-10 items-center justify-center rounded-full">
                       <div
                         className={`flex h-10 w-10 items-center justify-center rounded-full border-2 transition ${active
-                            ? 'border-[#75472D] bg-[#75472D] text-white shadow-lg shadow-[#75472D]/20'
-                            : completed
-                              ? 'border-[#75472D] bg-[#75472D] text-white'
-                              : 'border-[#E8DED4] bg-white text-[#A09287]'
+                          ? 'border-[#75472D] bg-[#75472D] text-white shadow-lg shadow-[#75472D]/20'
+                          : completed
+                            ? 'border-[#75472D] bg-[#75472D] text-white'
+                            : 'border-[#E8DED4] bg-white text-[#A09287]'
                           }`}
                       >
                         {completed ? (
@@ -155,8 +155,8 @@ export default function Signup() {
 
                     <p
                       className={`mt-3 text-xs font-semibold sm:text-sm ${active || completed
-                          ? 'text-[#593A28]'
-                          : 'text-[#A09287]'
+                        ? 'text-[#593A28]'
+                        : 'text-[#A09287]'
                         }`}
                     >
                       {item.label}

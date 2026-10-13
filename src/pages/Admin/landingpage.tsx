@@ -1,11 +1,13 @@
 import { Sparkles, ArrowRight, Utensils, Clock, ShieldCheck, HeartHandshake } from "lucide-react";
-import Background from "../components/background";
-import Sidebar from "../components/sidebar/sidebar";
+import Background from "../../components/background";
+import Navbar from "../../components/navbar/navbar";
 
 export default function LandingPage() {
   return (
     <Background>
-      <Sidebar>
+      <div className="flex min-h-screen flex-col pt-20">
+        <Navbar />
+
         {/* Main Content Area */}
         <main className="flex-1 px-4 py-8 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-6xl">
@@ -104,7 +106,7 @@ export default function LandingPage() {
             <span>Good Food. Better Days. © {new Date().getFullYear()} Cafe4X. All rights reserved.</span>
           </div>
         </footer>
-      </Sidebar>
+      </div>
     </Background>
   );
 }

@@ -14,9 +14,13 @@ import {
   Shield,
   CloudUpload,
   FileSpreadsheet,
+  Edit,
+  Trash2,
 } from "lucide-react";
-import Background from "../components/background";
-import Sidebar from "../components/sidebar/sidebar";
+import Background from "../../components/background";
+import Navbar from "../../components/navbar/navbar";
+import UserCreate from "../../components/users/usercreate";
+import UsersEdit from "../../components/users/usersedit";
 
 export interface UserItem {
   id: string;
@@ -34,6 +38,7 @@ const initialUsers: UserItem[] = [
     name: "AdminUser",
     email: "Admin@gmail.com",
     userName: "AdminUser",
+    password: "password123",
     mobileNumber: "987654321",
     userType: "Admin",
   },
@@ -42,13 +47,40 @@ const initialUsers: UserItem[] = [
     name: "FTS Admin",
     email: "admin@faaztechsolutions.com",
     userName: "Adminuser",
+    password: "password123",
     mobileNumber: "9876543211",
     userType: "Admin",
+  },
+  {
+    id: "3",
+    name: "Cafe Provider",
+    email: "provider@cafe4x.com",
+    userName: "provider",
+    password: "provider123",
+    mobileNumber: "9876543212",
+    userType: "Provider",
   },
 ];
 
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserItem[]>(initialUsers);
+  const [users, setUsers] = useState<UserItem[]>(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_users");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return initialUsers;
+  });
+
+  const saveUsers = (newUsers: UserItem[]) => {
+    setUsers(newUsers);
+    try {
+      localStorage.setItem("cafe4x_users", JSON.stringify(newUsers));
+    } catch {}
+  };
+
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(12);
   const [currentPage, setCurrentPage] = useState(1);
@@ -57,18 +89,8 @@ export default function UsersPage() {
   // --- Modal States ---
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
-
-  // Create User Form fields
-  const [createForm, setCreateForm] = useState({
-    name: "",
-    userName: "",
-    password: "",
-    confirmPassword: "",
-    userType: "Admin",
-    email: "",
-    mobileNumber: "",
-  });
-  const [createError, setCreateError] = useState("");
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserItem | null>(null);
 
   // Bulk Upload state
   const [selectedBulkFile, setSelectedBulkFile] = useState<File | null>(null);
@@ -144,57 +166,32 @@ export default function UsersPage() {
     document.body.removeChild(link);
   };
 
-  // Create User Submit
-  const handleCreateSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreateError("");
+  // User Created Callback
+  const handleUserCreated = (newUser: UserItem) => {
+    const updated = [newUser, ...users];
+    saveUsers(updated);
+  };
 
-    if (!createForm.name.trim()) {
-      setCreateError("Name is required");
-      return;
-    }
-    if (!createForm.userName.trim()) {
-      setCreateError("User Name is required");
-      return;
-    }
-    if (!createForm.password) {
-      setCreateError("Password is required");
-      return;
-    }
-    if (createForm.password !== createForm.confirmPassword) {
-      setCreateError("Passwords do not match");
-      return;
-    }
-    if (!createForm.email.trim()) {
-      setCreateError("Email is required");
-      return;
-    }
-    if (!createForm.mobileNumber.trim()) {
-      setCreateError("Mobile Number is required");
-      return;
-    }
+  // Open Edit User Modal
+  const openEditModal = (user: UserItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingUser(user);
+    setIsEditOpen(true);
+  };
 
-    const newUser: UserItem = {
-      id: Date.now().toString(),
-      name: createForm.name.trim(),
-      userName: createForm.userName.trim(),
-      password: createForm.password,
-      userType: createForm.userType || "Admin",
-      email: createForm.email.trim(),
-      mobileNumber: createForm.mobileNumber.trim(),
-    };
+  // User Updated Callback
+  const handleUserUpdated = (updatedUser: UserItem) => {
+    const updated = users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+    saveUsers(updated);
+  };
 
-    setUsers((prev) => [newUser, ...prev]);
-    setIsCreateOpen(false);
-    setCreateForm({
-      name: "",
-      userName: "",
-      password: "",
-      confirmPassword: "",
-      userType: "Admin",
-      email: "",
-      mobileNumber: "",
-    });
+  // Handle Delete User
+  const handleDeleteUser = (id: string, name: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (confirm(`Are you sure you want to delete user "${name}"?`)) {
+      const updated = users.filter((u) => u.id !== id);
+      saveUsers(updated);
+    }
   };
 
   // Bulk Upload File Handler
@@ -253,9 +250,12 @@ export default function UsersPage() {
 
   return (
     <Background>
-      <Sidebar>
+      <div className="flex min-h-screen flex-col pt-20">
+        {/* Navigation Bar */}
+        <Navbar />
+
         {/* Main Content */}
-        <main className="px-4 py-6 sm:px-6 lg:px-8">
+        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
             {/* Top Toolbar Header */}
             <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-[#EEE5DC] bg-white/90 p-4 shadow-md shadow-[#70452D]/5 backdrop-blur-md sm:p-5 lg:flex-row lg:items-center lg:justify-between">
@@ -300,10 +300,7 @@ export default function UsersPage() {
                 {/* Create Button */}
                 <button
                   type="button"
-                  onClick={() => {
-                    setCreateError("");
-                    setIsCreateOpen(true);
-                  }}
+                  onClick={() => setIsCreateOpen(true)}
                   className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#754329] to-[#9A6747] px-4 py-2.5 text-xs font-semibold text-white shadow-md shadow-[#754329]/15 transition duration-200 hover:-translate-y-0.5 hover:shadow-lg sm:text-sm"
                 >
                   <Plus size={16} />
@@ -395,8 +392,28 @@ export default function UsersPage() {
                       {user.mobileNumber}
                     </p>
 
+                    {/* Action buttons (Top right or hover action) */}
+                    <div className="absolute top-3 right-3 flex items-center gap-1.5 opacity-90 transition sm:opacity-0 sm:group-hover:opacity-100">
+                      <button
+                        type="button"
+                        onClick={(e) => openEditModal(user, e)}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FAF4ED] text-[#75472D] border border-[#E8DED4] shadow-xs hover:bg-[#75472D] hover:text-white transition"
+                        title="Edit User"
+                      >
+                        <Edit size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => handleDeleteUser(user.id, user.name, e)}
+                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50 text-red-600 border border-red-200 shadow-xs hover:bg-red-600 hover:text-white transition"
+                        title="Delete User"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+
                     {/* Role Badge */}
-                    <div className="mt-4">
+                    <div className="mt-4 flex items-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded-md bg-[#1D2B3A] px-3.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm">
                         <Shield size={11} className="text-[#7FB3D5]" />
                         {user.userType}
@@ -486,179 +503,26 @@ export default function UsersPage() {
         </main>
 
         {/* ========================================================
-            MODAL 1: USER CREATE (EXACT SCREENSHOT LAYOUT & FIELDS)
+            MODAL 1: USER CREATE (EXTRACTED TO STANDALONE COMPONENT)
            ======================================================== */}
-        {isCreateOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-            <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                <h3 className="text-xl font-medium text-gray-800">User Create</h3>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateOpen(false)}
-                  className="text-gray-400 hover:text-gray-700"
-                >
-                  <X size={20} />
-                </button>
-              </div>
+        <UserCreate
+          isOpen={isCreateOpen}
+          onClose={() => setIsCreateOpen(false)}
+          onUserCreated={handleUserCreated}
+        />
 
-              {/* Error message */}
-              {createError && (
-                <div className="mt-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">
-                  {createError}
-                </div>
-              )}
-
-              {/* Form fields in table/grid alignment */}
-              <form onSubmit={handleCreateSubmit} className="mt-5 space-y-3.5">
-                {/* Name */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="Name"
-                    value={createForm.name}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, name: e.target.value })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* User Name */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    User Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="User Name"
-                    value={createForm.userName}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, userName: e.target.value })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* Password */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    Password <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="password"
-                    placeholder="Password"
-                    value={createForm.password}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, password: e.target.value })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* Confirm Password */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    Confirm Password <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="password"
-                    placeholder="ConfirmPassword"
-                    value={createForm.confirmPassword}
-                    onChange={(e) =>
-                      setCreateForm({
-                        ...createForm,
-                        confirmPassword: e.target.value,
-                      })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* User Type */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    User Type <span className="text-red-500">*</span>
-                  </label>
-                  <select
-                    value={createForm.userType}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, userType: e.target.value })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  >
-                    <option value="Admin">Admin</option>
-                    <option value="Staff">Staff</option>
-                    <option value="Manager">Manager</option>
-                    <option value="Customer">Customer</option>
-                  </select>
-                </div>
-
-                {/* Email */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    Email <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="email"
-                    placeholder="Email"
-                    value={createForm.email}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, email: e.target.value })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* Mobile Number */}
-                <div className="flex flex-col sm:flex-row sm:items-center">
-                  <label className="w-40 text-sm font-semibold text-gray-700">
-                    Mobile Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    required
-                    type="tel"
-                    placeholder="Mobile Number"
-                    value={createForm.mobileNumber}
-                    onChange={(e) =>
-                      setCreateForm({
-                        ...createForm,
-                        mobileNumber: e.target.value,
-                      })
-                    }
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 outline-none transition focus:border-gray-500"
-                  />
-                </div>
-
-                {/* Bottom Buttons: Submit and Close */}
-                <div className="flex justify-end gap-3 pt-4">
-                  <button
-                    type="submit"
-                    className="rounded-lg border border-[#28A745] px-5 py-1.5 text-sm font-medium text-[#28A745] transition hover:bg-[#28A745] hover:text-white"
-                  >
-                    Submit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsCreateOpen(false)}
-                    className="rounded-lg bg-[#DC3545] px-5 py-1.5 text-sm font-medium text-white transition hover:bg-[#c82333]"
-                  >
-                    Close
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        {/* ========================================================
+            MODAL 2: EDIT USER (EXTRACTED TO STANDALONE COMPONENT)
+           ======================================================== */}
+        <UsersEdit
+          isOpen={isEditOpen}
+          user={editingUser}
+          onClose={() => {
+            setIsEditOpen(false);
+            setEditingUser(null);
+          }}
+          onUserUpdated={handleUserUpdated}
+        />
 
         {/* ========================================================
             MODAL 2: BULK IMPORT USERS (EXACT SCREENSHOT LAYOUT)
@@ -788,7 +652,7 @@ export default function UsersPage() {
             </div>
           </div>
         )}
-      </Sidebar>
+      </div>
     </Background>
   );
 }

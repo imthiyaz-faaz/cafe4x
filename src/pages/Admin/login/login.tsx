@@ -9,7 +9,7 @@ import {
   ArrowRight,
   ShieldCheck,
 } from "lucide-react";
-import Background from "../../components/background";
+import Background from "../../../components/background";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -23,12 +23,76 @@ export default function Login() {
     event.preventDefault();
     setError("");
 
-    if (!username.trim() || !password) {
-      setError("Please enter your username and password.");
+    const inputUser = username.trim().toLowerCase();
+    const inputPass = password.trim();
+
+    if (!inputUser || !inputPass) {
+      setError("Please enter your username/email and password.");
       return;
     }
 
-    // Navigate to landing page after login
+    // Retrieve users list (including users created in admin)
+    let userList = [
+      {
+        email: "admin@gmail.com",
+        userName: "adminuser",
+        userType: "Admin",
+      },
+      {
+        email: "admin@faaztechsolutions.com",
+        userName: "adminuser",
+        userType: "Admin",
+      },
+      {
+        email: "provider@cafe4x.com",
+        userName: "provider",
+        userType: "Provider",
+      },
+    ];
+
+    try {
+      const stored = localStorage.getItem("cafe4x_users");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          userList = parsed;
+        }
+      }
+    } catch {}
+
+    // Find matching user by email or username
+    const matchedUser = userList.find(
+      (u: any) =>
+        (u.email && u.email.toLowerCase() === inputUser) ||
+        (u.userName && u.userName.toLowerCase() === inputUser)
+    );
+
+    // Save active session
+    if (matchedUser) {
+      localStorage.setItem("cafe4x_currentUser", JSON.stringify(matchedUser));
+      if (matchedUser.userType === "Provider") {
+        navigate("/provider");
+        return;
+      }
+      navigate("/landing");
+      return;
+    }
+
+    // If username contains "provider" or provider email domain, navigate to provider
+    if (inputUser.includes("provider")) {
+      localStorage.setItem(
+        "cafe4x_currentUser",
+        JSON.stringify({ email: inputUser, userName: inputUser, userType: "Provider" })
+      );
+      navigate("/provider");
+      return;
+    }
+
+    // Default to admin landing page
+    localStorage.setItem(
+      "cafe4x_currentUser",
+      JSON.stringify({ email: inputUser, userName: inputUser, userType: "Admin" })
+    );
     navigate("/landing");
   };
 

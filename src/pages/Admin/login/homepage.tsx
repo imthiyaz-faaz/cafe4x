@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { ArrowRight, Coffee, Clock, Sparkles } from 'lucide-react'
-import Background from '../../components/background'
+import Background from '../../../components/background'
 
 export default function Home() {
   return (

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Coffee,
   Mail,
@@ -12,6 +12,7 @@ import {
 import Background from "../../components/background";
 
 export default function Login() {
+  const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -27,8 +28,8 @@ export default function Login() {
       return;
     }
 
-    // Connect your existing Cafe4X authentication API here.
-    setError("Your login API needs to be connected.");
+    // Navigate to landing page after login
+    navigate("/landing");
   };
 
   return (

@@ -13,33 +13,6 @@ export default function Home() {
             <div className="pointer-events-none absolute -left-20 top-10 h-64 w-64 rounded-full bg-[#EAD5C0]/30 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-20 right-0 h-72 w-72 rounded-full bg-[#D7B18D]/20 blur-3xl" />
 
-            {/* LEFT: Coffee image */}
-            <div className="relative z-10 flex items-center justify-center">
-              <div className="absolute h-72 w-72 rounded-full bg-[#E8D2BC]/40 blur-2xl sm:h-96 sm:w-96" />
-
-              <img
-                src="/cafe-coffee.png"
-                alt="Freshly brewed coffee with cinnamon"
-                className="relative w-full max-w-md object-contain drop-shadow-2xl transition duration-700 hover:scale-105 sm:max-w-lg"
-              />
-
-              {/* Floating coffee badge */}
-              <div className="absolute bottom-4 left-2 flex items-center gap-3 rounded-2xl border border-white/70 bg-white/90 px-4 py-3 shadow-xl backdrop-blur-md sm:bottom-8 sm:left-4">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F1E3D5] text-[#70452D]">
-                  <Coffee size={23} />
-                </div>
-
-                <div>
-                  <p className="text-sm font-bold text-[#38251A]">
-                    Your Coffee Break
-                  </p>
-                  <p className="text-xs text-[#907967]">
-                    Just a few clicks away
-                  </p>
-                </div>
-              </div>
-            </div>
-
             {/* RIGHT: Welcome content */}
             <div className="relative z-10 mx-auto w-full max-w-lg px-2 md:px-0">
 

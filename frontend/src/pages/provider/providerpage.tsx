@@ -34,6 +34,9 @@ export interface ProviderLocation {
   isRedBadge?: boolean;
   image: string;
   totalSeats: number;
+  assignedProviderId?: string;
+  assignedProviderEmail?: string;
+  assignedProviderName?: string;
 }
 
 export interface ProviderOrder {
@@ -160,6 +163,9 @@ export default function ProviderPage() {
             isRedBadge: idx % 2 === 1,
             image: idx % 2 === 0 ? MEETING_ROOM_IMG : WORKSPACE_IMG,
             totalSeats: loc.totalSeats || 10,
+            assignedProviderId: loc.assignedProviderId,
+            assignedProviderEmail: loc.assignedProviderEmail,
+            assignedProviderName: loc.assignedProviderName,
           }));
         }
       }
@@ -264,11 +270,10 @@ export default function ProviderPage() {
 
                           {/* Bottom Card Banner: Clean Pill Banner */}
                           <div
-                            className={`flex h-14 items-center justify-center px-4 transition-colors ${
-                              isRed
+                            className={`flex min-h-[3.5rem] flex-col items-center justify-center py-2.5 px-4 transition-colors ${isRed
                                 ? "bg-[#C92A38] text-white"
                                 : "bg-[#F3EFEA] text-[#342219] group-hover:bg-[#EAE4DC]"
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center gap-2">
                               <span className="text-base font-semibold tracking-wide">
@@ -276,16 +281,20 @@ export default function ProviderPage() {
                               </span>
                               {loc.badgeCount !== undefined && (
                                 <span
-                                  className={`rounded px-2 py-0.5 text-xs font-bold ${
-                                    isRed
+                                  className={`rounded px-2 py-0.5 text-xs font-bold ${isRed
                                       ? "bg-[#8B1D27] text-white"
                                       : "bg-[#70452D] text-white"
-                                  }`}
+                                    }`}
                                 >
                                   {loc.badgeCount}
                                 </span>
                               )}
                             </div>
+                            {loc.assignedProviderName && (
+                              <div className="mt-1 text-[11px] font-medium opacity-90">
+                                Provider: <span className="font-semibold">{loc.assignedProviderName}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -471,15 +480,14 @@ export default function ProviderPage() {
                             </span>
                           </div>
                           <span
-                            className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                              order.status === "Pending"
+                            className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${order.status === "Pending"
                                 ? "bg-amber-100 text-amber-800"
                                 : order.status === "Preparing"
-                                ? "bg-blue-100 text-blue-800"
-                                : order.status === "Ready"
-                                ? "bg-purple-100 text-purple-800"
-                                : "bg-emerald-100 text-emerald-800"
-                            }`}
+                                  ? "bg-blue-100 text-blue-800"
+                                  : order.status === "Ready"
+                                    ? "bg-purple-100 text-purple-800"
+                                    : "bg-emerald-100 text-emerald-800"
+                              }`}
                           >
                             {order.status}
                           </span>

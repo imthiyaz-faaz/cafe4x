@@ -58,7 +58,7 @@ export default function Login() {
           userList = parsed;
         }
       }
-    } catch {}
+    } catch { }
 
     // Find matching user by email or username
     const matchedUser = userList.find(

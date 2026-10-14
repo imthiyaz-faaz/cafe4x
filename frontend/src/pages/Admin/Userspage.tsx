@@ -70,7 +70,7 @@ export default function UsersPage() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch {}
+    } catch { }
     return initialUsers;
   });
 
@@ -78,7 +78,7 @@ export default function UsersPage() {
     setUsers(newUsers);
     try {
       localStorage.setItem("cafe4x_users", JSON.stringify(newUsers));
-    } catch {}
+    } catch { }
   };
 
   const [searchQuery, setSearchQuery] = useState("");

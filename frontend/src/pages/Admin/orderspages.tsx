@@ -406,12 +406,11 @@ export default function OrdersPage() {
                 MAIN CONTENT: ORDERS TABLE (LEFT) + ORDER DETAILS (RIGHT)
                ======================================================== */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-              
+
               {/* LEFT / CENTER: ORDERS TABLE (8 or 12 cols depending on Drawer) */}
               <div
-                className={`flex flex-col transition-all duration-300 ${
-                  selectedOrder ? "lg:col-span-8" : "lg:col-span-12"
-                }`}
+                className={`flex flex-col transition-all duration-300 ${selectedOrder ? "lg:col-span-8" : "lg:col-span-12"
+                  }`}
               >
                 {/* Search & Action Filter Bar */}
                 <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-[#EEE5DC] bg-white p-3.5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
@@ -512,9 +511,8 @@ export default function OrdersPage() {
                               <tr
                                 key={order.id}
                                 onClick={() => setSelectedOrderId(order.id)}
-                                className={`cursor-pointer transition duration-150 hover:bg-[#FAF6F2] ${
-                                  isSelected ? "bg-[#FAF4ED]" : ""
-                                }`}
+                                className={`cursor-pointer transition duration-150 hover:bg-[#FAF6F2] ${isSelected ? "bg-[#FAF4ED]" : ""
+                                  }`}
                               >
                                 {/* Checkbox */}
                                 <td
@@ -524,7 +522,7 @@ export default function OrdersPage() {
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
-                                    onChange={() => {}}
+                                    onChange={() => { }}
                                     className="h-4 w-4 rounded border-gray-300 text-[#754329] focus:ring-[#754329]"
                                   />
                                 </td>
@@ -538,9 +536,8 @@ export default function OrdersPage() {
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-2.5">
                                     <div
-                                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-bold text-[11px] text-white ${
-                                        order.avatarBg || "bg-[#A68A77]"
-                                      }`}
+                                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-bold text-[11px] text-white ${order.avatarBg || "bg-[#A68A77]"
+                                        }`}
                                     >
                                       {order.avatarInitials}
                                     </div>
@@ -707,9 +704,8 @@ export default function OrdersPage() {
                     <div className="mt-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div
-                          className={`flex h-11 w-11 items-center justify-center rounded-full font-bold text-sm text-white ${
-                            selectedOrder.avatarBg || "bg-[#B8977E]"
-                          }`}
+                          className={`flex h-11 w-11 items-center justify-center rounded-full font-bold text-sm text-white ${selectedOrder.avatarBg || "bg-[#B8977E]"
+                            }`}
                         >
                           {selectedOrder.avatarInitials}
                         </div>

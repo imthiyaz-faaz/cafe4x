@@ -21,17 +21,11 @@ import {
   ShieldCheck,
   Building2,
   ArrowLeft,
+  UserCheck,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
-
-// --- Types ---
-interface LocationItem {
-  id: string;
-  name: string;
-  status: "Active" | "Inactive";
-  totalSeats: number;
-}
+import AssignCard, { type LocationItem } from "../../components/locations/assigncard";
 
 interface SeatItem {
   number: string;
@@ -60,7 +54,16 @@ const defaultSeats: SeatItem[] = [
 ];
 
 export default function LocationPage() {
-  const [locations, setLocations] = useState<LocationItem[]>(initialLocationsList);
+  const [locations, setLocations] = useState<LocationItem[]>(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_locations");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch { }
+    return initialLocationsList;
+  });
   const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(12);
@@ -74,6 +77,16 @@ export default function LocationPage() {
   const [editingLoc, setEditingLoc] = useState<LocationItem | null>(null);
   const [newLocationName, setNewLocationName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Assign Provider Modal State
+  const [assignModalLoc, setAssignModalLoc] = useState<LocationItem | null>(null);
+
+  const saveLocations = (newLocs: LocationItem[]) => {
+    setLocations(newLocs);
+    try {
+      localStorage.setItem("cafe4x_locations", JSON.stringify(newLocs));
+    } catch { }
+  };
 
   // Seating State for active location
   const [seatsByLoc, setSeatsByLoc] = useState<Record<string, SeatItem[]>>({
@@ -143,7 +156,8 @@ export default function LocationPage() {
       status: "Active",
       totalSeats: 12,
     };
-    setLocations((prev) => [...prev, newLoc]);
+    const updated = [...locations, newLoc];
+    saveLocations(updated);
     setSeatsByLoc((prev) => ({
       ...prev,
       [newId]: defaultSeats.map((s) => ({
@@ -159,11 +173,26 @@ export default function LocationPage() {
   const handleDeleteLocation = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm("Are you sure you want to delete this location?")) {
-      setLocations((prev) => prev.filter((l) => l.id !== id));
+      const updated = locations.filter((l) => l.id !== id);
+      saveLocations(updated);
       if (selectedLocation?.id === id) {
         setSelectedLocation(null);
       }
     }
+  };
+
+  // Open assign modal for a location
+  const handleOpenAssignModal = (loc: LocationItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setAssignModalLoc(loc);
+  };
+
+  // Save location assignment updated from AssignCard
+  const handleSaveLocationAssignment = (updatedLoc: LocationItem) => {
+    const updated = locations.map((loc) =>
+      loc.id === updatedLoc.id ? updatedLoc : loc
+    );
+    saveLocations(updated);
   };
 
   const handleCopy = (url: string) => {
@@ -196,9 +225,10 @@ export default function LocationPage() {
     }));
 
     // Update location totalSeats counter
-    setLocations((prev) =>
-      prev.map((l) => (l.id === locId ? { ...l, totalSeats: l.totalSeats + 1 } : l))
+    const updated = locations.map((l) =>
+      l.id === locId ? { ...l, totalSeats: l.totalSeats + 1 } : l
     );
+    saveLocations(updated);
 
     setSelectedSeatNumber(padded);
     setIsCreateSeatOpen(false);
@@ -350,13 +380,23 @@ export default function LocationPage() {
                           </span>
                         </div>
 
+                        {/* Assigned Provider Tag if assigned */}
+                        {loc.assignedProviderName && (
+                          <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-[#E0D3C5] bg-[#FDFBF7] px-2.5 py-1 text-[11px] font-medium text-[#7A4B2A]">
+                            <UserCheck size={13} className="text-[#8C5835] shrink-0" />
+                            <span className="truncate">
+                              Assigned: <strong className="font-semibold text-[#342219]">{loc.assignedProviderName}</strong>
+                            </span>
+                          </div>
+                        )}
+
                         {/* Action buttons (Assign, edit, Delete) */}
-                        <div className="mt-5 grid grid-cols-3 gap-2 border-t border-[#EEE5DC] pt-3">
+                        <div className="mt-4 grid grid-cols-3 gap-2 border-t border-[#EEE5DC] pt-3">
                           <button
                             type="button"
-                            onClick={() => setSelectedLocation(loc)}
+                            onClick={(e) => handleOpenAssignModal(loc, e)}
                             className="flex flex-col items-center justify-center rounded-xl border border-[#E8DED4] p-2 text-[11px] font-semibold text-[#593A28] transition hover:bg-[#FAF6F1]"
-                            title="Assign / Open seats"
+                            title="Assign Provider"
                           >
                             <UserPlus size={16} className="text-[#8C5835]" />
                             <span className="mt-1">Assign</span>
@@ -514,17 +554,16 @@ export default function LocationPage() {
 
                 {/* Main Dynamic Grid: Full width (12 cols) if no seat clicked, 8/4 cols when seat is clicked */}
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-                  
+
                   {/* ========================================================
                       REALISTIC BOARDROOM IMAGE CANVAS WITH OVERLAID INTERACTIVE SEATS
                       (EXPANDS TO 12 COLS WHEN NO SEAT SELECTED, 8 COLS WHEN CLICKED)
                      ======================================================== */}
                   <div
-                    className={`flex flex-col rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-xl shadow-[#70452D]/5 backdrop-blur-md transition-all duration-300 ${
-                      currentSeat ? "lg:col-span-8" : "lg:col-span-12"
-                    }`}
+                    className={`flex flex-col rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-xl shadow-[#70452D]/5 backdrop-blur-md transition-all duration-300 ${currentSeat ? "lg:col-span-8" : "lg:col-span-12"
+                      }`}
                   >
-                    
+
                     {/* Subtitle */}
                     <div className="flex items-center justify-between border-b border-[#EEE5DC] pb-4">
                       <div className="flex items-center gap-2">
@@ -542,7 +581,7 @@ export default function LocationPage() {
 
                     {/* DYNAMIC REACT CONFERENCE TABLE & CHAIRS MODEL */}
                     <div className="relative my-6 flex min-h-[420px] w-full flex-col items-center justify-center overflow-x-auto rounded-3xl border-2 border-[#EAD5C0] bg-gradient-to-b from-[#F9F5F0] via-[#FAF6F1] to-[#F5ECE1] p-8 shadow-inner">
-                      
+
                       {/* Subtle floor grid backdrop */}
                       <div
                         className="pointer-events-none absolute inset-0 opacity-25"
@@ -568,7 +607,7 @@ export default function LocationPage() {
 
                       {/* Interactive Seating Model Wrapper */}
                       <div className="relative z-10 flex flex-col items-center justify-center gap-3 py-4">
-                        
+
                         {/* TOP ROW CHAIRS (Half of total seats, facing table) */}
                         {(() => {
                           const half = Math.ceil(currentSeats.length / 2);
@@ -596,11 +635,10 @@ export default function LocationPage() {
                                         <div className="h-5 w-1.5 rounded-l-md bg-[#3D281D]" />
 
                                         <div
-                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${
-                                            isSelected
+                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${isSelected
                                               ? "ring-4 ring-yellow-400 ring-offset-2 ring-offset-white scale-105 shadow-yellow-500/30"
                                               : "hover:shadow-lg"
-                                          }`}
+                                            }`}
                                         >
                                           {seat.number}
                                         </div>
@@ -662,11 +700,10 @@ export default function LocationPage() {
                                         <div className="h-5 w-1.5 rounded-l-md bg-[#3D281D]" />
 
                                         <div
-                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${
-                                            isSelected
+                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${isSelected
                                               ? "ring-4 ring-yellow-400 ring-offset-2 ring-offset-white scale-105 shadow-yellow-500/30"
                                               : "hover:shadow-lg"
-                                          }`}
+                                            }`}
                                         >
                                           {seat.number}
                                         </div>
@@ -740,7 +777,7 @@ export default function LocationPage() {
                               <p className="text-xs text-[#8A7667]">{selectedLocation.name} · Seat {currentSeat.number}</p>
                             </div>
                           </div>
-                          
+
                           <div className="flex items-center gap-2">
                             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#75472D] to-[#9A6747] font-black text-sm text-white shadow-md">
                               {currentSeat.number}
@@ -1037,7 +1074,7 @@ export default function LocationPage() {
                           // Automatically suggest orderUrl if not yet customized or follows default pattern
                           orderUrl:
                             !newSeatForm.orderUrl ||
-                            newSeatForm.orderUrl.startsWith("https://cafe4x.com/order/")
+                              newSeatForm.orderUrl.startsWith("https://cafe4x.com/order/")
                               ? `https://cafe4x.com/order/${newSeatForm.location || "738"}/${val || "1"}`
                               : newSeatForm.orderUrl,
                         });
@@ -1250,6 +1287,19 @@ export default function LocationPage() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ========================================================
+            MODAL: ASSIGN USER (COMPONENT: AssignCard)
+            ONLY PROVIDERS CAN BE SELECTED
+           ======================================================== */}
+        {assignModalLoc && (
+          <AssignCard
+            location={assignModalLoc}
+            isOpen={Boolean(assignModalLoc)}
+            onClose={() => setAssignModalLoc(null)}
+            onSave={handleSaveLocationAssignment}
+          />
         )}
 
       </div>

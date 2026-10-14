@@ -244,18 +244,18 @@ export default function Itemspage() {
       prev.map((it) =>
         it.id === editingItem.id
           ? {
-              ...it,
-              name: formData.name.trim(),
-              description: formData.description.trim(),
-              image:
-                formData.image.trim() ||
-                "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
-              status: formData.status,
-              preferences: formData.preference.trim() || undefined,
-              amount: parseFloat(formData.amount) || it.amount,
-              type: formData.type,
-              category: formData.type === "Beverages" ? "Drinks" : "Food",
-            }
+            ...it,
+            name: formData.name.trim(),
+            description: formData.description.trim(),
+            image:
+              formData.image.trim() ||
+              "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
+            status: formData.status,
+            preferences: formData.preference.trim() || undefined,
+            amount: parseFloat(formData.amount) || it.amount,
+            type: formData.type,
+            category: formData.type === "Beverages" ? "Drinks" : "Food",
+          }
           : it
       )
     );
@@ -308,20 +308,18 @@ export default function Itemspage() {
                       key={tab.key}
                       type="button"
                       onClick={() => setSelectedCategory(tab.key)}
-                      className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition duration-200 shadow-xs ${
-                        isActive
+                      className={`flex items-center gap-2 rounded-2xl px-4 py-2 text-xs font-bold transition duration-200 shadow-xs ${isActive
                           ? "bg-[#6A3F23] text-white shadow-[#6A3F23]/25"
                           : "bg-white/90 text-[#6B564A] hover:bg-white hover:text-[#342219] border border-[#EEE5DC]"
-                      }`}
+                        }`}
                     >
                       <tab.icon size={14} className={isActive ? "text-white" : "text-[#9A6747]"} />
                       <span>{tab.label}</span>
                       <span
-                        className={`ml-0.5 rounded-full px-1.5 py-0.2 text-[10px] ${
-                          isActive
+                        className={`ml-0.5 rounded-full px-1.5 py-0.2 text-[10px] ${isActive
                             ? "bg-white/20 text-white"
                             : "bg-[#F5EDE4] text-[#7A5B49]"
-                        }`}
+                          }`}
                       >
                         ({items.filter((it) => tab.key === "All" || it.type === tab.key).length})
                       </span>
@@ -393,11 +391,10 @@ export default function Itemspage() {
                         {/* Status Badge (Active or Out of Stock) */}
                         <div className="absolute top-3 left-3">
                           <span
-                            className={`rounded-md px-2.5 py-1 text-[11px] font-bold shadow-xs ${
-                              isOutOfStock
+                            className={`rounded-md px-2.5 py-1 text-[11px] font-bold shadow-xs ${isOutOfStock
                                 ? "bg-[#DC3545] text-white"
                                 : "bg-[#28A745] text-white"
-                            }`}
+                              }`}
                           >
                             {item.status}
                           </span>

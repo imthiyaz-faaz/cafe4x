@@ -11,6 +11,8 @@ import {
   MapPin,
 } from "lucide-react";
 import Background from "../../components/background";
+import { orderApi } from "../../services/orderApi";
+
 
 export interface MenuItem {
   id: string;
@@ -217,7 +219,21 @@ export default function UserOrderPage() {
       localStorage.setItem("cafe4x_provider_orders", JSON.stringify([newOrder, ...existingOrders]));
     } catch {}
 
-    // 2. Also sync to admin orders in localStorage
+    // 2. Also sync to backend API
+    orderApi.createOrder({
+      id: newOrder.id,
+      seat: newOrder.seat,
+      locationName: newOrder.locationName,
+      locationId: activeLocationId,
+      employeeName: newOrder.employeeName,
+      items: newOrder.items,
+      total: newOrder.total,
+      notes: newOrder.notes,
+    }).catch((err) => {
+      console.warn("Could not sync order to backend:", err);
+    });
+
+    // 3. Also sync to admin orders in localStorage
     try {
       const existingStr = localStorage.getItem("cafe4x_admin_orders");
       const existingOrders = existingStr ? JSON.parse(existingStr) : [];
@@ -240,6 +256,7 @@ export default function UserOrderPage() {
       };
       localStorage.setItem("cafe4x_admin_orders", JSON.stringify([adminOrderRecord, ...existingOrders]));
     } catch {}
+
 
     setLastOrderDetails(newOrder);
     setOrderSentSuccess(true);

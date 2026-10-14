@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   Search,
   Plus,
@@ -26,6 +26,8 @@ import {
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import AssignCard, { type LocationItem } from "../../components/locations/assigncard";
+import { locationApi } from "../../services/locationApi";
+
 
 interface SeatItem {
   number: string;
@@ -35,10 +37,9 @@ interface SeatItem {
 }
 
 const initialLocationsList: LocationItem[] = [
-  { id: "1", name: "Meeting Room", status: "Active", totalSeats: 10 },
-  { id: "2", name: "Workspace", status: "Active", totalSeats: 12 },
-  { id: "3", name: "office", status: "Active", totalSeats: 10 },
+  { id: "3", name: "office", status: "Active", totalSeats: 10, assignedProviderId: "3", assignedProviderEmail: "provider@cafe4x.com", assignedProviderName: "Cafe Provider" },
 ];
+
 
 const defaultSeats: SeatItem[] = [
   { number: "01", id: "S001-F1-01", orderUrl: "https://cafe4x.com/order/738/1" },
@@ -78,11 +79,22 @@ export default function LocationPage() {
       const stored = localStorage.getItem("cafe4x_locations");
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filter out deprecated initial default locations: Meeting Room and Workspace
+          const cleaned = parsed.filter(
+            (l: any) =>
+              l.name?.toLowerCase() !== "meeting room" &&
+              l.name?.toLowerCase() !== "workspace" &&
+              l.id !== "1" &&
+              l.id !== "2"
+          );
+          if (cleaned.length > 0) return cleaned;
+        }
       }
     } catch { }
     return initialLocationsList;
   });
+
   const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(12);
@@ -100,12 +112,45 @@ export default function LocationPage() {
   // Assign Provider Modal State
   const [assignModalLoc, setAssignModalLoc] = useState<LocationItem | null>(null);
 
+  // Fetch from backend on mount and sync to local state
+  useEffect(() => {
+    let isMounted = true;
+    locationApi.getLocations()
+      .then((serverLocs) => {
+        if (!isMounted) return;
+        if (Array.isArray(serverLocs) && serverLocs.length > 0) {
+          const cleaned = serverLocs.filter(
+            (l: any) =>
+              l.name?.toLowerCase() !== "meeting room" &&
+              l.name?.toLowerCase() !== "workspace" &&
+              l.id !== "1" &&
+              l.id !== "2"
+          );
+          if (cleaned.length > 0) {
+            setLocations(cleaned);
+            try {
+              localStorage.setItem("cafe4x_locations", JSON.stringify(cleaned));
+            } catch { }
+          }
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not fetch locations from server, using local storage:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const saveLocations = (newLocs: LocationItem[]) => {
+    // 1. Always store locally in state and localStorage immediately
     setLocations(newLocs);
     try {
       localStorage.setItem("cafe4x_locations", JSON.stringify(newLocs));
     } catch { }
   };
+
 
   // Seating State for active location
   const [seatsByLoc, setSeatsByLoc] = useState<Record<string, SeatItem[]>>(() => {
@@ -195,8 +240,15 @@ export default function LocationPage() {
       status: "Active",
       totalSeats: 12,
     };
+    // 1. Store in local state immediately
     const updated = [...locations, newLoc];
     saveLocations(updated);
+
+    // 2. Sync to backend asynchronously
+    locationApi.createLocation(newLoc).catch((err) => {
+      console.warn("Could not save location to backend:", err);
+    });
+
     const updatedSeats = {
       ...seatsByLoc,
       [newId]: defaultSeats.map((s) => ({
@@ -218,6 +270,9 @@ export default function LocationPage() {
       if (selectedLocation?.id === id) {
         setSelectedLocation(null);
       }
+      locationApi.deleteLocation(id).catch((err) => {
+        console.warn("Could not delete location from backend:", err);
+      });
     }
   };
 
@@ -233,7 +288,16 @@ export default function LocationPage() {
       loc.id === updatedLoc.id ? updatedLoc : loc
     );
     saveLocations(updated);
+
+    locationApi.assignProvider(updatedLoc.id, {
+      assignedProviderId: updatedLoc.assignedProviderId,
+      assignedProviderEmail: updatedLoc.assignedProviderEmail,
+      assignedProviderName: updatedLoc.assignedProviderName,
+    }).catch((err) => {
+      console.warn("Could not assign provider on backend:", err);
+    });
   };
+
 
   const handleCopy = (url: string) => {
     navigator.clipboard.writeText(url);

@@ -23,12 +23,10 @@ import pendingOrdersImg from "../../assets/images/pending_orders_4k.png";
 import cancelledOrdersImg from "../../assets/images/cancelled_4k.png";
 import deliveredOrdersImg from "../../assets/images/delivered_4k.png";
 import allOrdersImg from "../../assets/images/all_orders_4k.png";
+import { orderApi } from "../../services/orderApi";
 
-// Realistic boardroom / workspace sample photos matching the user screenshot
-const MEETING_ROOM_IMG =
-  "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=800&q=80";
-const WORKSPACE_IMG =
-  "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80";
+
+
 const OFFICE_IMG =
   "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80";
 
@@ -58,107 +56,22 @@ export interface ProviderOrder {
 // Initial Admin Created Locations matching screenshot
 const initialLocations: ProviderLocation[] = [
   {
-    id: "1",
-    name: "Meeting Room",
-    image: MEETING_ROOM_IMG,
-    totalSeats: 10,
-  },
-  {
-    id: "2",
-    name: "Workspace",
-    badgeCount: 12,
-    isRedBadge: true,
-    image: WORKSPACE_IMG,
-    totalSeats: 12,
-  },
-  {
     id: "3",
     name: "office",
     badgeCount: 10,
     image: OFFICE_IMG,
     totalSeats: 10,
+    assignedProviderId: "3",
+    assignedProviderEmail: "provider@cafe4x.com",
+    assignedProviderName: "Cafe Provider",
   },
 ];
 
-// Initial mock orders for Provider fulfillment
-const initialOrders: ProviderOrder[] = [
-  {
-    id: "#ORD-1001",
-    seat: "02",
-    locationName: "office",
-    employeeName: "Imthiyaz (imthi@faaztech)",
-    items: [
-      { name: "Coffee", qty: 1, price: 20 },
-      { name: "Tea", qty: 1, price: 18 },
-    ],
-    total: 38,
-    time: "1 min ago",
-    status: "Pending",
-  },
-  {
-    id: "#ORD-1002",
-    seat: "01",
-    locationName: "office",
-    employeeName: "Rizwan (rizwi@faaztech)",
-    items: [
-      { name: "Lemon Tea", qty: 2, price: 20 },
-    ],
-    total: 40,
-    time: "4 mins ago",
-    status: "Pending",
-  },
-  {
-    id: "#ORD-1003",
-    seat: "03",
-    locationName: "office",
-    employeeName: "Saif (saif@faaztech)",
-    items: [
-      { name: "Black Coffee", qty: 1, price: 18 },
-      { name: "Milk", qty: 1, price: 18 },
-    ],
-    total: 36,
-    time: "15 mins ago",
-    status: "Delivered",
-  },
-  {
-    id: "#ORD-1004",
-    seat: "02",
-    locationName: "office",
-    employeeName: "Imthiyaz (imthi@faaztech)",
-    items: [
-      { name: "Black Tea", qty: 1, price: 18 },
-    ],
-    total: 18,
-    time: "1 hour ago",
-    status: "Canceled",
-  },
-  {
-    id: "#ORD-1005",
-    seat: "01",
-    locationName: "office",
-    employeeName: "Rizwan (rizwi@faaztech)",
-    items: [
-      { name: "Coffee", qty: 2, price: 20 },
-    ],
-    total: 40,
-    time: "2 hours ago",
-    status: "Delivered",
-  },
-  {
-    id: "#ORD-1006",
-    seat: "07",
-    locationName: "Meeting Room",
-    employeeName: "Priya Sharma",
-    items: [
-      { name: "Tea", qty: 3, price: 15 },
-    ],
-    total: 45,
-    time: "35 mins ago",
-    status: "Pending",
-  },
-];
+
+// Orders are created live by employees and synced via backend & localStorage
 
 export type OrderCategory = "pending" | "canceled" | "delivered" | "all";
+
 
 const categoryDetails: Record<OrderCategory, { title: string; subtitle: string; image: string }> = {
   pending: { title: "Pending Order", subtitle: "Orders awaiting preparation", image: pendingOrdersImg },
@@ -181,20 +94,51 @@ export default function ProviderPage() {
   const [categorySearch, setCategorySearch] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
-  // Live order updates by provider
+  // Live order updates by provider (backend API + localStorage)
   const [orders, setOrders] = useState<ProviderOrder[]>(() => {
     try {
       const stored = localStorage.getItem("cafe4x_provider_orders");
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          // Filter out deprecated demo orders if any
+          const realOrders = parsed.filter(
+            (o: any) => o.locationName?.toLowerCase() !== "meeting room"
+          );
+          return realOrders;
+        }
       }
     } catch {}
-    return initialOrders;
+    return [];
   });
 
-  // Listen for storage events or tab changes
+  // Fetch orders from backend and sync with localStorage
+  const fetchOrdersFromBackend = () => {
+    orderApi.getOrders()
+      .then((serverOrders) => {
+        if (Array.isArray(serverOrders)) {
+          setOrders(serverOrders);
+          try {
+            localStorage.setItem("cafe4x_provider_orders", JSON.stringify(serverOrders));
+          } catch {}
+        }
+      })
+      .catch(() => {
+        // Fallback to local storage
+
+        try {
+          const stored = localStorage.getItem("cafe4x_provider_orders");
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) setOrders(parsed);
+          }
+        } catch {}
+      });
+  };
+
   useEffect(() => {
+    fetchOrdersFromBackend();
+
     const handleStorage = () => {
       try {
         const stored = localStorage.getItem("cafe4x_provider_orders");
@@ -206,8 +150,11 @@ export default function ProviderPage() {
     };
 
     window.addEventListener("storage", handleStorage);
-    // Also poll every 2s for local changes within the same tab/window
-    const interval = setInterval(handleStorage, 2000);
+    // Poll every 3 seconds for new live employee orders from backend
+    const interval = setInterval(() => {
+      fetchOrdersFromBackend();
+    }, 3000);
+
     return () => {
       window.removeEventListener("storage", handleStorage);
       clearInterval(interval);
@@ -221,31 +168,70 @@ export default function ProviderPage() {
     } catch {}
   };
 
+
+  // Get current logged in user from localStorage
+  const currentUser = useMemo(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) return JSON.parse(stored);
+    } catch {}
+    return null;
+  }, []);
+
   // Sync locations from localStorage if admin created any in Admin Location page
   const locations = useMemo(() => {
+    let locList: ProviderLocation[] = initialLocations;
     try {
       const stored = localStorage.getItem("cafe4x_locations");
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((loc: any, idx: number) => ({
-            id: String(loc.id || idx),
-            name: loc.name || "Location",
-            badgeCount: loc.totalSeats || 10,
-            isRedBadge: idx % 2 === 1,
-            image: idx % 2 === 0 ? MEETING_ROOM_IMG : WORKSPACE_IMG,
-            totalSeats: loc.totalSeats || 10,
-            assignedProviderId: loc.assignedProviderId,
-            assignedProviderEmail: loc.assignedProviderEmail,
-            assignedProviderName: loc.assignedProviderName,
-          }));
+          locList = parsed
+            .filter(
+              (loc: any) =>
+                loc.name?.toLowerCase() !== "meeting room" &&
+                loc.name?.toLowerCase() !== "workspace" &&
+                loc.id !== "1" &&
+                loc.id !== "2"
+            )
+            .map((loc: any, idx: number) => ({
+              id: String(loc.id || idx),
+              name: loc.name || "Location",
+              badgeCount: loc.totalSeats || 10,
+              isRedBadge: idx % 2 === 1,
+              image: OFFICE_IMG,
+              totalSeats: loc.totalSeats || 10,
+              assignedProviderId: loc.assignedProviderId,
+              assignedProviderEmail: loc.assignedProviderEmail,
+              assignedProviderName: loc.assignedProviderName,
+            }));
         }
       }
     } catch {
       // fallback to initialLocations
     }
-    return initialLocations;
-  }, []);
+
+    // Connect location page with provider:
+    // If a provider is logged in, show only locations assigned to this provider.
+    // If no specific provider is logged in or user is admin, show all assigned/available locations.
+    if (currentUser && currentUser.userType === "Provider") {
+      const providerId = currentUser.id ? String(currentUser.id) : "";
+      const providerEmail = currentUser.email ? currentUser.email.toLowerCase() : "";
+
+      const assignedToMe = locList.filter(
+        (loc) =>
+          (providerId && String(loc.assignedProviderId) === providerId) ||
+          (providerEmail && loc.assignedProviderEmail?.toLowerCase() === providerEmail)
+      );
+
+      // If assignments exist for this provider, show only those.
+      // If none assigned yet, return empty list or fallback assigned to default demo
+      return assignedToMe;
+    }
+
+    return locList;
+  }, [currentUser]);
+
 
   // Filter locations
   const filteredLocations = useMemo(() => {
@@ -268,7 +254,12 @@ export default function ProviderPage() {
   const handleUpdateOrderStatus = (orderId: string, nextStatus: ProviderOrder["status"]) => {
     const updated = orders.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o));
     saveOrders(updated);
+
+    orderApi.updateStatus(orderId, nextStatus).catch((err) => {
+      console.warn("Could not sync order status to backend:", err);
+    });
   };
+
 
   return (
     <Background>

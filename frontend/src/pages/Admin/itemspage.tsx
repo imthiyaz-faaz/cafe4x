@@ -400,19 +400,8 @@ export default function Itemspage() {
                           </span>
                         </div>
 
-                        {/* Top-Right Favorite / Like Button */}
-                        <button
-                          type="button"
-                          onClick={(e) => toggleLike(item.id, e)}
-                          className="absolute top-3 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-xs transition hover:scale-110 hover:bg-black/60"
-                        >
-                          <Heart
-                            size={16}
-                            className={item.isLiked ? "fill-red-500 text-red-500" : "text-white"}
-                          />
-                        </button>
-
                         {/* Hover Quick Action Buttons: Edit and Delete */}
+
                         <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 backdrop-blur-xs transition-opacity duration-200 group-hover:opacity-100">
                           <button
                             type="button"
@@ -454,30 +443,17 @@ export default function Itemspage() {
                           )}
                         </div>
 
-                        {/* Price & Add (+) Button */}
+                        {/* Price */}
                         <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#F5EFE8]">
                           <div className="flex items-baseline">
                             <span className="text-base font-extrabold text-[#2A1C14]">
                               ₹{item.amount}
                             </span>
                           </div>
-
-                          <button
-                            type="button"
-                            onClick={(e) => handleAddItemCount(item.id, e)}
-                            className="relative flex h-8 w-8 items-center justify-center rounded-full bg-[#8C5835] text-white shadow-sm transition hover:bg-[#704225] hover:scale-105 active:scale-95"
-                            title="Add item"
-                          >
-                            <Plus size={16} />
-                            {cartBadgeCount[item.id] ? (
-                              <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-[10px] font-bold text-white shadow-xs">
-                                {cartBadgeCount[item.id]}
-                              </span>
-                            ) : null}
-                          </button>
                         </div>
                       </div>
                     </div>
+
                   );
                 })}
               </div>

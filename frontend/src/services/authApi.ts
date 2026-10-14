@@ -1,5 +1,4 @@
-const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+import { apiFetch } from "./apiClient";
 
 export interface LoginCredentials {
   usernameOrEmail: string;
@@ -21,25 +20,20 @@ export interface LoginResponse {
 
 export const authApi = {
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+    return apiFetch<LoginResponse>("/api/auth/login", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
       body: JSON.stringify(credentials),
     });
+  },
 
-    const text = await response.text();
-    let data: any = {};
-    try {
-      data = text ? JSON.parse(text) : {};
-    } catch {
-      data = { message: text || "Unexpected server response" };
-    }
+  async signup(data: any): Promise<LoginResponse> {
+    return apiFetch<LoginResponse>("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
 
-    if (!response.ok) {
-      throw new Error(data.message || `Request failed with status ${response.status}`);
-    }
-    return data;
+  async me(): Promise<{ success: boolean; user?: any }> {
+    return apiFetch<{ success: boolean; user?: any }>("/api/auth/me");
   },
 };

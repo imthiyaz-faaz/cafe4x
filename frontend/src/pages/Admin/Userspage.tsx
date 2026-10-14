@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import {
   UserRound,
   Plus,
@@ -21,6 +21,8 @@ import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import UserCreate from "../../components/users/usercreate";
 import UsersEdit from "../../components/users/usersedit";
+import { userApi } from "../../services/userApi";
+
 
 export interface UserItem {
   id: string;
@@ -74,12 +76,51 @@ export default function UsersPage() {
     return initialUsers;
   });
 
+  // Load users from backend on mount and sync to localStorage
+  useEffect(() => {
+    userApi.getUsers()
+      .then((serverUsers) => {
+        if (Array.isArray(serverUsers) && serverUsers.length > 0) {
+          // Merge passwords from localStorage if available
+          let localPasswords: Record<string, string> = {};
+          try {
+            const stored = localStorage.getItem("cafe4x_users");
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (Array.isArray(parsed)) {
+                parsed.forEach((u: any) => {
+                  if (u.id && u.password) localPasswords[u.id] = u.password;
+                });
+              }
+            }
+          } catch {}
+
+          const fullUsers: UserItem[] = serverUsers.map((su) => ({
+            id: String(su.id),
+            name: su.name,
+            userName: su.userName,
+            email: su.email,
+            mobileNumber: su.mobileNumber || "",
+            userType: su.userType,
+            password: su.password || localPasswords[su.id] || "password123",
+          }));
+
+          setUsers(fullUsers);
+          try {
+            localStorage.setItem("cafe4x_users", JSON.stringify(fullUsers));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const saveUsers = (newUsers: UserItem[]) => {
     setUsers(newUsers);
     try {
       localStorage.setItem("cafe4x_users", JSON.stringify(newUsers));
     } catch { }
   };
+
 
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(12);
@@ -170,6 +211,10 @@ export default function UsersPage() {
   const handleUserCreated = (newUser: UserItem) => {
     const updated = [newUser, ...users];
     saveUsers(updated);
+
+    userApi.createUser(newUser).catch((err) => {
+      console.warn("Could not sync user to backend:", err);
+    });
   };
 
   // Open Edit User Modal
@@ -183,6 +228,10 @@ export default function UsersPage() {
   const handleUserUpdated = (updatedUser: UserItem) => {
     const updated = users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
     saveUsers(updated);
+
+    userApi.updateUser(updatedUser.id, updatedUser).catch((err) => {
+      console.warn("Could not sync user update to backend:", err);
+    });
   };
 
   // Handle Delete User
@@ -191,8 +240,13 @@ export default function UsersPage() {
     if (confirm(`Are you sure you want to delete user "${name}"?`)) {
       const updated = users.filter((u) => u.id !== id);
       saveUsers(updated);
+
+      userApi.deleteUser(id).catch((err) => {
+        console.warn("Could not delete user from backend:", err);
+      });
     }
   };
+
 
   // Bulk Upload File Handler
   const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {

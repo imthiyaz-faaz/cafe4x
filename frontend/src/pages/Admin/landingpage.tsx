@@ -1,4 +1,5 @@
-import { Sparkles, ArrowRight, Utensils, Clock, ShieldCheck, HeartHandshake } from "lucide-react";
+import { Sparkles, Utensils, Clock, ShieldCheck, HeartHandshake } from "lucide-react";
+
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 
@@ -44,26 +45,9 @@ export default function LandingPage() {
                   and quick service whenever you need a break.
                 </p>
 
-                {/* Action CTA Buttons */}
-                <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-                  <a
-                    href="#orders"
-                    className="group inline-flex min-h-12 items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-7 py-3 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition duration-300 hover:-translate-y-0.5 hover:shadow-xl"
-                  >
-                    View Active Orders
-                    <ArrowRight size={17} className="transition-transform group-hover:translate-x-1" />
-                  </a>
-
-                  <a
-                    href="#items"
-                    className="inline-flex min-h-12 items-center justify-center rounded-xl border border-[#D5C2B1] bg-white/90 px-7 py-3 text-sm font-semibold text-[#6F4228] transition duration-300 hover:-translate-y-0.5 hover:border-[#6F4228] hover:bg-[#F7F2EB]"
-                  >
-                    Explore Menu
-                  </a>
-                </div>
-
                 {/* Feature highlight cards */}
                 <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3">
+
                   <div className="flex items-center gap-3.5 rounded-2xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left">
                     <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D]">
                       <Utensils size={20} />

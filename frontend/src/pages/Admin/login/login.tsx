@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Background from "../../../components/background";
+import { authApi } from "../../../services/authApi";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -18,8 +19,9 @@ export default function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = (event: FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
 
@@ -31,69 +33,69 @@ export default function Login() {
       return;
     }
 
-    // Retrieve users list (including users created in admin)
-    let userList = [
-      {
-        email: "admin@gmail.com",
-        userName: "adminuser",
-        userType: "Admin",
-      },
-      {
-        email: "admin@faaztechsolutions.com",
-        userName: "adminuser",
-        userType: "Admin",
-      },
-      {
-        email: "provider@cafe4x.com",
-        userName: "provider",
-        userType: "Provider",
-      },
-    ];
+    setIsLoading(true);
 
     try {
-      const stored = localStorage.getItem("cafe4x_users");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          userList = parsed;
+      // 1. Send request to backend API
+      const res = await authApi.login({
+        usernameOrEmail: inputUser,
+        password: inputPass,
+      });
+
+      if (res.success && res.user) {
+        if (res.token) {
+          localStorage.setItem("cafe4x_token", res.token);
         }
-      }
-    } catch { }
+        localStorage.setItem("cafe4x_currentUser", JSON.stringify(res.user));
 
-    // Find matching user by email or username
-    const matchedUser = userList.find(
-      (u: any) =>
-        (u.email && u.email.toLowerCase() === inputUser) ||
-        (u.userName && u.userName.toLowerCase() === inputUser)
-    );
-
-    // Save active session
-    if (matchedUser) {
-      localStorage.setItem("cafe4x_currentUser", JSON.stringify(matchedUser));
-      if (matchedUser.userType === "Provider") {
-        navigate("/provider");
+        if (res.user.userType === "Provider") {
+          navigate("/provider");
+          return;
+        }
+        navigate("/landing");
         return;
       }
-      navigate("/landing");
-      return;
-    }
+    } catch (apiErr: any) {
+      // If the backend returned an explicit error (401, 400, etc.), do not bypass password check
+      if (apiErr.message && !apiErr.message.includes("Failed to fetch") && !apiErr.message.includes("NetworkError")) {
+        setError(apiErr.message || "Invalid username/email or password.");
+        return;
+      }
 
-    // If username contains "provider" or provider email domain, navigate to provider
-    if (inputUser.includes("provider")) {
-      localStorage.setItem(
-        "cafe4x_currentUser",
-        JSON.stringify({ email: inputUser, userName: inputUser, userType: "Provider" })
+      // Offline / fallback only: check local storage users with password verification
+      let userList: any[] = [];
+      try {
+        const stored = localStorage.getItem("cafe4x_users");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            userList = parsed;
+          }
+        }
+      } catch { }
+
+      const matchedUser = userList.find(
+        (u: any) =>
+          ((u.email && u.email.toLowerCase() === inputUser) ||
+           (u.userName && u.userName.toLowerCase() === inputUser)) &&
+          u.password === inputPass
       );
-      navigate("/provider");
-      return;
-    }
 
-    // Default to admin landing page
-    localStorage.setItem(
-      "cafe4x_currentUser",
-      JSON.stringify({ email: inputUser, userName: inputUser, userType: "Admin" })
-    );
-    navigate("/landing");
+      if (matchedUser) {
+        const { password: _, ...userSafe } = matchedUser;
+        localStorage.setItem("cafe4x_currentUser", JSON.stringify(userSafe));
+        if (userSafe.userType === "Provider") {
+          navigate("/provider");
+          return;
+        }
+        navigate("/landing");
+        return;
+      }
+
+      setError(apiErr.message || "Invalid credentials. Please verify your login details.");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -307,10 +309,11 @@ export default function Login() {
 
                 <button
                   type="submit"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition duration-200 hover:-translate-y-0.5 hover:shadow-xl"
+                  disabled={isLoading}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition duration-200 hover:-translate-y-0.5 hover:shadow-xl disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Sign In
-                  <ArrowRight size={18} />
+                  {isLoading ? "Signing in..." : "Sign In"}
+                  {!isLoading && <ArrowRight size={18} />}
                 </button>
               </form>
 

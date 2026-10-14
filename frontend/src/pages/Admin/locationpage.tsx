@@ -53,6 +53,25 @@ const defaultSeats: SeatItem[] = [
   { number: "10", id: "S001-F1-10", employee: "vikram.singh@office.com", orderUrl: "https://cafe4x.com/order/738/10" },
 ];
 
+const officeSeats: SeatItem[] = [
+  { number: "01", id: "S003-F1-01", employee: "rizwi@faaztech", orderUrl: `${window.location.origin}/order/3/01` },
+  { number: "02", id: "S003-F1-02", employee: "imthi@faaztech", orderUrl: `${window.location.origin}/order/3/02` },
+  { number: "03", id: "S003-F1-03", employee: "saif@faaztech", orderUrl: `${window.location.origin}/order/3/03` },
+  { number: "04", id: "S003-F1-04", orderUrl: `${window.location.origin}/order/3/04` },
+  { number: "05", id: "S003-F1-05", orderUrl: `${window.location.origin}/order/3/05` },
+  { number: "06", id: "S003-F1-06", orderUrl: `${window.location.origin}/order/3/06` },
+  { number: "07", id: "S003-F1-07", orderUrl: `${window.location.origin}/order/3/07` },
+  { number: "08", id: "S003-F1-08", orderUrl: `${window.location.origin}/order/3/08` },
+  { number: "09", id: "S003-F1-09", orderUrl: `${window.location.origin}/order/3/09` },
+  { number: "10", id: "S003-F1-10", orderUrl: `${window.location.origin}/order/3/10` },
+];
+
+const initialSeatsByLoc: Record<string, SeatItem[]> = {
+  "1": defaultSeats,
+  "2": defaultSeats.map((s) => ({ ...s, id: `S002-F1-${s.number}` })),
+  "3": officeSeats,
+};
+
 export default function LocationPage() {
   const [locations, setLocations] = useState<LocationItem[]>(() => {
     try {
@@ -89,9 +108,29 @@ export default function LocationPage() {
   };
 
   // Seating State for active location
-  const [seatsByLoc, setSeatsByLoc] = useState<Record<string, SeatItem[]>>({
-    "1": defaultSeats,
+  const [seatsByLoc, setSeatsByLoc] = useState<Record<string, SeatItem[]>>(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_seatsByLoc");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === "object") {
+          // ensure office has the employees if not already
+          if (!parsed["3"]) {
+            parsed["3"] = officeSeats;
+          }
+          return parsed;
+        }
+      }
+    } catch { }
+    return initialSeatsByLoc;
   });
+
+  const saveSeatsByLoc = (data: Record<string, SeatItem[]>) => {
+    setSeatsByLoc(data);
+    try {
+      localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(data));
+    } catch { }
+  };
   const [selectedSeatNumber, setSelectedSeatNumber] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
@@ -158,14 +197,15 @@ export default function LocationPage() {
     };
     const updated = [...locations, newLoc];
     saveLocations(updated);
-    setSeatsByLoc((prev) => ({
-      ...prev,
+    const updatedSeats = {
+      ...seatsByLoc,
       [newId]: defaultSeats.map((s) => ({
         ...s,
         id: `S${newId}-F1-${s.number}`,
-        orderUrl: `https://cafe4x.com/order/${newId}/${parseInt(s.number, 10)}`,
+        orderUrl: `${window.location.origin}/order/${newId}/${parseInt(s.number, 10)}`,
       })),
-    }));
+    };
+    saveSeatsByLoc(updatedSeats);
     setNewLocationName("");
     setIsCreateLocationOpen(false);
   };
@@ -210,19 +250,20 @@ export default function LocationPage() {
 
     const customOrderUrl = newSeatForm.orderUrl.trim()
       ? newSeatForm.orderUrl.trim()
-      : `https://cafe4x.com/order/${newSeatForm.location || "738"}/${parseInt(padded, 10) || 1}`;
+      : `${window.location.origin}/order/${locId}/${parseInt(padded, 10) || 1}`;
 
     const created: SeatItem = {
       number: padded,
-      id: newSeatForm.seatId.trim() || `S${locId}-F1-${padded}`,
+      id: newSeatForm.seatId.trim() || `S00${locId}-F1-${padded}`,
       employee: newSeatForm.email.trim() || undefined,
       orderUrl: customOrderUrl,
     };
 
-    setSeatsByLoc((prev) => ({
-      ...prev,
-      [locId]: [...(prev[locId] || []), created],
-    }));
+    const nextSeatsByLoc = {
+      ...seatsByLoc,
+      [locId]: [...(seatsByLoc[locId] || []), created],
+    };
+    saveSeatsByLoc(nextSeatsByLoc);
 
     // Update location totalSeats counter
     const updated = locations.map((l) =>
@@ -233,7 +274,7 @@ export default function LocationPage() {
     setSelectedSeatNumber(padded);
     setIsCreateSeatOpen(false);
     setNewSeatForm({
-      location: "738",
+      location: locId,
       email: "",
       seatId: "",
       seatNo: "",
@@ -641,15 +682,25 @@ export default function LocationPage() {
                                             }`}
                                         >
                                           {seat.number}
+                                          {seat.employee && (
+                                            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[8px]" title={seat.employee}>
+                                              ✓
+                                            </span>
+                                          )}
                                         </div>
 
                                         <div className="h-5 w-1.5 rounded-r-md bg-[#3D281D]" />
                                       </div>
 
                                       {/* Tooltip on Hover */}
-                                      <div className="pointer-events-none absolute -top-8 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                                        <div className="rounded-lg bg-[#2A1C14] px-2 py-0.5 text-[10px] font-bold text-white shadow-md whitespace-nowrap">
+                                      <div className="pointer-events-none absolute -top-9 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                                        <div className="rounded-lg bg-[#2A1C14] px-2.5 py-1 text-[10px] font-bold text-white shadow-md whitespace-nowrap text-center">
                                           Seat {seat.number}
+                                          {seat.employee && (
+                                            <div className="text-[9px] font-normal text-emerald-300">
+                                              {seat.employee}
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
@@ -706,6 +757,11 @@ export default function LocationPage() {
                                             }`}
                                         >
                                           {seat.number}
+                                          {seat.employee && (
+                                            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[8px]" title={seat.employee}>
+                                              ✓
+                                            </span>
+                                          )}
                                         </div>
 
                                         <div className="h-5 w-1.5 rounded-r-md bg-[#3D281D]" />
@@ -715,9 +771,14 @@ export default function LocationPage() {
                                       <div className="h-3 w-12 sm:w-14 rounded-b-xl shadow-sm transition bg-gradient-to-r from-[#704225] via-[#8C5835] to-[#704225]" />
 
                                       {/* Tooltip on Hover */}
-                                      <div className="pointer-events-none absolute -bottom-8 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                                        <div className="rounded-lg bg-[#2A1C14] px-2 py-0.5 text-[10px] font-bold text-white shadow-md whitespace-nowrap">
+                                      <div className="pointer-events-none absolute -bottom-9 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                                        <div className="rounded-lg bg-[#2A1C14] px-2.5 py-1 text-[10px] font-bold text-white shadow-md whitespace-nowrap text-center">
                                           Seat {seat.number}
+                                          {seat.employee && (
+                                            <div className="text-[9px] font-normal text-emerald-300">
+                                              {seat.employee}
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     </div>
@@ -1183,7 +1244,17 @@ export default function LocationPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIsEditSeatOpen(false)}
+                    onClick={() => {
+                      const locId = selectedLocation?.id || "1";
+                      const updatedSeats = (seatsByLoc[locId] || []).map((s) =>
+                        s.number === currentSeat.number ? { ...currentSeat } : s
+                      );
+                      saveSeatsByLoc({
+                        ...seatsByLoc,
+                        [locId]: updatedSeats,
+                      });
+                      setIsEditSeatOpen(false);
+                    }}
                     className="rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 font-semibold text-white shadow-md hover:opacity-95"
                   >
                     Save Changes

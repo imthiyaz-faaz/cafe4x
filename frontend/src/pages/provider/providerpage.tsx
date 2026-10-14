@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   ChevronLeft,
   ChevronRight,
@@ -9,6 +9,11 @@ import {
   Layers,
   ArrowLeft,
   Sparkles,
+  Search,
+  XCircle,
+  Armchair,
+  ShoppingBag,
+  Coffee,
 } from "lucide-react";
 import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
@@ -79,51 +84,76 @@ const initialLocations: ProviderLocation[] = [
 const initialOrders: ProviderOrder[] = [
   {
     id: "#ORD-1001",
-    seat: "03",
-    locationName: "Workspace",
-    employeeName: "Arjun Kumar",
+    seat: "02",
+    locationName: "office",
+    employeeName: "Imthiyaz (imthi@faaztech)",
     items: [
-      { name: "Coffee", qty: 2, price: 20 },
-      { name: "Veg Sandwich", qty: 1, price: 60 },
+      { name: "Coffee", qty: 1, price: 20 },
+      { name: "Tea", qty: 1, price: 18 },
     ],
-    total: 100,
-    time: "2 mins ago",
+    total: 38,
+    time: "1 min ago",
     status: "Pending",
   },
   {
     id: "#ORD-1002",
-    seat: "07",
-    locationName: "Meeting Room",
-    employeeName: "Priya Sharma",
+    seat: "01",
+    locationName: "office",
+    employeeName: "Rizwan (rizwi@faaztech)",
     items: [
-      { name: "Tea", qty: 3, price: 15 },
-      { name: "Samosa", qty: 3, price: 20 },
+      { name: "Lemon Tea", qty: 2, price: 20 },
     ],
-    total: 105,
-    time: "5 mins ago",
+    total: 40,
+    time: "4 mins ago",
     status: "Pending",
   },
   {
     id: "#ORD-1003",
-    seat: "05",
-    locationName: "Workspace",
-    employeeName: "Vikram Singh",
-    items: [{ name: "Cappuccino", qty: 1, price: 30 }],
-    total: 30,
-    time: "12 mins ago",
-    status: "Preparing",
+    seat: "03",
+    locationName: "office",
+    employeeName: "Saif (saif@faaztech)",
+    items: [
+      { name: "Black Coffee", qty: 1, price: 18 },
+      { name: "Milk", qty: 1, price: 18 },
+    ],
+    total: 36,
+    time: "15 mins ago",
+    status: "Delivered",
   },
   {
     id: "#ORD-1004",
     seat: "02",
     locationName: "office",
-    employeeName: "Sneha Reddy",
+    employeeName: "Imthiyaz (imthi@faaztech)",
     items: [
-      { name: "Cold Coffee", qty: 1, price: 40 },
-      { name: "French Fries", qty: 1, price: 50 },
+      { name: "Black Tea", qty: 1, price: 18 },
     ],
-    total: 90,
-    time: "18 mins ago",
+    total: 18,
+    time: "1 hour ago",
+    status: "Canceled",
+  },
+  {
+    id: "#ORD-1005",
+    seat: "01",
+    locationName: "office",
+    employeeName: "Rizwan (rizwi@faaztech)",
+    items: [
+      { name: "Coffee", qty: 2, price: 20 },
+    ],
+    total: 40,
+    time: "2 hours ago",
+    status: "Delivered",
+  },
+  {
+    id: "#ORD-1006",
+    seat: "07",
+    locationName: "Meeting Room",
+    employeeName: "Priya Sharma",
+    items: [
+      { name: "Tea", qty: 3, price: 15 },
+    ],
+    total: 45,
+    time: "35 mins ago",
     status: "Pending",
   },
 ];
@@ -146,8 +176,50 @@ export default function ProviderPage() {
   // Detail view when provider clicks a location
   const [selectedLocation, setSelectedLocation] = useState<ProviderLocation | null>(null);
 
+  // Active Category view inside a selected location: null (shows 4 cards) or "pending" | "canceled" | "delivered" | "all"
+  const [selectedCategory, setSelectedCategory] = useState<OrderCategory | null>(null);
+  const [categorySearch, setCategorySearch] = useState("");
+  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+
   // Live order updates by provider
-  const [orders, setOrders] = useState<ProviderOrder[]>(initialOrders);
+  const [orders, setOrders] = useState<ProviderOrder[]>(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_provider_orders");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return initialOrders;
+  });
+
+  // Listen for storage events or tab changes
+  useEffect(() => {
+    const handleStorage = () => {
+      try {
+        const stored = localStorage.getItem("cafe4x_provider_orders");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) setOrders(parsed);
+        }
+      } catch {}
+    };
+
+    window.addEventListener("storage", handleStorage);
+    // Also poll every 2s for local changes within the same tab/window
+    const interval = setInterval(handleStorage, 2000);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      clearInterval(interval);
+    };
+  }, []);
+
+  const saveOrders = (newOrders: ProviderOrder[]) => {
+    setOrders(newOrders);
+    try {
+      localStorage.setItem("cafe4x_provider_orders", JSON.stringify(newOrders));
+    } catch {}
+  };
 
   // Sync locations from localStorage if admin created any in Admin Location page
   const locations = useMemo(() => {
@@ -194,9 +266,8 @@ export default function ProviderPage() {
   const pendingOrdersCount = orders.filter((o) => o.status === "Pending").length;
 
   const handleUpdateOrderStatus = (orderId: string, nextStatus: ProviderOrder["status"]) => {
-    setOrders((prev) =>
-      prev.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o))
-    );
+    const updated = orders.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o));
+    saveOrders(updated);
   };
 
   return (
@@ -387,14 +458,29 @@ export default function ProviderPage() {
               </div>
             )}
 
-            {/* VIEW 2: LOCATION 4 CATEGORIES (EXACT USER SCREENSHOT) */}
-            {activeTab === "provider" && selectedLocation && (
+            {/* VIEW 2: LOCATION 4 CATEGORIES (EXACT USER SCREENSHOT) & DETAILED ORDERS VIEW */}
+            {activeTab === "provider" && selectedLocation && !selectedCategory && (
               <div>
-                {/* Top Row with Back Button matching screenshot */}
-                <div className="mb-10 flex items-center justify-end">
+                {/* Top Row with Location Title and Back Button matching screenshot */}
+                <div className="mb-8 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
+                    <div>
+                      <h2 className="text-xl font-bold text-[#342219]">
+                        {selectedLocation.name} &bull; Order Categories
+                      </h2>
+                      <p className="text-xs text-[#8A7667]">
+                        Select a category to view and manage employee orders for this location
+                      </p>
+                    </div>
+                  </div>
+
                   <button
                     type="button"
-                    onClick={() => setSelectedLocation(null)}
+                    onClick={() => {
+                      setSelectedLocation(null);
+                      setSelectedCategory(null);
+                    }}
                     title="Back to Locations"
                     className="flex h-10 w-10 items-center justify-center rounded-full bg-[#B38E74] text-white shadow-md transition duration-200 hover:scale-105 hover:bg-[#9E785F]"
                   >
@@ -402,24 +488,44 @@ export default function ProviderPage() {
                   </button>
                 </div>
 
-                {/* The 4 Category Cards (Matching User Screenshot) */}
+                {/* The 4 Category Cards (Matching User Screenshot with live badges & click to view orders) */}
                 <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8">
                   {(["pending", "canceled", "delivered", "all"] as OrderCategory[]).map(
                     (catKey) => {
                       const item = categoryDetails[catKey];
+                      const locOrders = orders.filter((o) =>
+                        selectedLocation
+                          ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
+                            o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office"
+                          : true
+                      );
+                      const count = locOrders.filter((o) => {
+                        if (catKey === "pending") return o.status === "Pending" || o.status === "Preparing" || o.status === "Ready";
+                        if (catKey === "canceled") return o.status === "Canceled";
+                        if (catKey === "delivered") return o.status === "Delivered";
+                        return true;
+                      }).length;
 
                       return (
                         <div
                           key={catKey}
+                          onClick={() => {
+                            setSelectedCategory(catKey);
+                            setCategorySearch("");
+                          }}
                           className="group flex w-[230px] sm:w-[250px] cursor-pointer flex-col overflow-hidden rounded-2xl border border-[#DEC5B0]/70 bg-white shadow-lg transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl"
                         >
                           {/* Top Graphic Illustration Box showing images from image folder */}
-                          <div className="flex h-48 w-full items-center justify-center bg-white p-5 transition group-hover:scale-105 duration-300">
+                          <div className="relative flex h-48 w-full items-center justify-center bg-white p-5 transition group-hover:scale-105 duration-300">
                             <img
                               src={item.image}
                               alt={item.title}
                               className="h-36 w-36 object-contain drop-shadow-sm select-none"
                             />
+                            {/* Live count badge */}
+                            <span className="absolute top-3 right-3 rounded-full bg-[#754329] px-2.5 py-0.5 text-xs font-bold text-white shadow-sm">
+                              {count}
+                            </span>
                           </div>
 
                           {/* Bottom Card Pill Banner */}
@@ -433,6 +539,469 @@ export default function ProviderPage() {
                     }
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* VIEW 2.5: ORDERS LIST FOR THE CLICKED CATEGORY */}
+            {activeTab === "provider" && selectedLocation && selectedCategory && (
+              <div className="space-y-6">
+                {/* Header for Category Orders */}
+                <div className="flex flex-col gap-4 rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-md shadow-[#70452D]/5 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-4">
+                    <img
+                      src={categoryDetails[selectedCategory].image}
+                      alt={categoryDetails[selectedCategory].title}
+                      className="h-14 w-14 object-contain rounded-2xl border border-[#EEDFCE] p-1.5 bg-[#FAF7F2] shadow-2xs"
+                    />
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h2 className="text-2xl font-bold text-[#342219]">
+                          {categoryDetails[selectedCategory].title}s
+                        </h2>
+                        <span className="rounded-full bg-[#F3EFEA] px-2.5 py-0.5 text-xs font-bold text-[#754329] border border-[#DEC5B0]">
+                          {selectedLocation.name}
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#8A7667]">
+                        {categoryDetails[selectedCategory].subtitle} &bull; Real-time kitchen dispatch
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {/* Category Switcher Tabs */}
+                    <div className="hidden lg:flex items-center rounded-xl bg-[#FAF8F5] p-1 border border-[#DEC5B0]">
+                      {(["pending", "canceled", "delivered", "all"] as OrderCategory[]).map((cKey) => (
+                        <button
+                          key={cKey}
+                          type="button"
+                          onClick={() => setSelectedCategory(cKey)}
+                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition capitalize ${
+                            selectedCategory === cKey
+                              ? "bg-[#754329] text-white shadow-2xs"
+                              : "text-[#70523E] hover:bg-white/80"
+                          }`}
+                        >
+                          {cKey}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory(null)}
+                      className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs"
+                    >
+                      <ArrowLeft size={16} />
+                      <span>Back to Categories</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Search & Stats Bar */}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="relative w-full sm:w-80">
+                    <Search
+                      size={16}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                    />
+                    <input
+                      type="text"
+                      value={categorySearch}
+                      onChange={(e) => setCategorySearch(e.target.value)}
+                      placeholder="Search by employee, seat, or order ID..."
+                      className="w-full rounded-xl border border-[#E8DED4] bg-white py-2 pl-9 pr-3 text-xs text-[#342219] shadow-xs outline-none transition placeholder:text-[#B1A69D] focus:border-[#9A6747] focus:ring-2 focus:ring-[#9A6747]/10"
+                    />
+                  </div>
+
+                  {/* Summary Counts */}
+                  {(() => {
+                    const locOrders = orders.filter((o) =>
+                      selectedLocation
+                        ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
+                          (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
+                        : true
+                    );
+                    const pendingCount = locOrders.filter((o) => o.status === "Pending" || o.status === "Preparing" || o.status === "Ready").length;
+                    const deliveredCount = locOrders.filter((o) => o.status === "Delivered").length;
+                    const canceledCount = locOrders.filter((o) => o.status === "Canceled").length;
+
+                    return (
+                      <div className="flex flex-wrap items-center gap-2 text-xs">
+                        <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-bold text-amber-900 border border-amber-200">
+                          Pending: {pendingCount}
+                        </span>
+                        <span className="rounded-lg bg-emerald-100 px-2.5 py-1 font-bold text-emerald-900 border border-emerald-200">
+                          Delivered: {deliveredCount}
+                        </span>
+                        <span className="rounded-lg bg-rose-100 px-2.5 py-1 font-bold text-rose-900 border border-rose-200">
+                          Canceled: {canceledCount}
+                        </span>
+                        <span className="rounded-lg bg-stone-100 px-2.5 py-1 font-bold text-stone-800 border border-stone-200">
+                          Total: {locOrders.length}
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Master-Detail Orders Layout matching exact screenshot */}
+                {(() => {
+                  const locOrders = orders.filter((o) =>
+                    selectedLocation
+                      ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
+                        (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
+                      : true
+                  );
+
+                  const filtered = locOrders.filter((order) => {
+                    // Category filter
+                    if (selectedCategory === "pending") {
+                      if (!(order.status === "Pending" || order.status === "Preparing" || order.status === "Ready")) return false;
+                    } else if (selectedCategory === "canceled") {
+                      if (order.status !== "Canceled") return false;
+                    } else if (selectedCategory === "delivered") {
+                      if (order.status !== "Delivered") return false;
+                    }
+                    // Text search filter
+                    if (categorySearch.trim()) {
+                      const q = categorySearch.toLowerCase();
+                      const matchName = order.employeeName.toLowerCase().includes(q);
+                      const matchId = order.id.toLowerCase().includes(q);
+                      const matchSeat = order.seat.toLowerCase().includes(q);
+                      const matchItem = order.items.some((i) => i.name.toLowerCase().includes(q));
+                      return matchName || matchId || matchSeat || matchItem;
+                    }
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="my-8 rounded-3xl border border-[#EEE5DC] bg-white/90 p-12 text-center shadow-sm">
+                        <Sparkles className="mx-auto mb-3 h-12 w-12 text-[#A08C7D]" />
+                        <h3 className="text-base font-bold text-[#342219]">
+                          No {categoryDetails[selectedCategory].title}s Found
+                        </h3>
+                        <p className="mt-1 text-xs text-[#8A7667]">
+                          There are currently no orders in this category for {selectedLocation.name}.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  // Default selected order if none clicked yet or invalid
+                  const activeOrder =
+                    filtered.find((o) => o.id === selectedOrderId) || filtered[0];
+
+                  return (
+                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                      {/* ========================================================
+                          LEFT SIDEBAR: ORDER LIST (MATCHING EXACT USER SCREENSHOT)
+                         ======================================================== */}
+                      <div className="flex flex-col rounded-2xl border border-[#E8DED4] bg-white shadow-md overflow-hidden lg:col-span-5">
+                        <div className="flex items-center justify-between border-b border-[#F0E6DB] bg-[#FAF8F5] px-4 py-3">
+                          <span className="text-xs font-bold uppercase tracking-wider text-[#754329]">
+                            {categoryDetails[selectedCategory].title} Queue ({filtered.length})
+                          </span>
+                          <span className="rounded bg-[#007BFF] px-2 py-0.5 text-[10px] font-bold text-white shadow-2xs">
+                            Active
+                          </span>
+                        </div>
+
+                        {/* Scrollable list of orders */}
+                        <div className="divide-y divide-[#F0E6DB] max-h-[600px] overflow-y-auto">
+                          {filtered.map((order) => {
+                            const isSelected = activeOrder?.id === order.id;
+                            // Clean display name: first word e.g. "Imthiyaz", "Rizwan"
+                            const shortName = order.employeeName.split(" ")[0].split("@")[0];
+                            const cleanName = shortName.charAt(0).toUpperCase() + shortName.slice(1);
+                            // Items summary line e.g. "Coffee : 1", "Milk : 1"
+                            const firstItem = order.items[0];
+                            const summaryText = firstItem
+                              ? `${firstItem.name} : ${firstItem.qty}${order.items.length > 1 ? ` +${order.items.length - 1} more` : ""}`
+                              : "Order Items";
+
+                            return (
+                              <div
+                                key={order.id}
+                                onClick={() => setSelectedOrderId(order.id)}
+                                className={`flex items-start gap-4 p-4 cursor-pointer transition-colors duration-150 ${
+                                  isSelected
+                                    ? "bg-[#FAF4ED] border-l-4 border-l-[#8C5835]"
+                                    : "hover:bg-[#FCFAF8]"
+                                }`}
+                              >
+                                {/* Left Chair / Seat Graphic Column with Employee Name */}
+                                <div className="flex flex-col items-center justify-center w-16 shrink-0 text-center">
+                                  {/* Realistic Chair Icon matching screenshot */}
+                                  <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D2A28] via-[#3D3A37] to-[#1F1C1B] text-white shadow-md border-2 border-stone-600">
+                                    <Armchair size={24} className="text-stone-200 drop-shadow-sm" />
+                                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#8C5835] text-[9px] font-bold text-white border border-white">
+                                      {order.seat}
+                                    </span>
+                                  </div>
+                                  <span className="mt-1.5 text-xs font-semibold text-[#342219] truncate max-w-[68px]">
+                                    {cleanName}
+                                  </span>
+                                </div>
+
+                                {/* Right Order Info Column matching screenshot */}
+                                <div className="flex flex-1 flex-col justify-between">
+                                  <div className="flex items-start justify-between">
+                                    <span className="text-xs font-bold text-stone-800">
+                                      {summaryText}
+                                    </span>
+                                    <span className="font-bold text-xs text-stone-900">
+                                      ₹ {order.total.toFixed(2)}
+                                    </span>
+                                  </div>
+
+                                  {/* Order ID matching screenshot e.g. 0000885 */}
+                                  <span
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedOrderId(order.id);
+                                    }}
+                                    className="mt-0.5 text-xs font-mono font-semibold text-blue-600 hover:underline cursor-pointer"
+                                  >
+                                    {order.id.replace("#ORD-", "0000")}
+                                  </span>
+
+                                  {/* Date & Time + New Status Badge */}
+                                  <div className="mt-1 flex items-center justify-between">
+                                    <span className="text-[11px] text-[#8A7667]">
+                                      {order.time.includes("ago")
+                                        ? `${new Date().toLocaleDateString("en-GB")} ${order.time}`
+                                        : order.time}
+                                    </span>
+
+                                    <span
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold text-white shadow-2xs ${
+                                        order.status === "Pending"
+                                          ? "bg-[#007BFF]"
+                                          : order.status === "Preparing"
+                                          ? "bg-amber-600"
+                                          : order.status === "Ready"
+                                          ? "bg-purple-600"
+                                          : order.status === "Delivered"
+                                          ? "bg-emerald-600"
+                                          : "bg-rose-600"
+                                      }`}
+                                    >
+                                      {order.status === "Pending" ? "New" : order.status}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Bottom pagination matching screenshot: 12 < 1 of 1 > Total Records: X */}
+                        <div className="flex items-center justify-between border-t border-[#F0E6DB] bg-[#FAF8F5] px-4 py-2.5 text-xs text-[#70523E]">
+                          <div className="flex items-center gap-2">
+                            <span className="rounded border border-stone-300 bg-white px-2 py-0.5 font-medium">
+                              12 ▼
+                            </span>
+                            <span className="cursor-pointer font-bold">&laquo;</span>
+                            <span className="cursor-pointer font-bold">&lsaquo;</span>
+                            <span className="rounded border border-stone-300 bg-white px-2 py-0.5 font-bold">
+                              1
+                            </span>
+                            <span>of 1</span>
+                            <span className="cursor-pointer font-bold">&rsaquo;</span>
+                            <span className="cursor-pointer font-bold">&raquo;</span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 font-medium italic">
+                            <span>Total Records:</span>
+                            <span className="rounded bg-[#007BFF] px-2 py-0.5 not-italic font-bold text-white">
+                              {filtered.length}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ========================================================
+                          RIGHT SIDEBAR: SEPARATED ORDERED ITEMS DETAIL VIEW
+                         ======================================================== */}
+                      <div className="flex flex-col rounded-2xl border border-[#E8DED4] bg-white p-6 shadow-md lg:col-span-7">
+                        {activeOrder ? (
+                          <div className="flex flex-col h-full justify-between">
+                            <div>
+                              {/* Order Detail Header */}
+                              <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-4">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="text-lg font-bold text-[#342219]">
+                                      Order {activeOrder.id}
+                                    </h3>
+                                    <span
+                                      className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
+                                        activeOrder.status === "Pending"
+                                          ? "bg-blue-100 text-blue-800"
+                                          : activeOrder.status === "Preparing"
+                                          ? "bg-amber-100 text-amber-800"
+                                          : activeOrder.status === "Ready"
+                                          ? "bg-purple-100 text-purple-800"
+                                          : activeOrder.status === "Delivered"
+                                          ? "bg-emerald-100 text-emerald-800"
+                                          : "bg-rose-100 text-rose-800"
+                                      }`}
+                                    >
+                                      {activeOrder.status}
+                                    </span>
+                                  </div>
+                                  <p className="text-xs text-[#8A7667]">
+                                    Ordered by{" "}
+                                    <span className="font-semibold text-[#342219]">
+                                      {activeOrder.employeeName}
+                                    </span>{" "}
+                                    at{" "}
+                                    <span className="font-semibold text-[#8C5835]">
+                                      Seat {activeOrder.seat}
+                                    </span>{" "}
+                                    ({activeOrder.locationName})
+                                  </p>
+                                </div>
+
+                                <div className="text-right">
+                                  <span className="text-xs text-[#8A7667]">Order Time</span>
+                                  <div className="text-xs font-bold text-[#342219]">
+                                    {activeOrder.time}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Separate Item Cards Breakdown */}
+                              <div className="my-5">
+                                <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-[#754329]">
+                                  Items Ordered Separately ({activeOrder.items.length})
+                                </h4>
+
+                                <div className="space-y-3">
+                                  {activeOrder.items.map((it, idx) => (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center justify-between rounded-xl border border-[#EEE5DC] bg-[#FAF8F5] p-3.5 shadow-2xs hover:border-[#D5C2B1] transition"
+                                    >
+                                      <div className="flex items-center gap-3">
+                                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white border border-[#E8DED4] text-[#70452D] shadow-2xs">
+                                          <Coffee size={20} />
+                                        </div>
+                                        <div>
+                                          <h5 className="text-sm font-bold text-[#342219]">
+                                            {it.name}
+                                          </h5>
+                                          <span className="text-xs text-[#8A7667]">
+                                            Unit Price: ₹{it.price}
+                                          </span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-4">
+                                        <div className="rounded-lg bg-white px-2.5 py-1 text-xs font-bold text-[#70452D] border border-[#DEC5B0]">
+                                          Qty: {it.qty}
+                                        </div>
+                                        <div className="text-sm font-black text-[#342219] w-20 text-right">
+                                          ₹ {(it.price * it.qty).toFixed(2)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+
+                                {/* Order Notes if any */}
+                                {(activeOrder as any).notes && (
+                                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/80 p-3 text-xs text-amber-900">
+                                    <span className="font-bold">Special Instructions: </span>
+                                    {(activeOrder as any).notes}
+                                  </div>
+                                )}
+
+                                {/* Bill Summary Box */}
+                                <div className="mt-5 rounded-xl border border-[#E8DED4] bg-[#F7F3EE] p-4 text-xs space-y-2">
+                                  <div className="flex justify-between text-[#8A7667]">
+                                    <span>Items Subtotal</span>
+                                    <span>₹ {activeOrder.total.toFixed(2)}</span>
+                                  </div>
+                                  <div className="flex justify-between text-[#8A7667]">
+                                    <span>Taxes & Service</span>
+                                    <span>₹ 0.00</span>
+                                  </div>
+                                  <div className="border-t border-[#DEC5B0] pt-2 flex justify-between text-base font-black text-[#754329]">
+                                    <span>Total Amount</span>
+                                    <span>₹ {activeOrder.total.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Action Buttons for Provider */}
+                            <div className="flex items-center justify-end gap-3 border-t border-[#F0E6DB] pt-4">
+                              {activeOrder.status === "Pending" && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateOrderStatus(activeOrder.id, "Canceled")}
+                                    className="rounded-xl border border-rose-200 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 transition"
+                                  >
+                                    Decline Order
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateOrderStatus(activeOrder.id, "Preparing")}
+                                    className="rounded-xl bg-[#754329] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
+                                  >
+                                    Start Preparing
+                                  </button>
+                                </>
+                              )}
+
+                              {activeOrder.status === "Preparing" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateOrderStatus(activeOrder.id, "Ready")}
+                                  className="rounded-xl bg-[#28A745] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
+                                >
+                                  Mark Order Ready
+                                </button>
+                              )}
+
+                              {activeOrder.status === "Ready" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateOrderStatus(activeOrder.id, "Delivered")}
+                                  className="rounded-xl bg-[#007BFF] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
+                                >
+                                  Deliver to Seat {activeOrder.seat}
+                                </button>
+                              )}
+
+                              {activeOrder.status === "Delivered" && (
+                                <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                                  <CheckCircle2 size={16} /> Delivered to Seat {activeOrder.seat}
+                                </div>
+                              )}
+
+                              {activeOrder.status === "Canceled" && (
+                                <div className="flex items-center gap-2 text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
+                                  <XCircle size={16} /> Order Canceled
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-64 text-center">
+                            <ShoppingBag className="h-10 w-10 text-[#A08C7D] mb-2" />
+                            <p className="text-sm font-bold text-[#342219]">No Order Selected</p>
+                            <p className="text-xs text-[#8A7667]">Click any order on the left to inspect items</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 

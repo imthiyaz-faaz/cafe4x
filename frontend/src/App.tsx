@@ -6,6 +6,7 @@ import ItemsPage from './pages/Admin/itemspage'
 import OrdersPage from './pages/Admin/orderspages'
 import WorkingHoursPage from './pages/Admin/workinghourspage'
 import ProviderPage from './pages/provider/providerpage'
+import UserOrderPage from './pages/user/userorder'
 import Home from './pages/Admin/login/homepage'
 import Login from './pages/Admin/login/login'
 import Signup from './pages/Admin/login/signup'
@@ -24,6 +25,11 @@ export default function App() {
       <Route path="/working-hours" element={<WorkingHoursPage />} />
       <Route path="/provider" element={<ProviderPage />} />
       <Route path="/FTS/Provider" element={<ProviderPage />} />
+      {/* Employee / Guest Order QR routes */}
+      <Route path="/emporder" element={<UserOrderPage />} />
+      <Route path="/order/:locationId/:seatNumber" element={<UserOrderPage />} />
+      <Route path="/FTS/qrorder/:qrToken" element={<UserOrderPage />} />
+      <Route path="/qrorder/:qrToken" element={<UserOrderPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )

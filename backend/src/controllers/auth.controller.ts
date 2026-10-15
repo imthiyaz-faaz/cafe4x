@@ -1,5 +1,6 @@
 import { Context } from "hono";
-import { usersStore, UserModel } from "./user.controller";
+import { usersStore, syncFromDb, UserModel } from "./user.controller";
+import { getDb } from "../db";
 
 export const authController = {
   async login(c: Context) {
@@ -15,12 +16,57 @@ export const authController = {
         }, 400);
       }
 
-      // Check matching user from centralized usersStore (including newly created users!)
-      const matched = usersStore.find(
+      // Always sync latest state from SQLite
+      syncFromDb();
+
+      // Check matching user from centralized usersStore or directly from DB
+      let matched = usersStore.find(
         (u) =>
           (u.email.toLowerCase() === identifier || u.userName.toLowerCase() === identifier) &&
           u.password === password
       );
+
+      if (!matched) {
+        try {
+          const db = getDb();
+          const row = db.prepare(`
+            SELECT 
+              u.id, 
+              u.name, 
+              u.user_name as userName, 
+              u.password, 
+              u.email, 
+              u.mobile_number as mobileNumber, 
+              u.user_type as userType, 
+              o.id as organizationId, 
+              o.short_code as shortCode,
+              o.name as organization,
+              u.created_at as createdAt
+            FROM users u
+            LEFT JOIN user_organizations uo ON u.id = uo.user_id
+            LEFT JOIN organizations o ON uo.organization_id = o.id
+            WHERE (LOWER(u.email) = ? OR LOWER(u.user_name) = ?) AND u.password = ?
+          `).get(identifier, identifier, password) as any;
+
+          if (row) {
+            matched = {
+              id: String(row.id),
+              name: row.name,
+              userName: row.userName,
+              password: row.password,
+              email: row.email,
+              mobileNumber: row.mobileNumber || "",
+              userType: row.userType,
+              organizationId: row.organizationId,
+              shortCode: row.shortCode,
+              organization: row.organization || "",
+              createdAt: row.createdAt,
+            };
+          }
+        } catch (dbErr) {
+          console.warn("Direct DB login query error:", dbErr);
+        }
+      }
 
       if (matched) {
         const { password: _, ...userSafe } = matched;
@@ -38,7 +84,7 @@ export const authController = {
             ORDER BY o.created_at DESC
           `).all(matched.id) as any[];
         } catch {}
-
+console.log(userOrgs)
         if (userOrgs.length === 0) {
           const { organizationsStore } = await import("./organization.controller");
           userOrgs = organizationsStore.filter(

@@ -41,6 +41,7 @@ export default function App() {
       {/* Employee / Guest Order QR routes */}
       <Route path="/emporder" element={<UserOrderPage />} />
       <Route path="/order/:locationId/:seatNumber" element={<UserOrderPage />} />
+      <Route path="/:shortCode/order/:locationId/:seatNumber" element={<UserOrderPage />} />
       <Route path="/:shortCode/qrorder/:qrToken" element={<UserOrderPage />} />
       <Route path="/qrorder/:qrToken" element={<UserOrderPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

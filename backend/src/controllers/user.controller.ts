@@ -15,10 +15,9 @@ export interface UserModel {
   createdAt: string;
 }
 
-// In-memory fallback / cache synchronized with SQLite
 export let usersStore: UserModel[] = [];
 
-function syncFromDb() {
+export function syncFromDb() {
   try {
     const db = getDb();
     const rows = db.prepare(`
@@ -53,8 +52,6 @@ function syncFromDb() {
         organization: r.organization || "",
         createdAt: r.createdAt,
       }));
-    } else {
-      usersStore = [];
     }
   } catch (err) {
     console.warn("Could not sync from SQLite, using in-memory store:", err);

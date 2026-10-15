@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { User, Plus, X, Loader2 } from "lucide-react";
+import { User, Plus, Loader2 } from "lucide-react";
 import { organizationApi, type Organization } from "../../../services/organizationApi";
 import Background from "../../../components/background";
 import logoImg from "../../../assets/images/logo.png";
+import CreateFormModal, { FormRow } from "../../../components/common/CreateFormModal";
 
 export default function ChooseOrganizationPage() {
   const navigate = useNavigate();
@@ -58,7 +59,7 @@ export default function ChooseOrganizationPage() {
           return;
         }
       }
-    } catch {}
+    } catch { }
 
     // If user has organization from signup/credentials
     if (user?.organization) {
@@ -111,7 +112,7 @@ export default function ChooseOrganizationPage() {
       setOrganizations(updatedOrgs);
       try {
         localStorage.setItem("cafe4x_organizations", JSON.stringify(updatedOrgs));
-      } catch {}
+      } catch { }
 
       // Reset and close
       setOrgName("");
@@ -132,7 +133,7 @@ export default function ChooseOrganizationPage() {
       setOrganizations(updatedOrgs);
       try {
         localStorage.setItem("cafe4x_organizations", JSON.stringify(updatedOrgs));
-      } catch {}
+      } catch { }
 
       setOrgName("");
       setShortCode("");
@@ -241,92 +242,48 @@ export default function ChooseOrganizationPage() {
         )}
       </div>
 
-      {/* Organization Create Modal matching screenshot */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="relative w-full max-w-md rounded-md bg-white shadow-2xl p-6 sm:p-7">
-            {/* Header */}
-            <div className="flex items-center justify-between pb-3 border-b border-gray-200 mb-6">
-              <h3 className="text-xl font-bold text-[#342219] font-sans">
-                Organization Create
-              </h3>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 transition p-1"
-              >
-                <X size={20} />
-              </button>
-            </div>
+      {/* Organization Create Modal matching app theme */}
+      <CreateFormModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title="Organization Create"
+        onSubmit={handleCreateSubmit}
+        isSubmitting={modalLoading}
+        maxWidth="md"
+      >
+        {modalError && (
+          <p className="mb-2 text-xs font-semibold text-red-600">
+            {modalError}
+          </p>
+        )}
 
-            {modalError && (
-              <p className="mb-4 text-xs font-semibold text-red-600">
-                {modalError}
-              </p>
-            )}
+        <FormRow label="name" required>
+          <input
+            id="org-name"
+            required
+            placeholder="name"
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+          />
+        </FormRow>
 
-            {/* Form */}
-            <form onSubmit={handleCreateSubmit} className="space-y-4">
-              <div className="grid grid-cols-4 items-center gap-3">
-                <label
-                  htmlFor="org-name"
-                  className="col-span-1 text-[15px] font-bold text-[#342219]"
-                >
-                  name
-                </label>
-                <input
-                  id="org-name"
-                  required
-                  placeholder="name"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  className="col-span-3 rounded-[3px] border border-gray-300 px-3 py-1.5 text-sm outline-none focus:border-[#009bb3] focus:ring-1 focus:ring-[#009bb3]"
-                />
-              </div>
+        <FormRow label="shortCode" required>
+          <input
+            id="org-shortCode"
+            required
+            placeholder="shortCode"
+            value={shortCode}
+            onChange={(e) =>
+              setShortCode(
+                e.target.value.replace(/[^a-zA-Z0-9_-]/g, "").toUpperCase()
+              )
+            }
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm uppercase outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+          />
+        </FormRow>
+      </CreateFormModal>
 
-              <div className="grid grid-cols-4 items-center gap-3">
-                <label
-                  htmlFor="org-shortCode"
-                  className="col-span-1 text-[15px] font-bold text-[#342219]"
-                >
-                  shortCode
-                </label>
-                <input
-                  id="org-shortCode"
-                  required
-                  placeholder="shortCode"
-                  value={shortCode}
-                  onChange={(e) =>
-                    setShortCode(
-                      e.target.value.replace(/[^a-zA-Z0-9_-]/g, "").toUpperCase()
-                    )
-                  }
-                  className="col-span-3 rounded-[3px] border border-gray-300 px-3 py-1.5 text-sm uppercase outline-none focus:border-[#009bb3] focus:ring-1 focus:ring-[#009bb3]"
-                />
-              </div>
-
-              {/* Action buttons matching screenshot */}
-              <div className="flex justify-end items-center gap-2 pt-6">
-                <button
-                  type="submit"
-                  disabled={modalLoading}
-                  className="rounded-[3px] border border-[#2E8B57] bg-white px-4 py-1.5 text-sm font-semibold text-[#2E8B57] hover:bg-green-50 transition disabled:opacity-60 cursor-pointer shadow-sm"
-                >
-                  {modalLoading ? "Saving..." : "Submit"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  disabled={modalLoading}
-                  className="rounded-[3px] bg-[#C43D43] px-4 py-1.5 text-sm font-semibold text-white hover:bg-red-700 transition cursor-pointer shadow-sm"
-                >
-                  Close
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </Background>
   );
 }

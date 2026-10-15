@@ -1,6 +1,6 @@
 import React, { useState } from "react";
-import { X } from "lucide-react";
 import type { UserItem } from "../../pages/Admin/Userspage";
+import CreateFormModal, { FormRow } from "../common/CreateFormModal";
 
 interface UserCreateProps {
   isOpen: boolean;
@@ -81,186 +81,113 @@ export default function UserCreate({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs">
-      <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-          <h3 className="text-xl font-semibold text-gray-800">User Create</h3>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-gray-400 hover:text-gray-700"
-          >
-            <X size={20} />
-          </button>
+    <CreateFormModal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="User Create"
+      onSubmit={handleSubmit}
+      submitText="Submit"
+      closeText="Close"
+      maxWidth="lg"
+    >
+      {error && (
+        <div className="mb-2 rounded-lg bg-red-50 p-2 text-xs font-semibold text-red-600 border border-red-200">
+          {error}
         </div>
+      )}
 
-        {/* Error message */}
-        {error && (
-          <div className="mt-3 rounded-lg bg-red-50 p-2 text-xs font-semibold text-red-600 border border-red-200">
-            {error}
-          </div>
-        )}
+      {/* Name */}
+      <FormRow label="Name" required>
+        <input
+          required
+          type="text"
+          placeholder="Name"
+          value={formData.name}
+          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
 
-        {/* Form fields in table/grid alignment matching screenshot */}
-        <form onSubmit={handleSubmit} className="mt-5 space-y-3.5 text-sm">
-          {/* Name */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              Name <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="text"
-                placeholder="Name"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
+      {/* User Name */}
+      <FormRow label="User Name" required>
+        <input
+          required
+          type="text"
+          placeholder="User Name"
+          value={formData.userName}
+          onChange={(e) => setFormData({ ...formData, userName: e.target.value })}
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
 
-          {/* User Name */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              User Name <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="text"
-                placeholder="User Name"
-                value={formData.userName}
-                onChange={(e) =>
-                  setFormData({ ...formData, userName: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
+      {/* Password */}
+      <FormRow label="Password" required>
+        <input
+          required
+          type="password"
+          placeholder="Password"
+          value={formData.password}
+          onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
 
-          {/* Password */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              Password <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="password"
-                placeholder="Password"
-                value={formData.password}
-                onChange={(e) =>
-                  setFormData({ ...formData, password: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
+      {/* Confirm Password */}
+      <FormRow label="Confirm Password" required>
+        <input
+          required
+          type="password"
+          placeholder="ConfirmPassword"
+          value={formData.confirmPassword}
+          onChange={(e) =>
+            setFormData({ ...formData, confirmPassword: e.target.value })
+          }
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
 
-          {/* Confirm Password */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              Confirm Password <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="password"
-                placeholder="ConfirmPassword"
-                value={formData.confirmPassword}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    confirmPassword: e.target.value,
-                  })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
+      {/* User Type */}
+      <FormRow label="User Type" required>
+        <div className="relative">
+          <select
+            value={formData.userType}
+            onChange={(e) => setFormData({ ...formData, userType: e.target.value })}
+            className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
+          >
+            <option value="Admin">Admin</option>
+            <option value="Provider">Provider</option>
+          </select>
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
+            ▼
+          </span>
+        </div>
+      </FormRow>
 
-          {/* User Type */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              User Type <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <select
-                value={formData.userType}
-                onChange={(e) =>
-                  setFormData({ ...formData, userType: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745]"
-              >
-                <option value="Admin">Admin</option>
-                <option value="Provider">Provider</option>
-              </select>
-            </div>
-          </div>
+      {/* Email */}
+      <FormRow label="Email" required>
+        <input
+          required
+          type="email"
+          placeholder="Email"
+          value={formData.email}
+          onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
 
-          {/* Email */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              Email <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="email"
-                placeholder="Email"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData({ ...formData, email: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
-
-          {/* Mobile Number */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-4 font-semibold text-gray-800">
-              Mobile Number <span className="text-red-500">*</span>
-            </label>
-            <div className="col-span-8">
-              <input
-                required
-                type="tel"
-                placeholder="Mobile Number"
-                value={formData.mobileNumber}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    mobileNumber: e.target.value,
-                  })
-                }
-                className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-              />
-            </div>
-          </div>
-
-          {/* Bottom Buttons: Submit and Close */}
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
-            <button
-              type="submit"
-              className="rounded-md border border-[#28A745] bg-white px-5 py-2 font-medium text-[#28A745] transition hover:bg-[#28A745] hover:text-white"
-            >
-              Submit
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-md bg-[#DC3545] px-5 py-2 font-medium text-white shadow-xs transition hover:bg-[#c82333]"
-            >
-              Close
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+      {/* Mobile Number */}
+      <FormRow label="Mobile Number" required>
+        <input
+          required
+          type="tel"
+          placeholder="Mobile Number"
+          value={formData.mobileNumber}
+          onChange={(e) =>
+            setFormData({ ...formData, mobileNumber: e.target.value })
+          }
+          className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+        />
+      </FormRow>
+    </CreateFormModal>
   );
 }

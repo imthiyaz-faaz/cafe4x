@@ -1,19 +1,42 @@
-// Centralized API configuration and base URL
-export const API_BASE_URL =
-  import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+export const API_BASE_URL: string =
+  (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8787";
 
-export async function apiFetch<T>(
+export interface ApiRequestOptions extends RequestInit {
+  params?: Record<string, string | number | boolean | undefined | null>;
+}
+
+export function buildUrl(
   endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = endpoint.startsWith("http")
+  params?: Record<string, string | number | boolean | undefined | null>
+): string {
+  const base = endpoint.startsWith("http")
     ? endpoint
     : `${API_BASE_URL}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
 
-  const token = localStorage.getItem("cafe4x_token");
-  const headers = new Headers(options.headers || {});
+  if (!params) return base;
 
-  if (!headers.has("Content-Type") && !(options.body instanceof FormData)) {
+  const searchParams = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      searchParams.append(key, String(value));
+    }
+  });
+
+  const queryString = searchParams.toString();
+  return queryString ? `${base}${base.includes("?") ? "&" : "?"}${queryString}` : base;
+}
+
+export async function apiRequest<T = any>(
+  endpoint: string,
+  options: ApiRequestOptions = {}
+): Promise<T> {
+  const { params, headers: customHeaders, ...fetchOptions } = options;
+  const url = buildUrl(endpoint, params);
+
+  const token = localStorage.getItem("cafe4x_token");
+  const headers = new Headers(customHeaders || {});
+
+  if (!headers.has("Content-Type") && !(fetchOptions.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -22,7 +45,7 @@ export async function apiFetch<T>(
   }
 
   const response = await fetch(url, {
-    ...options,
+    ...fetchOptions,
     headers,
   });
 
@@ -31,12 +54,48 @@ export async function apiFetch<T>(
   try {
     data = text ? JSON.parse(text) : {};
   } catch {
-    data = { message: text || "Unexpected server response" };
+    data = { message: text || `HTTP error ${response.status}` };
   }
 
   if (!response.ok) {
-    throw new Error(data.message || `Request failed with status ${response.status}`);
+    const errorMsg =
+      data.message ||
+      data.error ||
+      `Request failed with status ${response.status} (${response.statusText})`;
+    throw new Error(errorMsg);
   }
 
   return data as T;
 }
+
+export const api = {
+  get: <T = any>(endpoint: string, params?: Record<string, any>, options?: RequestInit) =>
+    apiRequest<T>(endpoint, { ...options, method: "GET", params }),
+
+  post: <T = any>(endpoint: string, body?: any, options?: RequestInit) =>
+    apiRequest<T>(endpoint, {
+      ...options,
+      method: "POST",
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+
+  put: <T = any>(endpoint: string, body?: any, options?: RequestInit) =>
+    apiRequest<T>(endpoint, {
+      ...options,
+      method: "PUT",
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+
+  patch: <T = any>(endpoint: string, body?: any, options?: RequestInit) =>
+    apiRequest<T>(endpoint, {
+      ...options,
+      method: "PATCH",
+      body: body instanceof FormData ? body : JSON.stringify(body),
+    }),
+
+  delete: <T = any>(endpoint: string, options?: RequestInit) =>
+    apiRequest<T>(endpoint, { ...options, method: "DELETE" }),
+};
+
+export const apiFetch = apiRequest;
+export default api;

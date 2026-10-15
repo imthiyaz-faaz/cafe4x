@@ -10,7 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Background from "../../../components/background";
-import { authApi } from "../../../services/authApi";
+import { authApi } from "../../../services/auth";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -84,7 +84,7 @@ export default function Login() {
       const matchedUser = userList.find(
         (u: any) =>
           ((u.email && u.email.toLowerCase() === inputUser) ||
-           (u.userName && u.userName.toLowerCase() === inputUser)) &&
+            (u.userName && u.userName.toLowerCase() === inputUser)) &&
           u.password === inputPass
       );
 

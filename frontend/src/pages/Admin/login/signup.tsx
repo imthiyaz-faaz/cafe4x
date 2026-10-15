@@ -18,7 +18,7 @@ import {
   Loader2,
 } from 'lucide-react'
 import Background from '../../../components/background'
-import { authApi } from '../../../services/authApi'
+import { authApi } from '../../../services/auth'
 
 interface SignupData {
   username: string

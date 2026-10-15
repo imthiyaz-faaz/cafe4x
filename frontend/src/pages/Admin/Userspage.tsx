@@ -174,7 +174,7 @@ export default function UsersPage() {
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) currentUserOrg = JSON.parse(stored).organization || "";
-    } catch {}
+    } catch { }
 
     const userWithOrg: UserItem = {
       ...newUser,

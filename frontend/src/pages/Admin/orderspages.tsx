@@ -72,7 +72,7 @@ export default function OrdersPage() {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) return parsed;
       }
-    } catch {}
+    } catch { }
     return isNewOrg ? [] : initialOrders;
   });
 
@@ -103,11 +103,11 @@ export default function OrdersPage() {
           const mapped: OrderRecord[] = serverOrders.map((so) => {
             const initials = so.employeeName
               ? so.employeeName
-                  .split(" ")
-                  .map((p) => p[0])
-                  .join("")
-                  .slice(0, 2)
-                  .toUpperCase()
+                .split(" ")
+                .map((p) => p[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()
               : "EM";
 
             const itemsMapped = (so.items || []).map((it) => ({
@@ -148,14 +148,14 @@ export default function OrdersPage() {
               } else {
                 setOrders([]);
               }
-            } catch {}
+            } catch { }
             return;
           }
 
           setOrders(mapped);
           try {
             localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
-          } catch {}
+          } catch { }
         }
       })
       .catch(() => {
@@ -165,7 +165,7 @@ export default function OrdersPage() {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed)) setOrders(parsed);
           }
-        } catch {}
+        } catch { }
       });
   };
 
@@ -179,7 +179,7 @@ export default function OrdersPage() {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) setOrders(parsed);
         }
-      } catch {}
+      } catch { }
     };
 
     window.addEventListener("storage", handleStorage);
@@ -299,9 +299,8 @@ export default function OrdersPage() {
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
               {/* LEFT: EMPLOYEES DIRECTORY TABLE */}
               <div
-                className={`flex flex-col transition-all duration-300 ${
-                  selectedEmployee ? "lg:col-span-7" : "lg:col-span-12"
-                }`}
+                className={`flex flex-col transition-all duration-300 ${selectedEmployee ? "lg:col-span-7" : "lg:col-span-12"
+                  }`}
               >
                 <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
                   <div className="overflow-x-auto">
@@ -340,9 +339,8 @@ export default function OrdersPage() {
                                   setSelectedEmployeeKey(emp.employeeKey);
                                   setSelectedOrderId(emp.orders[0]?.id || null);
                                 }}
-                                className={`cursor-pointer transition duration-150 hover:bg-[#FAF6F2] ${
-                                  isSelected ? "bg-[#FAF4ED] border-l-4 border-l-[#754329]" : ""
-                                }`}
+                                className={`cursor-pointer transition duration-150 hover:bg-[#FAF6F2] ${isSelected ? "bg-[#FAF4ED] border-l-4 border-l-[#754329]" : ""
+                                  }`}
                               >
                                 {/* Employee Info (Avatar + Name) */}
                                 <td className="px-5 py-3.5">
@@ -393,17 +391,16 @@ export default function OrdersPage() {
                                 {/* Latest Status */}
                                 <td className="px-4 py-3.5">
                                   <span
-                                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                                      emp.latestStatus === "Pending"
+                                    className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${emp.latestStatus === "Pending"
                                         ? "bg-amber-100 text-amber-800 border border-amber-200"
                                         : emp.latestStatus === "Preparing"
-                                        ? "bg-blue-100 text-blue-800 border border-blue-200"
-                                        : emp.latestStatus === "Ready"
-                                        ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                                        : emp.latestStatus === "Completed" || emp.latestStatus === "Delivered"
-                                        ? "bg-green-100 text-green-800 border border-green-200"
-                                        : "bg-rose-100 text-rose-800 border border-rose-200"
-                                    }`}
+                                          ? "bg-blue-100 text-blue-800 border border-blue-200"
+                                          : emp.latestStatus === "Ready"
+                                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                            : emp.latestStatus === "Completed" || emp.latestStatus === "Delivered"
+                                              ? "bg-green-100 text-green-800 border border-green-200"
+                                              : "bg-rose-100 text-rose-800 border border-rose-200"
+                                      }`}
                                   >
                                     {emp.latestStatus}
                                   </span>
@@ -570,11 +567,10 @@ export default function OrdersPage() {
                             <div
                               key={order.id}
                               onClick={() => setSelectedOrderId(order.id)}
-                              className={`rounded-xl border p-3.5 transition cursor-pointer ${
-                                isExpanded
+                              className={`rounded-xl border p-3.5 transition cursor-pointer ${isExpanded
                                   ? "border-[#8C5835] bg-[#FAF6F2] shadow-xs"
                                   : "border-gray-200 bg-white hover:border-[#D5C2B1]"
-                              }`}
+                                }`}
                             >
                               {/* Order Card Header */}
                               <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-2.5">
@@ -590,17 +586,16 @@ export default function OrdersPage() {
                                 </div>
 
                                 <span
-                                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                    order.status === "Pending"
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${order.status === "Pending"
                                       ? "bg-amber-100 text-amber-800"
                                       : order.status === "Preparing"
-                                      ? "bg-blue-100 text-blue-800"
-                                      : order.status === "Ready"
-                                      ? "bg-emerald-100 text-emerald-800"
-                                      : order.status === "Completed" || order.status === "Delivered"
-                                      ? "bg-green-100 text-green-800"
-                                      : "bg-rose-100 text-rose-800"
-                                  }`}
+                                        ? "bg-blue-100 text-blue-800"
+                                        : order.status === "Ready"
+                                          ? "bg-emerald-100 text-emerald-800"
+                                          : order.status === "Completed" || order.status === "Delivered"
+                                            ? "bg-green-100 text-green-800"
+                                            : "bg-rose-100 text-rose-800"
+                                    }`}
                                 >
                                   {order.status}
                                 </span>

@@ -23,11 +23,13 @@ import {
   Building2,
   ArrowLeft,
   UserCheck,
+  ExternalLink,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import AssignCard, { type LocationItem } from "../../components/locations/assigncard";
-import { locationApi } from "../../services/locationApi";
+import { locationApi } from "../../services/locations";
+import CreateFormModal, { FormRow } from "../../components/common/CreateFormModal";
 
 
 interface SeatItem {
@@ -39,9 +41,53 @@ interface SeatItem {
 
 export default function LocationPage() {
   const params = useParams();
-  const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const urlShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const [effectiveShortCode] = useState<string>(() => {
+    if (urlShortCode) return urlShortCode;
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u.shortCode) return u.shortCode.toUpperCase();
+      }
+    } catch { }
+    return "FTS";
+  });
+
+  const currentShortCode = urlShortCode || effectiveShortCode || "FTS";
   const locStorageKey = currentShortCode ? `cafe4x_locations_${currentShortCode}` : "cafe4x_locations";
   const seatsStorageKey = currentShortCode ? `cafe4x_seatsByLoc_${currentShortCode}` : "cafe4x_seatsByLoc";
+
+  // Helper to compute next available unique seat number and sequential Seat ID (e.g. FTS-01, FTS-02, ...)
+  const getNextAvailableSeatInfo = (existingSeats: SeatItem[]) => {
+    const code = currentShortCode || "FTS";
+    const usedNumbers = new Set<number>();
+
+    (existingSeats || []).forEach((s) => {
+      const parsedNum = parseInt(s.number, 10);
+      if (!isNaN(parsedNum) && parsedNum > 0) {
+        usedNumbers.add(parsedNum);
+      }
+      if (s.id) {
+        const match = s.id.match(/(\d+)$/);
+        if (match) {
+          const idNum = parseInt(match[1], 10);
+          if (!isNaN(idNum) && idNum > 0) {
+            usedNumbers.add(idNum);
+          }
+        }
+      }
+    });
+
+    let candidate = 1;
+    while (usedNumbers.has(candidate)) {
+      candidate++;
+    }
+
+    const padded = String(candidate).padStart(2, "0");
+    const seatId = `${code}-${padded}`;
+    return { number: padded, seatId };
+  };
 
   const [locations, setLocations] = useState<LocationItem[]>(() => {
     try {
@@ -95,7 +141,7 @@ export default function LocationPage() {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed)) setLocations(parsed);
           }
-        } catch {}
+        } catch { }
       });
 
     return () => {
@@ -120,7 +166,7 @@ export default function LocationPage() {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === "object") return parsed;
       }
-    } catch {}
+    } catch { }
     return {};
   });
 
@@ -128,8 +174,53 @@ export default function LocationPage() {
     setSeatsByLoc(data);
     try {
       localStorage.setItem(seatsStorageKey, JSON.stringify(data));
+      // Also sync to global key so UserOrderPage can always find seat employee information
+      localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(data));
     } catch { }
   };
+
+  // Automatically generate seats with shortCode-based sequential seatId (e.g. FTS-01, FTS-02...) and orderUrl
+  useEffect(() => {
+    if (!selectedLocation) return;
+    const locId = String(selectedLocation.id);
+    const existing = seatsByLoc[locId];
+    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+    const code = currentShortCode || "FTS";
+
+    if (!existing || existing.length === 0) {
+      const totalSeats = Number(selectedLocation.totalSeats) || 12;
+      const generated: SeatItem[] = Array.from({ length: totalSeats }, (_, i) => {
+        const num = String(i + 1).padStart(2, "0");
+        const seatId = `${code}-${num}`;
+        return {
+          number: num,
+          id: seatId,
+          orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${i + 1}?seatId=${seatId}`,
+        };
+      });
+      const nextSeats = { ...seatsByLoc, [locId]: generated };
+      saveSeatsByLoc(nextSeats);
+    } else {
+      // Check if any existing seat has outdated Seat ID or order URL
+      let needsUpdate = false;
+      const updated = existing.map((s, i) => {
+        const num = s.number || String(i + 1).padStart(2, "0");
+        const expectedPrefix = `${code}-`;
+        const seatId = (s.id && s.id.startsWith(expectedPrefix)) ? s.id : `${code}-${num}`;
+        const idealUrl = `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(num, 10) || i + 1}?seatId=${seatId}`;
+
+        if (s.id !== seatId || !s.orderUrl || s.orderUrl.startsWith("https://cafe4x.com") || !s.orderUrl.includes(`seatId=${seatId}`) || (orgPrefix && !s.orderUrl.includes(orgPrefix))) {
+          needsUpdate = true;
+          return { ...s, id: seatId, orderUrl: idealUrl };
+        }
+        return s;
+      });
+      if (needsUpdate) {
+        saveSeatsByLoc({ ...seatsByLoc, [locId]: updated });
+      }
+    }
+  }, [selectedLocation, seatsByLoc, currentShortCode]);
+
   const [selectedSeatNumber, setSelectedSeatNumber] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
@@ -192,7 +283,7 @@ export default function LocationPage() {
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) currentOrgId = JSON.parse(stored).organizationId || "";
-    } catch {}
+    } catch { }
 
     const newLoc: LocationItem = {
       id: newId,
@@ -212,12 +303,14 @@ export default function LocationPage() {
       console.warn("Could not save location to backend:", err);
     });
 
+    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
     const generatedSeats: SeatItem[] = Array.from({ length: 12 }, (_, i) => {
       const num = String(i + 1).padStart(2, "0");
+      const seatId = `S${newId}-F1-${num}`;
       return {
         number: num,
-        id: `S${newId}-F1-${num}`,
-        orderUrl: `${window.location.origin}/order/${newId}/${i + 1}`,
+        id: seatId,
+        orderUrl: `${window.location.origin}${orgPrefix}/order/${newId}/${i + 1}?seatId=${seatId}`,
       };
     });
 
@@ -281,27 +374,32 @@ export default function LocationPage() {
     if (!newSeatForm.seatNo.trim()) return;
     const padded = newSeatForm.seatNo.padStart(2, "0");
     const locId = selectedLocation?.id || "1";
+    const code = currentShortCode || "FTS";
+    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+
+    const finalSeatId = newSeatForm.seatId.trim() || `${code}-${padded}`;
 
     const customOrderUrl = newSeatForm.orderUrl.trim()
       ? newSeatForm.orderUrl.trim()
-      : `${window.location.origin}/order/${locId}/${parseInt(padded, 10) || 1}`;
+      : `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(padded, 10) || 1}?seatId=${finalSeatId}`;
 
     const created: SeatItem = {
       number: padded,
-      id: newSeatForm.seatId.trim() || `S00${locId}-F1-${padded}`,
+      id: finalSeatId,
       employee: newSeatForm.email.trim() || undefined,
       orderUrl: customOrderUrl,
     };
 
+    const currentLocSeats = seatsByLoc[locId] || [];
     const nextSeatsByLoc = {
       ...seatsByLoc,
-      [locId]: [...(seatsByLoc[locId] || []), created],
+      [locId]: [...currentLocSeats, created],
     };
     saveSeatsByLoc(nextSeatsByLoc);
 
     // Update location totalSeats counter
     const updated = locations.map((l) =>
-      l.id === locId ? { ...l, totalSeats: l.totalSeats + 1 } : l
+      l.id === locId ? { ...l, totalSeats: (seatsByLoc[locId]?.length || 0) + 1 } : l
     );
     saveLocations(updated);
 
@@ -315,6 +413,7 @@ export default function LocationPage() {
       orderUrl: "",
     });
   };
+
 
   return (
     <Background>
@@ -590,47 +689,64 @@ export default function LocationPage() {
                   VIEW 2: REALISTIC TOP-DOWN ARCHITECTURAL IMAGE BOARDROOM
                   WITH PHOTOREALISTIC TABLE, ROOM & INTERACTIVE SEATS
                  ======================================================== */
-              <div>
-                {/* Header with Back Button and + Create Seat Button */}
-                <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                  <div className="flex items-center gap-3">
+              <div className="space-y-6">
+                {/* Header with Back Button and Actions Bar */}
+                <div className="flex flex-col justify-between gap-4 rounded-3xl border border-[#EEE5DC] bg-white/90 p-5 shadow-lg shadow-[#70452D]/5 backdrop-blur-md sm:flex-row sm:items-center">
+                  <div className="flex flex-wrap items-center gap-3.5">
                     <button
                       type="button"
                       onClick={() => setSelectedLocation(null)}
-                      className="flex items-center gap-2 rounded-2xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] shadow-sm transition hover:bg-[#FAF6F1]"
+                      className="group flex items-center gap-2 rounded-2xl border border-[#D5C2B1] bg-white px-4 py-2.5 text-xs font-bold text-[#6F4228] shadow-xs transition duration-200 hover:-translate-x-0.5 hover:border-[#8C5835] hover:bg-[#FAF6F1]"
                     >
-                      <ArrowLeft size={15} />
+                      <ArrowLeft size={16} className="transition-transform duration-200 group-hover:-translate-x-0.5" />
                       <span>Back to Locations</span>
                     </button>
 
+                    <div className="h-6 w-px bg-[#E8DED4] hidden sm:block" />
+
                     <div>
-                      <h1 className="text-2xl font-bold tracking-tight text-[#342219] sm:text-3xl">
-                        {selectedLocation.name} <span className="text-[#8C5835]">Seating Plan</span>
-                      </h1>
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 ring-4 ring-emerald-100" />
+                        <h1 className="text-xl font-black tracking-tight text-[#342219] sm:text-2xl">
+                          {selectedLocation.name} <span className="text-[#8C5835]">Seating Plan</span>
+                        </h1>
+                      </div>
+                      <p className="text-xs text-[#8A7667] mt-0.5">
+                        Interactive Architectural Seating Planner &amp; QR Management
+                      </p>
                     </div>
                   </div>
 
-                  {/* Actions & Filters */}
+                  {/* Actions & Seat Stats */}
                   <div className="flex flex-wrap items-center gap-3">
+                    <div className="hidden md:flex items-center gap-2 rounded-2xl border border-[#EAD5C0] bg-[#FAF6F2] px-3.5 py-2 text-xs font-bold text-[#70452D]">
+                      <Armchair size={15} className="text-[#8C5835]" />
+                      <span>{currentSeats.length} Total Seats</span>
+                      <span className="text-[#C4A48C]">•</span>
+                      <span className="text-emerald-700 font-semibold">{currentSeats.filter(s => s.employee).length} Occupied</span>
+                    </div>
+
                     {/* Create Seat Button */}
                     <button
                       type="button"
                       onClick={() => {
-                        const nextNum = `${currentSeats.length + 1}`;
-                        const padded = nextNum.padStart(2, "0");
+                        const locId = selectedLocation.id;
+                        const locSeats = seatsByLoc[locId] || [];
+                        const nextInfo = getNextAvailableSeatInfo(locSeats);
+                        const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                         setNewSeatForm({
-                          location: "738",
+                          location: selectedLocation.name || locId,
                           email: "",
-                          seatId: `S${selectedLocation.id}-F1-${padded}`,
-                          seatNo: padded,
-                          orderUrl: `https://cafe4x.com/order/738/${nextNum}`,
+                          seatId: nextInfo.seatId,
+                          seatNo: nextInfo.number,
+                          orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
                         });
                         setIsCreateSeatOpen(true);
                       }}
-                      className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-4 py-2 text-xs font-bold text-white shadow-md shadow-[#754329]/20 transition hover:-translate-y-0.5"
+                      className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#6F3F24] via-[#854E2D] to-[#9A5F38] px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-[#754329]/25 transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#754329]/35 active:translate-y-0"
                     >
-                      <Plus size={15} />
-                      <span>Create</span>
+                      <Plus size={16} />
+                      <span>Create Seat</span>
                     </button>
                   </div>
                 </div>
@@ -643,53 +759,83 @@ export default function LocationPage() {
                       (EXPANDS TO 12 COLS WHEN NO SEAT SELECTED, 8 COLS WHEN CLICKED)
                      ======================================================== */}
                   <div
-                    className={`flex flex-col rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-xl shadow-[#70452D]/5 backdrop-blur-md transition-all duration-300 ${currentSeat ? "lg:col-span-8" : "lg:col-span-12"
+                    className={`flex flex-col rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 sm:p-7 shadow-xl shadow-[#70452D]/5 backdrop-blur-md transition-all duration-300 ${currentSeat ? "lg:col-span-8" : "lg:col-span-12"
                       }`}
                   >
 
-                    {/* Subtitle */}
-                    <div className="flex items-center justify-between border-b border-[#EEE5DC] pb-4">
-                      <div className="flex items-center gap-2">
-                        <span className="flex h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-                        <h2 className="text-base font-bold text-[#342219]">
-                          Boardroom Architectural View ({currentSeats.length} configured seats)
-                        </h2>
+                    {/* Room Header & Legend */}
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[#EEE5DC] pb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#734329] to-[#8C5835] text-white shadow-sm">
+                          <Building2 size={20} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h2 className="text-base font-black text-[#342219]">
+                              {selectedLocation.name} Executive Boardroom
+                            </h2>
+                            <span className="rounded-full bg-[#F3E8DC] px-2.5 py-0.5 text-[10px] font-bold text-[#70452D] border border-[#DECFBE]">
+                              Room Plan
+                            </span>
+                          </div>
+                          <p className="text-xs text-[#8A7667]">
+                            Click any seat to view assigned employee, launch quick actions, or generate &amp; download table QR codes.
+                          </p>
+                        </div>
                       </div>
-                      <span className="text-xs font-semibold text-[#8A7667]">
-                        {currentSeat
-                          ? `Inspecting Seat ${currentSeat.number}`
-                          : "Click any chair to view seat details & QR code"}
-                      </span>
+
+                      {/* Seat Status Indicators (Legend) */}
+                      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-[#EADBCE] bg-[#FAF6F2] p-2 text-xs">
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white/80 shadow-2xs">
+                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 shadow-xs shadow-emerald-500/50" />
+                          <span className="text-[#6D5545] font-bold text-[11px]">Assigned</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white/80 shadow-2xs">
+                          <span className="h-2.5 w-2.5 rounded-full bg-[#96603B] shadow-xs" />
+                          <span className="text-[#6D5545] font-bold text-[11px]">Available</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-white/80 shadow-2xs">
+                          <span className="h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-amber-200" />
+                          <span className="text-[#6D5545] font-bold text-[11px]">Selected</span>
+                        </div>
+                      </div>
                     </div>
 
-                    {/* DYNAMIC REACT CONFERENCE TABLE & CHAIRS MODEL */}
-                    <div className="relative my-6 flex min-h-[420px] w-full flex-col items-center justify-center overflow-x-auto rounded-3xl border-2 border-[#EAD5C0] bg-gradient-to-b from-[#F9F5F0] via-[#FAF6F1] to-[#F5ECE1] p-8 shadow-inner">
+                    {/* DYNAMIC EXECUTIVE CONFERENCE ROOM CANVAS */}
+                    <div className="relative my-6 flex min-h-[480px] w-full flex-col items-center justify-center overflow-x-auto rounded-3xl border border-[#DEC5B0] bg-gradient-to-b from-[#FBF8F5] via-[#F8F2EC] to-[#F2E8DC] p-6 sm:p-10 shadow-inner">
 
-                      {/* Subtle floor grid backdrop */}
+                      {/* Subtle architectural dot grid floor */}
                       <div
-                        className="pointer-events-none absolute inset-0 opacity-25"
+                        className="pointer-events-none absolute inset-0 opacity-40"
                         style={{
-                          backgroundImage: `radial-gradient(#D6C8B8 1px, transparent 1px)`,
-                          backgroundSize: `20px 20px`,
+                          backgroundImage: `radial-gradient(#C2AFA0 1.2px, transparent 1.2px)`,
+                          backgroundSize: `22px 22px`,
                         }}
                       />
 
-                      {/* Room accent plants in corners */}
-                      <div className="absolute top-4 left-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#E8DDD2] text-xl shadow-xs select-none">
-                        🪴
+                      {/* Ambient Architectural Lighting overlay */}
+                      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-100/30 via-transparent to-stone-400/10" />
+
+                      {/* Modern Botanical Corners & Atmosphere Markers */}
+                      <div className="absolute top-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
+                        <span className="text-base">🪴</span>
+                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">North Zone</span>
                       </div>
-                      <div className="absolute top-4 right-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#E8DDD2] text-xl shadow-xs select-none">
-                        🌿
+                      <div className="absolute top-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
+                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Screen Area</span>
+                        <span className="text-base">🖥️</span>
                       </div>
-                      <div className="absolute bottom-4 left-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#E8DDD2] text-xl shadow-xs select-none">
-                        🌿
+                      <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
+                        <span className="text-base">🌱</span>
+                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Room Entrance</span>
                       </div>
-                      <div className="absolute bottom-4 right-4 flex h-10 w-10 items-center justify-center rounded-2xl bg-[#E8DDD2] text-xl shadow-xs select-none">
-                        🪴
+                      <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
+                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Espresso Bar</span>
+                        <span className="text-base">☕</span>
                       </div>
 
                       {/* Interactive Seating Model Wrapper */}
-                      <div className="relative z-10 flex flex-col items-center justify-center gap-3 py-4">
+                      <div className="relative z-10 flex flex-col items-center justify-center gap-4 py-8">
 
                         {/* TOP ROW CHAIRS (Half of total seats, facing table) */}
                         {(() => {
@@ -703,46 +849,73 @@ export default function LocationPage() {
                               <div className="flex flex-wrap items-end justify-center gap-4 sm:gap-6">
                                 {topSeats.map((seat) => {
                                   const isSelected = selectedSeatNumber === seat.number;
+                                  const isAssigned = Boolean(seat.employee);
 
                                   return (
                                     <div
                                       key={seat.number}
                                       onClick={() => setSelectedSeatNumber(isSelected ? null : seat.number)}
-                                      className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:-translate-y-1"
+                                      className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:-translate-y-1.5"
                                     >
                                       {/* Chair Backrest */}
-                                      <div className="h-3 w-12 sm:w-14 rounded-t-xl shadow-sm transition bg-gradient-to-r from-[#704225] via-[#8C5835] to-[#704225]" />
+                                      <div
+                                        className={`h-3 w-12 sm:w-14 rounded-t-xl shadow-xs transition duration-200 ${isSelected
+                                            ? "bg-amber-500 shadow-md shadow-amber-500/40"
+                                            : isAssigned
+                                              ? "bg-gradient-to-r from-[#442D20] via-[#5D3D29] to-[#442D20]"
+                                              : "bg-gradient-to-r from-[#6B3F24] via-[#855132] to-[#6B3F24]"
+                                          }`}
+                                      />
 
                                       {/* Chair Armrests + Cushion Button */}
                                       <div className="relative flex items-center">
-                                        <div className="h-5 w-1.5 rounded-l-md bg-[#3D281D]" />
+                                        <div className={`h-6 w-1.5 rounded-l-md transition ${isSelected ? "bg-amber-700" : "bg-[#2A1B13]"}`} />
 
                                         <div
-                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${isSelected
-                                              ? "ring-4 ring-yellow-400 ring-offset-2 ring-offset-white scale-105 shadow-yellow-500/30"
-                                              : "hover:shadow-lg"
+                                          className={`relative flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition-all duration-200 border-2 select-none ${isSelected
+                                              ? "bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 border-amber-200 ring-4 ring-amber-400/40 scale-110 shadow-xl shadow-amber-500/30"
+                                              : isAssigned
+                                                ? "bg-gradient-to-br from-[#4D2E1B] via-[#694228] to-[#452716] border-emerald-400/70 hover:scale-105 hover:shadow-lg"
+                                                : "bg-gradient-to-br from-[#7B4B2A] via-[#945E37] to-[#6F4021] border-[#F2D1AC]/60 hover:scale-105 hover:shadow-lg"
                                             }`}
                                         >
                                           {seat.number}
-                                          {seat.employee && (
-                                            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[8px]" title={seat.employee}>
-                                              ✓
-                                            </span>
-                                          )}
+
+                                          {/* Status Indicator Badge */}
+                                          <span
+                                            className={`absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full ring-2 ring-white text-[9px] font-black shadow-xs ${isAssigned
+                                                ? "bg-emerald-500 text-white ring-emerald-100"
+                                                : "bg-[#96603B] text-amber-100 ring-[#F3E8DC]"
+                                              }`}
+                                            title={isAssigned ? `Assigned: ${seat.employee}` : "Available Seat"}
+                                          >
+                                            {isAssigned ? "✓" : "•"}
+                                          </span>
                                         </div>
 
-                                        <div className="h-5 w-1.5 rounded-r-md bg-[#3D281D]" />
+                                        <div className={`h-6 w-1.5 rounded-r-md transition ${isSelected ? "bg-amber-700" : "bg-[#2A1B13]"}`} />
+                                      </div>
+
+                                      {/* Seat ID Pill */}
+                                      <div className="mt-1.5">
+                                        <span className={`rounded-md px-2 py-0.5 text-[9px] font-mono font-bold tracking-tight border shadow-2xs transition ${isSelected
+                                            ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
+                                            : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
+                                          }`}>
+                                          {seat.id || `Seat-${seat.number}`}
+                                        </span>
                                       </div>
 
                                       {/* Tooltip on Hover */}
-                                      <div className="pointer-events-none absolute -top-9 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                                        <div className="rounded-lg bg-[#2A1C14] px-2.5 py-1 text-[10px] font-bold text-white shadow-md whitespace-nowrap text-center">
-                                          Seat {seat.number}
-                                          {seat.employee && (
-                                            <div className="text-[9px] font-normal text-emerald-300">
-                                              {seat.employee}
-                                            </div>
-                                          )}
+                                      <div className="pointer-events-none absolute -top-14 z-30 opacity-0 transition-all duration-200 group-hover:opacity-100 group-hover:-translate-y-1">
+                                        <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
+                                          <div className="flex items-center justify-center gap-1.5 text-amber-300">
+                                            <span>Seat {seat.number}</span>
+                                            <span className="text-stone-400 font-mono">({seat.id})</span>
+                                          </div>
+                                          <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
+                                            {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
+                                          </div>
                                         </div>
                                       </div>
                                     </div>
@@ -750,29 +923,34 @@ export default function LocationPage() {
                                 })}
                               </div>
 
-                              {/* THE REACT OAK CONFERENCE TABLE (Dynamically widens according to number of seats) */}
+                              {/* THE EXECUTIVE WOOD GRAIN CONFERENCE TABLE */}
                               <div
                                 style={{
-                                  minWidth: `${Math.max(280, half * 72)}px`,
+                                  minWidth: `${Math.max(320, half * 84)}px`,
                                 }}
-                                className="relative my-2 flex h-24 sm:h-28 items-center justify-between rounded-3xl border-2 border-[#94623B] bg-gradient-to-r from-[#B9885E] via-[#CFA077] to-[#B9885E] px-6 shadow-xl transition-all duration-300"
+                                className="relative my-4 flex h-26 sm:h-30 items-center justify-between rounded-3xl border-2 border-[#8C5835] bg-gradient-to-r from-[#A57147] via-[#C59268] to-[#A57147] px-6 sm:px-8 shadow-2xl transition-all duration-300 ring-1 ring-amber-900/10"
                               >
                                 {/* Left Table End Decor */}
-                                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/60 shadow-xs text-xs select-none">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 shadow-md text-base select-none border border-amber-300 backdrop-blur-xs">
                                   ☕
                                 </div>
 
                                 {/* Center Table Inset Planter Runner */}
-                                <div className="flex items-center gap-3 rounded-full border border-[#83532C] bg-[#543319]/80 px-4 sm:px-6 py-2 shadow-inner">
+                                <div className="flex items-center gap-3 sm:gap-4 rounded-full border border-[#5E381C] bg-[#2E180B]/90 px-5 sm:px-8 py-2.5 shadow-inner">
                                   <span className="text-base select-none">🌱</span>
-                                  <span className="text-[10px] sm:text-xs font-extrabold uppercase tracking-widest text-[#F0D5BE]">
-                                    {selectedLocation.name} Conference Table ({currentSeats.length} Seats)
-                                  </span>
+                                  <div className="text-center">
+                                    <div className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-[#FDEBD9]">
+                                      {selectedLocation.name} Executive Table
+                                    </div>
+                                    <div className="text-[9px] font-semibold text-[#D7B7A0] mt-0.5">
+                                      {currentSeats.length} Seats &bull; {currentSeats.filter(s => s.employee).length} Occupied
+                                    </div>
+                                  </div>
                                   <span className="text-base select-none">🌿</span>
                                 </div>
 
                                 {/* Right Table End Decor */}
-                                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white/60 shadow-xs text-xs select-none">
+                                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/80 shadow-md text-base select-none border border-amber-300 backdrop-blur-xs">
                                   ☕
                                 </div>
                               </div>
@@ -781,46 +959,73 @@ export default function LocationPage() {
                               <div className="flex flex-wrap items-start justify-center gap-4 sm:gap-6">
                                 {bottomSeats.map((seat) => {
                                   const isSelected = selectedSeatNumber === seat.number;
+                                  const isAssigned = Boolean(seat.employee);
 
                                   return (
                                     <div
                                       key={seat.number}
                                       onClick={() => setSelectedSeatNumber(isSelected ? null : seat.number)}
-                                      className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:translate-y-1"
+                                      className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:translate-y-1.5"
                                     >
+                                      {/* Seat ID Pill */}
+                                      <div className="mb-1.5">
+                                        <span className={`rounded-md px-2 py-0.5 text-[9px] font-mono font-bold tracking-tight border shadow-2xs transition ${isSelected
+                                            ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
+                                            : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
+                                          }`}>
+                                          {seat.id || `Seat-${seat.number}`}
+                                        </span>
+                                      </div>
+
                                       {/* Chair Armrests + Cushion Button */}
                                       <div className="relative flex items-center">
-                                        <div className="h-5 w-1.5 rounded-l-md bg-[#3D281D]" />
+                                        <div className={`h-6 w-1.5 rounded-l-md transition ${isSelected ? "bg-amber-700" : "bg-[#2A1B13]"}`} />
 
                                         <div
-                                          className={`relative flex h-11 w-11 sm:h-12 sm:w-12 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition duration-200 bg-gradient-to-br from-[#8C5835] via-[#A86E45] to-[#704225] border-2 border-[#E8B77C]/60 ${isSelected
-                                              ? "ring-4 ring-yellow-400 ring-offset-2 ring-offset-white scale-105 shadow-yellow-500/30"
-                                              : "hover:shadow-lg"
+                                          className={`relative flex h-12 w-12 sm:h-13 sm:w-13 items-center justify-center rounded-2xl font-black text-xs sm:text-sm text-white shadow-md transition-all duration-200 border-2 select-none ${isSelected
+                                              ? "bg-gradient-to-br from-amber-400 via-amber-500 to-amber-600 border-amber-200 ring-4 ring-amber-400/40 scale-110 shadow-xl shadow-amber-500/30"
+                                              : isAssigned
+                                                ? "bg-gradient-to-br from-[#4D2E1B] via-[#694228] to-[#452716] border-emerald-400/70 hover:scale-105 hover:shadow-lg"
+                                                : "bg-gradient-to-br from-[#7B4B2A] via-[#945E37] to-[#6F4021] border-[#F2D1AC]/60 hover:scale-105 hover:shadow-lg"
                                             }`}
                                         >
                                           {seat.number}
-                                          {seat.employee && (
-                                            <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white text-[8px]" title={seat.employee}>
-                                              ✓
-                                            </span>
-                                          )}
+
+                                          {/* Status Indicator Badge */}
+                                          <span
+                                            className={`absolute -top-1.5 -right-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full ring-2 ring-white text-[9px] font-black shadow-xs ${isAssigned
+                                                ? "bg-emerald-500 text-white ring-emerald-100"
+                                                : "bg-[#96603B] text-amber-100 ring-[#F3E8DC]"
+                                              }`}
+                                            title={isAssigned ? `Assigned: ${seat.employee}` : "Available Seat"}
+                                          >
+                                            {isAssigned ? "✓" : "•"}
+                                          </span>
                                         </div>
 
-                                        <div className="h-5 w-1.5 rounded-r-md bg-[#3D281D]" />
+                                        <div className={`h-6 w-1.5 rounded-r-md transition ${isSelected ? "bg-amber-700" : "bg-[#2A1B13]"}`} />
                                       </div>
 
                                       {/* Chair Backrest */}
-                                      <div className="h-3 w-12 sm:w-14 rounded-b-xl shadow-sm transition bg-gradient-to-r from-[#704225] via-[#8C5835] to-[#704225]" />
+                                      <div
+                                        className={`h-3 w-12 sm:w-14 rounded-b-xl shadow-xs transition duration-200 ${isSelected
+                                            ? "bg-amber-500 shadow-md shadow-amber-500/40"
+                                            : isAssigned
+                                              ? "bg-gradient-to-r from-[#442D20] via-[#5D3D29] to-[#442D20]"
+                                              : "bg-gradient-to-r from-[#6B3F24] via-[#855132] to-[#6B3F24]"
+                                          }`}
+                                      />
 
                                       {/* Tooltip on Hover */}
-                                      <div className="pointer-events-none absolute -bottom-9 z-30 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                                        <div className="rounded-lg bg-[#2A1C14] px-2.5 py-1 text-[10px] font-bold text-white shadow-md whitespace-nowrap text-center">
-                                          Seat {seat.number}
-                                          {seat.employee && (
-                                            <div className="text-[9px] font-normal text-emerald-300">
-                                              {seat.employee}
-                                            </div>
-                                          )}
+                                      <div className="pointer-events-none absolute -bottom-14 z-30 opacity-0 transition-all duration-200 group-hover:opacity-100 group-hover:translate-y-1">
+                                        <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
+                                          <div className="flex items-center justify-center gap-1.5 text-amber-300">
+                                            <span>Seat {seat.number}</span>
+                                            <span className="text-stone-400 font-mono">({seat.id})</span>
+                                          </div>
+                                          <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
+                                            {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
+                                          </div>
                                         </div>
                                       </div>
                                     </div>
@@ -836,32 +1041,36 @@ export default function LocationPage() {
                     {/* Bottom Action / Add Seat Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#EEE5DC] pt-4 text-xs font-semibold">
                       <div className="flex items-center gap-2 text-[#70523E]">
-                        <span>Total Configured Seats: </span>
-                        <span className="rounded-md bg-[#FAF4ED] px-2 py-0.5 font-bold text-[#8C5835] border border-[#EAD5C0]">
-                          {currentSeats.length}
+                        <span>Total Configured Seats:</span>
+                        <span className="rounded-lg bg-[#FAF4ED] px-2.5 py-1 font-bold text-[#8C5835] border border-[#EAD5C0] shadow-2xs">
+                          {currentSeats.length} Seats
                         </span>
                       </div>
 
                       <button
                         type="button"
                         onClick={() => {
-                          const nextNum = `${currentSeats.length + 1}`;
-                          const padded = nextNum.padStart(2, "0");
+                          const locId = selectedLocation.id;
+                          const locSeats = seatsByLoc[locId] || [];
+                          const nextInfo = getNextAvailableSeatInfo(locSeats);
+                          const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                           setNewSeatForm({
-                            location: "738",
+                            location: selectedLocation.name || locId,
                             email: "",
-                            seatId: `S${selectedLocation.id}-F1-${padded}`,
-                            seatNo: padded,
-                            orderUrl: `https://cafe4x.com/order/738/${nextNum}`,
+                            seatId: nextInfo.seatId,
+                            seatNo: nextInfo.number,
+                            orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
                           });
                           setIsCreateSeatOpen(true);
                         }}
-                        className="text-xs font-bold text-[#8C5835] hover:underline"
+                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[#8C5835] transition hover:text-[#6F3F24] hover:underline"
                       >
-                        + Add another seat to this layout
+                        <Plus size={14} />
+                        <span>Add another seat to this layout</span>
                       </button>
                     </div>
                   </div>
+
 
                   {/* ========================================================
                       UNIFIED RIGHT DRAWER: SEAT DETAILS & ORDER URL QR IN ONE CARD
@@ -933,15 +1142,27 @@ export default function LocationPage() {
                               <span className="truncate text-xs font-mono text-[#70523E]">
                                 {currentSeat.orderUrl}
                               </span>
-                              <button
-                                type="button"
-                                onClick={() => handleCopy(currentSeat.orderUrl)}
-                                className="ml-2 flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-[#8C5835] shadow-xs hover:bg-[#FAF6F1]"
-                                title="Copy URL"
-                              >
-                                {copiedUrl ? <Check size={13} /> : <Copy size={13} />}
-                                <span>{copiedUrl ? "Copied" : "Copy"}</span>
-                              </button>
+                              <div className="flex items-center gap-1.5 ml-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleCopy(currentSeat.orderUrl)}
+                                  className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-[#8C5835] shadow-xs hover:bg-[#FAF6F1] cursor-pointer"
+                                  title="Copy URL"
+                                >
+                                  {copiedUrl ? <Check size={13} /> : <Copy size={13} />}
+                                  <span>{copiedUrl ? "Copied" : "Copy"}</span>
+                                </button>
+                                <a
+                                  href={currentSeat.orderUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="flex items-center gap-1 rounded-lg bg-[#8C5835] px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-[#774728] cursor-pointer"
+                                  title="Open Employee Order Page"
+                                >
+                                  <ExternalLink size={13} />
+                                  <span>Open</span>
+                                </a>
+                              </div>
                             </div>
                           </div>
 
@@ -1030,298 +1251,181 @@ export default function LocationPage() {
         {/* ========================================================
             MODAL: CREATE LOCATION (MATCHING APP UI THEME)
            ======================================================== */}
-        {isCreateLocationOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs">
-            <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-xl font-semibold text-gray-800">
-                    Location Create
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateLocationOpen(false)}
-                  className="rounded-lg p-1 text-gray-400 hover:text-gray-700 transition cursor-pointer"
-                >
-                  <X size={20} />
-                </button>
-              </div>
+        <CreateFormModal
+          isOpen={isCreateLocationOpen}
+          onClose={() => {
+            setNewLocationName("");
+            setNewLocationImage("");
+            setIsCreateLocationOpen(false);
+          }}
+          title="Location Create"
+          onSubmit={handleCreateLocationSubmit}
+        >
+          {/* Name */}
+          <FormRow label="Name" required>
+            <input
+              id="location-name"
+              required
+              type="text"
+              placeholder="Name"
+              value={newLocationName}
+              onChange={(e) => setNewLocationName(e.target.value)}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+            />
+          </FormRow>
 
-              {/* Form matching User Create and app UI layout */}
-              <form onSubmit={handleCreateLocationSubmit} className="mt-5 space-y-4 text-sm">
-                {/* Name */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label
-                    htmlFor="location-name"
-                    className="col-span-4 font-semibold text-gray-800"
-                  >
-                    Name <span className="text-red-500">*</span>
-                  </label>
-                  <div className="col-span-8">
-                    <input
-                      id="location-name"
-                      required
-                      type="text"
-                      placeholder="Name"
-                      value={newLocationName}
-                      onChange={(e) => setNewLocationName(e.target.value)}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-                    />
+          {/* Status */}
+          <FormRow label="Status" required>
+            <select
+              id="location-status"
+              required
+              value={newLocationStatus}
+              onChange={(e) => setNewLocationStatus(e.target.value as "Active" | "Inactive")}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 bg-white outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 cursor-pointer"
+            >
+              <option value="Active">Active</option>
+              <option value="Inactive">Inactive</option>
+            </select>
+          </FormRow>
+
+          {/* Image */}
+          <FormRow label="Image" labelAlign="top">
+            <input
+              type="file"
+              ref={locationImageInputRef}
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    setNewLocationImage(ev.target?.result as string);
+                  };
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
+
+            {/* Image Upload Trigger Box with upload icon */}
+            <div
+              onClick={() => locationImageInputRef.current?.click()}
+              className="group relative flex h-28 w-full cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50/70 transition hover:border-[#8C5835] hover:bg-white overflow-hidden shadow-xs"
+              title="Click to select image"
+            >
+              {newLocationImage ? (
+                <div className="relative h-full w-full">
+                  <img
+                    src={newLocationImage}
+                    alt="Location preview"
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute inset-0 bg-black/35 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                    <span className="text-xs font-semibold text-white bg-black/60 px-2 py-1 rounded-md">Change</span>
                   </div>
                 </div>
-
-                {/* Status */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label
-                    htmlFor="location-status"
-                    className="col-span-4 font-semibold text-gray-800"
-                  >
-                    Status <span className="text-red-500">*</span>
-                  </label>
-                  <div className="col-span-8">
-                    <select
-                      id="location-status"
-                      required
-                      value={newLocationStatus}
-                      onChange={(e) => setNewLocationStatus(e.target.value as "Active" | "Inactive")}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 bg-white outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 cursor-pointer"
-                    >
-                      <option value="Active">Active</option>
-                      <option value="Inactive">Inactive</option>
-                    </select>
-                  </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center text-gray-500 group-hover:text-[#8C5835] transition">
+                  <Upload size={24} className="mb-1 text-gray-400 group-hover:text-[#8C5835]" />
+                  <span className="text-xs font-semibold text-gray-700">Upload Image</span>
+                  <span className="text-[10px] text-gray-400">JPG, PNG (Max 2MB)</span>
                 </div>
-
-                {/* Image */}
-                <div className="grid grid-cols-12 items-start gap-3 pt-1">
-                  <label className="col-span-4 font-semibold text-gray-800 pt-2">
-                    Image
-                  </label>
-                  <div className="col-span-8">
-                    <input
-                      type="file"
-                      ref={locationImageInputRef}
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (ev) => {
-                            setNewLocationImage(ev.target?.result as string);
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                    />
-
-                    {/* Image Upload Trigger Box with upload icon */}
-                    <div
-                      onClick={() => locationImageInputRef.current?.click()}
-                      className="group relative flex h-28 w-32 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50/70 transition hover:border-[#8C5835] hover:bg-white overflow-hidden shadow-xs"
-                      title="Click to select image"
-                    >
-                      {newLocationImage ? (
-                        <div className="relative h-full w-full">
-                          <img
-                            src={newLocationImage}
-                            alt="Location preview"
-                            className="h-full w-full object-cover"
-                          />
-                          <div className="absolute inset-0 bg-black/35 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <span className="text-xs font-semibold text-white bg-black/60 px-2 py-1 rounded-md">Change</span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center text-gray-500 group-hover:text-[#8C5835] transition">
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="h-12 w-12 stroke-current fill-none"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                            <circle cx="8.5" cy="8.5" r="1.5" />
-                            <polyline points="21 15 16 10 5 21" />
-                            <path d="M16 6v6" />
-                            <path d="M13 9l3-3 3 3" />
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Action Buttons matching User Create */}
-                <div className="flex justify-end gap-3 pt-5 border-t border-gray-100">
-                  <button
-                    type="submit"
-                    className="rounded-lg border border-[#28A745] bg-white px-5 py-2 font-semibold text-[#28A745] hover:bg-green-50 transition cursor-pointer shadow-sm text-sm"
-                  >
-                    Submit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setNewLocationName("");
-                      setNewLocationImage("");
-                      setIsCreateLocationOpen(false);
-                    }}
-                    className="rounded-lg bg-[#DC3545] px-5 py-2 font-semibold text-white hover:bg-red-700 transition cursor-pointer shadow-sm text-sm"
-                  >
-                    Close
-                  </button>
-                </div>
-              </form>
+              )}
             </div>
-          </div>
-        )}
+          </FormRow>
+        </CreateFormModal>
 
         {/* ========================================================
             MODAL: CREATE SEAT (LOCATION-SEAT CREATE)
            ======================================================== */}
-        {isCreateSeatOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs">
-            <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-                <h3 className="text-xl font-semibold text-gray-800">
-                  Location-Seat Create
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateSeatOpen(false)}
-                  className="rounded-lg p-1 text-gray-400 hover:text-gray-700"
-                >
-                  <X size={22} />
-                </button>
-              </div>
+        <CreateFormModal
+          isOpen={isCreateSeatOpen}
+          onClose={() => setIsCreateSeatOpen(false)}
+          title="Location-Seat Create"
+          onSubmit={handleCreateSeatSubmit}
+        >
+          {/* Location */}
+          <FormRow label="Location">
+            <input
+              type="text"
+              readOnly
+              value={newSeatForm.location || "738"}
+              className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 outline-none cursor-not-allowed"
+            />
+          </FormRow>
 
-              {/* Form matching user's exact modal layout */}
-              <form onSubmit={handleCreateSeatSubmit} className="mt-5 space-y-4 text-sm">
-                {/* Location */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-semibold text-gray-800">
-                    Location
-                  </label>
-                  <div className="col-span-9">
-                    <input
-                      type="text"
-                      readOnly
-                      value={newSeatForm.location || "738"}
-                      className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 outline-none cursor-not-allowed"
-                    />
-                  </div>
-                </div>
+          {/* Email */}
+          <FormRow label="Email">
+            <input
+              type="email"
+              placeholder="Email"
+              value={newSeatForm.email}
+              onChange={(e) =>
+                setNewSeatForm({ ...newSeatForm, email: e.target.value })
+              }
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+            />
+          </FormRow>
 
-                {/* Email */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-semibold text-gray-800">
-                    Email
-                  </label>
-                  <div className="col-span-9">
-                    <input
-                      type="email"
-                      placeholder="Email"
-                      value={newSeatForm.email}
-                      onChange={(e) =>
-                        setNewSeatForm({ ...newSeatForm, email: e.target.value })
-                      }
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-                    />
-                  </div>
-                </div>
-
-                {/* SeatId * */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-semibold text-gray-800">
-                    SeatId<span className="text-red-500">*</span>
-                  </label>
-                  <div className="col-span-9">
-                    <input
-                      required
-                      type="text"
-                      placeholder="SeatId"
-                      value={newSeatForm.seatId}
-                      onChange={(e) =>
-                        setNewSeatForm({ ...newSeatForm, seatId: e.target.value })
-                      }
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-                    />
-                  </div>
-                </div>
-
-                {/* SeatNo * */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-semibold text-gray-800">
-                    SeatNo<span className="text-red-500">*</span>
-                  </label>
-                  <div className="col-span-9">
-                    <input
-                      required
-                      type="text"
-                      placeholder="SeatNo"
-                      value={newSeatForm.seatNo}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setNewSeatForm({
-                          ...newSeatForm,
-                          seatNo: val,
-                          // Automatically suggest orderUrl if not yet customized or follows default pattern
-                          orderUrl:
-                            !newSeatForm.orderUrl ||
-                              newSeatForm.orderUrl.startsWith("https://cafe4x.com/order/")
-                              ? `https://cafe4x.com/order/${newSeatForm.location || "738"}/${val || "1"}`
-                              : newSeatForm.orderUrl,
-                        });
-                      }}
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-                    />
-                  </div>
-                </div>
-
-                {/* OrderUrl * */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-semibold text-gray-800">
-                    OrderUrl<span className="text-red-500">*</span>
-                  </label>
-                  <div className="col-span-9">
-                    <input
-                      required
-                      type="text"
-                      placeholder="OrderUrl"
-                      value={newSeatForm.orderUrl}
-                      onChange={(e) =>
-                        setNewSeatForm({ ...newSeatForm, orderUrl: e.target.value })
-                      }
-                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-                    />
-                  </div>
-                </div>
-
-                {/* Bottom Actions matching screenshot buttons */}
-                <div className="flex justify-end gap-3 pt-3">
-                  <button
-                    type="submit"
-                    className="rounded-md border border-[#28A745] bg-white px-5 py-2 font-medium text-[#28A745] transition hover:bg-[#28A745] hover:text-white"
-                  >
-                    Submit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsCreateSeatOpen(false)}
-                    className="rounded-md bg-[#DC3545] px-5 py-2 font-medium text-white shadow-xs transition hover:bg-[#C82333]"
-                  >
-                    Close
-                  </button>
-                </div>
-              </form>
+          {/* SeatId (Read-only, auto-generated sequentially e.g. FTS-01, FTS-02) */}
+          <FormRow label="SeatId" required>
+            <div className="relative">
+              <input
+                required
+                readOnly
+                type="text"
+                placeholder="SeatId"
+                value={newSeatForm.seatId}
+                className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 font-mono font-bold outline-none cursor-not-allowed"
+                title="Automatically generated using organization shortcode and sequential seat number"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                Auto Generated
+              </span>
             </div>
-          </div>
-        )}
+          </FormRow>
+
+          {/* SeatNo * */}
+          <FormRow label="SeatNo" required>
+            <input
+              required
+              type="text"
+              placeholder="SeatNo"
+              value={newSeatForm.seatNo}
+              onChange={(e) => {
+                const val = e.target.value;
+                const locId = selectedLocation?.id || "1";
+                const code = currentShortCode || "FTS";
+                const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+                const generatedId = `${code}-${val.padStart(2, "0")}`;
+
+                setNewSeatForm({
+                  ...newSeatForm,
+                  seatNo: val,
+                  seatId: generatedId,
+                  orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(val, 10) || 1}?seatId=${generatedId}`,
+                });
+              }}
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 font-bold"
+            />
+          </FormRow>
+
+          {/* OrderUrl * */}
+          <FormRow label="OrderUrl" required>
+            <input
+              required
+              type="text"
+              placeholder="OrderUrl"
+              value={newSeatForm.orderUrl}
+              onChange={(e) =>
+                setNewSeatForm({ ...newSeatForm, orderUrl: e.target.value })
+              }
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 font-mono text-xs"
+            />
+          </FormRow>
+        </CreateFormModal>
+
+
 
         {/* ========================================================
             MODAL: EDIT SEAT

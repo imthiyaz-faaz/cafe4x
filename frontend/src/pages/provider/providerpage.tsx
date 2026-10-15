@@ -14,6 +14,14 @@ import {
   Armchair,
   ShoppingBag,
   Coffee,
+  PieChart,
+  Sun,
+  Moon,
+  Calendar,
+  X,
+  Inbox,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
@@ -23,7 +31,7 @@ import pendingOrdersImg from "../../assets/images/pending_orders_4k.png";
 import cancelledOrdersImg from "../../assets/images/cancelled_4k.png";
 import deliveredOrdersImg from "../../assets/images/delivered_4k.png";
 import allOrdersImg from "../../assets/images/all_orders_4k.png";
-import { orderApi } from "../../services/orderApi";
+import { orderApi } from "../../services/orders";
 
 
 
@@ -51,6 +59,8 @@ export interface ProviderOrder {
   total: number;
   time: string;
   status: "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // Orders are created live by employees and synced via backend & localStorage
@@ -79,6 +89,81 @@ export default function ProviderPage() {
   const [categorySearch, setCategorySearch] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
+  // Delivered Summary Modal & expanded item details
+  const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [expandedSummaryItems, setExpandedSummaryItems] = useState<Record<string, boolean>>({});
+  const [itemImagesMap, setItemImagesMap] = useState<Record<string, string>>({});
+
+  // Pending Orders Session Filter: "all" | "morning" | "evening"
+  const [pendingSessionFilter, setPendingSessionFilter] = useState<"all" | "morning" | "evening">("all");
+  // Live current session indicator ("Morning Session" before 12:00 PM, "Evening Session" 12:00 PM onwards)
+  const [currentLiveSession, setCurrentLiveSession] = useState<"morning" | "evening">(() => {
+    return new Date().getHours() < 12 ? "morning" : "evening";
+  });
+  const [currentLiveTime, setCurrentLiveTime] = useState<string>(() => {
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  });
+
+  // Track today's date string for automatic midnight refresh
+  const [todayDateString, setTodayDateString] = useState<string>(() => {
+    return new Date().toISOString().slice(0, 10);
+  });
+
+  // Helper to determine if an order date is today
+  const isOrderFromToday = (order: ProviderOrder) => {
+    if (!order.createdAt) return true; // Default to today if newly placed without timestamp
+    const orderDate = new Date(order.createdAt);
+    if (isNaN(orderDate.getTime())) return true;
+    const now = new Date();
+    return (
+      orderDate.getFullYear() === now.getFullYear() &&
+      orderDate.getMonth() === now.getMonth() &&
+      orderDate.getDate() === now.getDate()
+    );
+  };
+
+  // Helper to determine an order's session ("morning" if before 12:00 PM, "evening" if 12:00 PM or after)
+  const getOrderSession = (order: ProviderOrder): "morning" | "evening" => {
+    if (order.createdAt) {
+      const orderDate = new Date(order.createdAt);
+      if (!isNaN(orderDate.getTime())) {
+        return orderDate.getHours() < 12 ? "morning" : "evening";
+      }
+    }
+    // Fallback based on time string if available (e.g. "09:30 AM", "03:15 PM")
+    if (order.time && order.time.toLowerCase().includes("pm")) {
+      const match = order.time.match(/(\d+):/);
+      if (match) {
+        const hour = parseInt(match[1], 10);
+        if (hour !== 12) return "evening";
+      }
+    }
+    if (order.time && order.time.toLowerCase().includes("am")) {
+      return "morning";
+    }
+    // Default based on current hour
+    return new Date().getHours() < 12 ? "morning" : "evening";
+  };
+
+  // Live clock and automatic midnight day change detection
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = new Date();
+      setCurrentLiveTime(now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      const liveSession = now.getHours() < 12 ? "morning" : "evening";
+      setCurrentLiveSession(liveSession);
+
+      const nowDateString = now.toISOString().slice(0, 10);
+      if (nowDateString !== todayDateString) {
+        // A new day has started! Automatically refresh orders for the new day
+        setTodayDateString(nowDateString);
+        fetchOrdersFromBackend();
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [todayDateString]);
+
   // Live order updates by provider (backend API + localStorage)
   const [orders, setOrders] = useState<ProviderOrder[]>(() => {
     try {
@@ -93,7 +178,7 @@ export default function ProviderPage() {
           return realOrders;
         }
       }
-    } catch {}
+    } catch { }
     return [];
   });
 
@@ -105,19 +190,18 @@ export default function ProviderPage() {
           setOrders(serverOrders);
           try {
             localStorage.setItem("cafe4x_provider_orders", JSON.stringify(serverOrders));
-          } catch {}
+          } catch { }
         }
       })
       .catch(() => {
         // Fallback to local storage
-
         try {
           const stored = localStorage.getItem("cafe4x_provider_orders");
           if (stored) {
             const parsed = JSON.parse(stored);
             if (Array.isArray(parsed)) setOrders(parsed);
           }
-        } catch {}
+        } catch { }
       });
   };
 
@@ -131,7 +215,7 @@ export default function ProviderPage() {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) setOrders(parsed);
         }
-      } catch {}
+      } catch { }
     };
 
     window.addEventListener("storage", handleStorage);
@@ -150,7 +234,7 @@ export default function ProviderPage() {
     setOrders(newOrders);
     try {
       localStorage.setItem("cafe4x_provider_orders", JSON.stringify(newOrders));
-    } catch {}
+    } catch { }
   };
 
 
@@ -159,7 +243,7 @@ export default function ProviderPage() {
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) return JSON.parse(stored);
-    } catch {}
+    } catch { }
     return null;
   }, []);
 
@@ -170,7 +254,7 @@ export default function ProviderPage() {
     let providerId = currentUser?.id ? String(currentUser.id) : "";
     let shortCode = currentUser?.shortCode || "";
 
-    import("../../services/locationApi").then(({ locationApi }) => {
+    import("../../services/locations").then(({ locationApi }) => {
       locationApi
         .getLocations(providerId || undefined, shortCode || undefined)
         .then((locList) => {
@@ -192,6 +276,24 @@ export default function ProviderPage() {
         .catch((err) => {
           console.warn("Could not fetch assigned locations for provider:", err);
         });
+    });
+
+    // Also fetch items to retrieve item images for delivered summary
+    import("../../services/items").then(({ itemsApi }) => {
+      itemsApi
+        .getItems(shortCode || undefined)
+        .then((itemsList) => {
+          if (Array.isArray(itemsList)) {
+            const map: Record<string, string> = {};
+            itemsList.forEach((it) => {
+              if (it.name && it.image) {
+                map[it.name.toLowerCase().trim()] = it.image;
+              }
+            });
+            setItemImagesMap(map);
+          }
+        })
+        .catch(() => { });
     });
   }, [currentUser]);
 
@@ -220,7 +322,7 @@ export default function ProviderPage() {
           }));
         }
       }
-    } catch {}
+    } catch { }
 
     if (currentUser && currentUser.userType === "Provider") {
       const providerId = currentUser.id ? String(currentUser.id) : "";
@@ -337,8 +439,8 @@ export default function ProviderPage() {
                           {/* Bottom Card Banner: Clean Pill Banner */}
                           <div
                             className={`flex min-h-[3.5rem] flex-col items-center justify-center py-2.5 px-4 transition-colors ${isRed
-                                ? "bg-[#C92A38] text-white"
-                                : "bg-[#F3EFEA] text-[#342219] group-hover:bg-[#EAE4DC]"
+                              ? "bg-[#C92A38] text-white"
+                              : "bg-[#F3EFEA] text-[#342219] group-hover:bg-[#EAE4DC]"
                               }`}
                           >
                             <div className="flex items-center gap-2">
@@ -348,8 +450,8 @@ export default function ProviderPage() {
                               {loc.badgeCount !== undefined && (
                                 <span
                                   className={`rounded px-2 py-0.5 text-xs font-bold ${isRed
-                                      ? "bg-[#8B1D27] text-white"
-                                      : "bg-[#70452D] text-white"
+                                    ? "bg-[#8B1D27] text-white"
+                                    : "bg-[#70452D] text-white"
                                     }`}
                                 >
                                   {loc.badgeCount}
@@ -491,7 +593,7 @@ export default function ProviderPage() {
                       const locOrders = orders.filter((o) =>
                         selectedLocation
                           ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
-                            o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office"
+                          o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office"
                           : true
                       );
                       const count = locOrders.filter((o) => {
@@ -571,21 +673,32 @@ export default function ProviderPage() {
                           key={cKey}
                           type="button"
                           onClick={() => setSelectedCategory(cKey)}
-                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition capitalize ${
-                            selectedCategory === cKey
+                          className={`rounded-lg px-3 py-1.5 text-xs font-bold transition capitalize ${selectedCategory === cKey
                               ? "bg-[#754329] text-white shadow-2xs"
                               : "text-[#70523E] hover:bg-white/80"
-                          }`}
+                            }`}
                         >
                           {cKey}
                         </button>
                       ))}
                     </div>
 
+                    {/* Today's Delivered Summary Button (matching exact user screenshot) */}
+                    {selectedCategory === "delivered" && (
+                      <button
+                        type="button"
+                        onClick={() => setIsSummaryModalOpen(true)}
+                        className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-4 py-2 text-xs font-bold text-white shadow-md shadow-[#754329]/20 transition hover:opacity-95 hover:-translate-y-0.5 cursor-pointer"
+                      >
+                        <PieChart size={16} />
+                        <span>Today's Delivered Summary</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setSelectedCategory(null)}
-                      className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs"
+                      className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs cursor-pointer"
                     >
                       <ArrowLeft size={16} />
                       <span>Back to Categories</span>
@@ -608,36 +721,6 @@ export default function ProviderPage() {
                       className="w-full rounded-xl border border-[#E8DED4] bg-white py-2 pl-9 pr-3 text-xs text-[#342219] shadow-xs outline-none transition placeholder:text-[#B1A69D] focus:border-[#9A6747] focus:ring-2 focus:ring-[#9A6747]/10"
                     />
                   </div>
-
-                  {/* Summary Counts */}
-                  {(() => {
-                    const locOrders = orders.filter((o) =>
-                      selectedLocation
-                        ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
-                          (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
-                        : true
-                    );
-                    const pendingCount = locOrders.filter((o) => o.status === "Pending" || o.status === "Preparing" || o.status === "Ready").length;
-                    const deliveredCount = locOrders.filter((o) => o.status === "Delivered").length;
-                    const canceledCount = locOrders.filter((o) => o.status === "Canceled").length;
-
-                    return (
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="rounded-lg bg-amber-100 px-2.5 py-1 font-bold text-amber-900 border border-amber-200">
-                          Pending: {pendingCount}
-                        </span>
-                        <span className="rounded-lg bg-emerald-100 px-2.5 py-1 font-bold text-emerald-900 border border-emerald-200">
-                          Delivered: {deliveredCount}
-                        </span>
-                        <span className="rounded-lg bg-rose-100 px-2.5 py-1 font-bold text-rose-900 border border-rose-200">
-                          Canceled: {canceledCount}
-                        </span>
-                        <span className="rounded-lg bg-stone-100 px-2.5 py-1 font-bold text-stone-800 border border-stone-200">
-                          Total: {locOrders.length}
-                        </span>
-                      </div>
-                    );
-                  })()}
                 </div>
 
                 {/* Master-Detail Orders Layout matching exact screenshot */}
@@ -645,7 +728,7 @@ export default function ProviderPage() {
                   const locOrders = orders.filter((o) =>
                     selectedLocation
                       ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
-                        (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
+                      (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
                       : true
                   );
 
@@ -720,11 +803,10 @@ export default function ProviderPage() {
                               <div
                                 key={order.id}
                                 onClick={() => setSelectedOrderId(order.id)}
-                                className={`flex items-start gap-4 p-4 cursor-pointer transition-colors duration-150 ${
-                                  isSelected
+                                className={`flex items-start gap-4 p-4 cursor-pointer transition-colors duration-150 ${isSelected
                                     ? "bg-[#FAF4ED] border-l-4 border-l-[#8C5835]"
                                     : "hover:bg-[#FCFAF8]"
-                                }`}
+                                  }`}
                               >
                                 {/* Left Chair / Seat Graphic Column with Employee Name */}
                                 <div className="flex flex-col items-center justify-center w-16 shrink-0 text-center">
@@ -771,17 +853,16 @@ export default function ProviderPage() {
                                     </span>
 
                                     <span
-                                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold text-white shadow-2xs ${
-                                        order.status === "Pending"
+                                      className={`rounded px-1.5 py-0.5 text-[10px] font-bold text-white shadow-2xs ${order.status === "Pending"
                                           ? "bg-[#007BFF]"
                                           : order.status === "Preparing"
-                                          ? "bg-amber-600"
-                                          : order.status === "Ready"
-                                          ? "bg-purple-600"
-                                          : order.status === "Delivered"
-                                          ? "bg-emerald-600"
-                                          : "bg-rose-600"
-                                      }`}
+                                            ? "bg-amber-600"
+                                            : order.status === "Ready"
+                                              ? "bg-purple-600"
+                                              : order.status === "Delivered"
+                                                ? "bg-emerald-600"
+                                                : "bg-rose-600"
+                                        }`}
                                     >
                                       {order.status === "Pending" ? "New" : order.status}
                                     </span>
@@ -832,17 +913,16 @@ export default function ProviderPage() {
                                       Order {activeOrder.id}
                                     </h3>
                                     <span
-                                      className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${
-                                        activeOrder.status === "Pending"
+                                      className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${activeOrder.status === "Pending"
                                           ? "bg-blue-100 text-blue-800"
                                           : activeOrder.status === "Preparing"
-                                          ? "bg-amber-100 text-amber-800"
-                                          : activeOrder.status === "Ready"
-                                          ? "bg-purple-100 text-purple-800"
-                                          : activeOrder.status === "Delivered"
-                                          ? "bg-emerald-100 text-emerald-800"
-                                          : "bg-rose-100 text-rose-800"
-                                      }`}
+                                            ? "bg-amber-100 text-amber-800"
+                                            : activeOrder.status === "Ready"
+                                              ? "bg-purple-100 text-purple-800"
+                                              : activeOrder.status === "Delivered"
+                                                ? "bg-emerald-100 text-emerald-800"
+                                                : "bg-rose-100 text-rose-800"
+                                        }`}
                                     >
                                       {activeOrder.status}
                                     </span>
@@ -914,21 +994,6 @@ export default function ProviderPage() {
                                   </div>
                                 )}
 
-                                {/* Bill Summary Box */}
-                                <div className="mt-5 rounded-xl border border-[#E8DED4] bg-[#F7F3EE] p-4 text-xs space-y-2">
-                                  <div className="flex justify-between text-[#8A7667]">
-                                    <span>Items Subtotal</span>
-                                    <span>₹ {activeOrder.total.toFixed(2)}</span>
-                                  </div>
-                                  <div className="flex justify-between text-[#8A7667]">
-                                    <span>Taxes & Service</span>
-                                    <span>₹ 0.00</span>
-                                  </div>
-                                  <div className="border-t border-[#DEC5B0] pt-2 flex justify-between text-base font-black text-[#754329]">
-                                    <span>Total Amount</span>
-                                    <span>₹ {activeOrder.total.toFixed(2)}</span>
-                                  </div>
-                                </div>
                               </div>
                             </div>
 
@@ -1000,132 +1065,540 @@ export default function ProviderPage() {
               </div>
             )}
 
-            {/* VIEW 3: MY PENDING ORDERS TAB */}
+            {/* VIEW 3: MY PENDING ORDERS TAB WITH MORNING & EVENING SESSIONS & LIVE TIMING */}
             {activeTab === "pendingOrders" && (
               <div className="space-y-6">
-                <div className="flex flex-col gap-2 rounded-2xl border border-[#EEE5DC] bg-white/95 p-6 shadow-md backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-2xl font-bold text-[#342219]">
-                      My Pending Orders
-                    </h2>
-                    <p className="text-xs text-[#897B71]">
-                      Real-time queue of workplace café orders waiting for fulfillment
+                {/* Header with Live Timing & Day Badge */}
+                <div className="flex flex-col gap-4 rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-md shadow-[#70452D]/5 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-3">
+                      <h2 className="text-2xl font-bold text-[#342219]">
+                        My Pending Orders
+                      </h2>
+                      {/* Live session badge */}
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-bold shadow-2xs border ${currentLiveSession === "morning"
+                          ? "bg-amber-50 text-amber-900 border-amber-200"
+                          : "bg-indigo-50 text-indigo-900 border-indigo-200"
+                        }`}>
+                        {currentLiveSession === "morning" ? <Sun size={13} className="text-amber-600 animate-spin" style={{ animationDuration: "12s" }} /> : <Moon size={13} className="text-indigo-600" />}
+                        <span>Current: {currentLiveSession === "morning" ? "Morning Session" : "Evening Session"}</span>
+                      </span>
+                    </div>
+
+                    <p className="flex items-center gap-2 text-xs text-[#897B71]">
+                      <span>Real-time queue for today ({new Date().toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })})</span>
+                      <span>&bull;</span>
+                      <span className="font-mono font-bold text-[#754329] bg-[#FAF6F1] px-2 py-0.5 rounded-md border border-[#E8DED4]">
+                        Live: {currentLiveTime}
+                      </span>
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab("provider")}
-                    className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-semibold text-[#6F4228] transition hover:bg-[#FAF6F1]"
-                  >
-                    <ArrowLeft size={15} />
-                    <span>Back to Locations</span>
-                  </button>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Session Switcher Pills: All Today | Morning Session | Evening Session */}
+                    <div className="flex items-center rounded-2xl bg-[#FAF8F5] p-1 border border-[#DEC5B0] shadow-xs">
+                      <button
+                        type="button"
+                        onClick={() => setPendingSessionFilter("all")}
+                        className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "all"
+                            ? "bg-[#754329] text-white shadow-2xs"
+                            : "text-[#70523E] hover:bg-white/80"
+                          }`}
+                      >
+                        <Calendar size={13} />
+                        <span>Today All</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPendingSessionFilter("morning")}
+                        className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "morning"
+                            ? "bg-amber-600 text-white shadow-2xs"
+                            : "text-[#70523E] hover:bg-white/80"
+                          }`}
+                      >
+                        <Sun size={13} />
+                        <span>Morning (Before 12 PM)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setPendingSessionFilter("evening")}
+                        className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "evening"
+                            ? "bg-indigo-600 text-white shadow-2xs"
+                            : "text-[#70523E] hover:bg-white/80"
+                          }`}
+                      >
+                        <Moon size={13} />
+                        <span>Evening (12 PM Onwards)</span>
+                      </button>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("provider")}
+                      className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs cursor-pointer"
+                    >
+                      <ArrowLeft size={15} />
+                      <span>Back to Locations</span>
+                    </button>
+                  </div>
                 </div>
 
-                {orders.length === 0 ? (
-                  <div className="rounded-3xl border border-[#EEE5DC] bg-white/90 p-12 text-center">
-                    <Sparkles className="mx-auto mb-3 h-10 w-10 text-[#70452D]" />
-                    <p className="font-semibold text-[#342219]">No pending orders at the moment!</p>
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    {orders.map((order) => (
-                      <div
-                        key={order.id}
-                        className="rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm transition hover:shadow-md"
-                      >
-                        <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm font-bold text-[#70452D]">
-                              {order.id}
-                            </span>
-                            <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
-                              {order.locationName} &bull; Seat {order.seat}
-                            </span>
-                          </div>
-                          <span
-                            className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${order.status === "Pending"
-                                ? "bg-amber-100 text-amber-800"
-                                : order.status === "Preparing"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : order.status === "Ready"
-                                    ? "bg-purple-100 text-purple-800"
-                                    : "bg-emerald-100 text-emerald-800"
-                              }`}
-                          >
-                            {order.status}
-                          </span>
-                        </div>
+                {/* Filtered Pending Orders Queue */}
+                {(() => {
+                  // Scoped for today only: automatic daily refresh ensures only today's orders remain
+                  const todayOrders = orders.filter((o) => isOrderFromToday(o));
 
-                        {/* Customer & Time */}
-                        <div className="mt-3 flex items-center justify-between text-xs text-[#897B71]">
-                          <span className="font-medium text-[#342219]">
-                            Customer: {order.employeeName}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Clock size={12} /> {order.time}
-                          </span>
-                        </div>
+                  // Pending statuses
+                  const pendingOrdersList = todayOrders.filter(
+                    (o) => o.status === "Pending" || o.status === "Preparing" || o.status === "Ready"
+                  );
 
-                        {/* Order Items */}
-                        <div className="my-3 space-y-1.5 rounded-xl bg-[#FAF6F1] p-3 text-xs">
-                          {order.items.map((it, idx) => (
-                            <div key={idx} className="flex justify-between font-medium text-[#342219]">
-                              <span>
-                                {it.name} &times; {it.qty}
-                              </span>
-                              <span>₹{it.price * it.qty}</span>
-                            </div>
-                          ))}
-                          <div className="border-t border-[#E8DED4] pt-1.5 flex justify-between font-bold text-[#70452D]">
-                            <span>Total</span>
-                            <span>₹{order.total}</span>
-                          </div>
-                        </div>
+                  // Apply session filter
+                  const sessionFiltered = pendingOrdersList.filter((o) => {
+                    if (pendingSessionFilter === "all") return true;
+                    return getOrderSession(o) === pendingSessionFilter;
+                  });
 
-                        {/* Action buttons */}
-                        <div className="flex items-center justify-end gap-2 pt-1">
-                          {order.status === "Pending" && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateOrderStatus(order.id, "Preparing")}
-                              className="rounded-lg bg-[#70452D] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#593A28]"
-                            >
-                              Mark Preparing
-                            </button>
-                          )}
-                          {order.status === "Preparing" && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateOrderStatus(order.id, "Ready")}
-                              className="rounded-lg bg-[#28A745] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#218838]"
-                            >
-                              Mark Ready
-                            </button>
-                          )}
-                          {order.status === "Ready" && (
-                            <button
-                              type="button"
-                              onClick={() => handleUpdateOrderStatus(order.id, "Delivered")}
-                              className="rounded-lg bg-[#007BFF] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#0069D9]"
-                            >
-                              Mark Delivered
-                            </button>
-                          )}
-                          {order.status === "Delivered" && (
-                            <span className="flex items-center gap-1 text-xs font-bold text-emerald-600">
-                              <CheckCircle2 size={14} /> Completed
-                            </span>
+                  if (sessionFiltered.length === 0) {
+                    return (
+                      <div className="rounded-3xl border border-[#EEE5DC] bg-white/90 p-12 text-center shadow-xs">
+                        <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FAF6F1] text-[#70452D]">
+                          {pendingSessionFilter === "morning" ? (
+                            <Sun size={28} className="text-amber-600" />
+                          ) : pendingSessionFilter === "evening" ? (
+                            <Moon size={28} className="text-indigo-600" />
+                          ) : (
+                            <Sparkles size={28} />
                           )}
                         </div>
+                        <h4 className="text-base font-bold text-[#342219]">
+                          No pending orders for {pendingSessionFilter === "morning" ? "Morning Session" : pendingSessionFilter === "evening" ? "Evening Session" : "today"}!
+                        </h4>
+                        <p className="mt-1 text-xs text-[#8A7667]">
+                          Orders automatically update in real-time as employees place them at their seats.
+                        </p>
                       </div>
-                    ))}
-                  </div>
-                )}
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      {sessionFiltered.map((order) => {
+                        const session = getOrderSession(order);
+                        return (
+                          <div
+                            key={order.id}
+                            className="flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm transition hover:shadow-md"
+                          >
+                            <div>
+                              <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono text-sm font-bold text-[#70452D]">
+                                    {order.id}
+                                  </span>
+                                  <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
+                                    {order.locationName} &bull; Seat {order.seat}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                  {/* Session Badge */}
+                                  <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${session === "morning"
+                                        ? "bg-amber-100 text-amber-900 border border-amber-200"
+                                        : "bg-indigo-100 text-indigo-900 border border-indigo-200"
+                                      }`}
+                                  >
+                                    {session === "morning" ? <Sun size={10} /> : <Moon size={10} />}
+                                    {session === "morning" ? "Morning" : "Evening"}
+                                  </span>
+
+                                  <span
+                                    className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${order.status === "Pending"
+                                        ? "bg-amber-100 text-amber-800"
+                                        : order.status === "Preparing"
+                                          ? "bg-blue-100 text-blue-800"
+                                          : order.status === "Ready"
+                                            ? "bg-purple-100 text-purple-800"
+                                            : "bg-emerald-100 text-emerald-800"
+                                      }`}
+                                  >
+                                    {order.status}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Customer & Time */}
+                              <div className="mt-3 flex items-center justify-between text-xs text-[#897B71]">
+                                <span className="font-medium text-[#342219]">
+                                  Customer: {order.employeeName}
+                                </span>
+                                <span className="flex items-center gap-1 font-mono">
+                                  <Clock size={12} /> {order.time}
+                                </span>
+                              </div>
+
+                              {/* Order Items */}
+                              <div className="my-3 space-y-1.5 rounded-xl bg-[#FAF6F1] p-3 text-xs">
+                                {order.items.map((it, idx) => (
+                                  <div key={idx} className="flex justify-between font-medium text-[#342219]">
+                                    <span>
+                                      {it.name} &times; {it.qty}
+                                    </span>
+                                    <span>₹{it.price * it.qty}</span>
+                                  </div>
+                                ))}
+                                <div className="border-t border-[#E8DED4] pt-1.5 flex justify-between font-bold text-[#70452D]">
+                                  <span>Total</span>
+                                  <span>₹{order.total.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex items-center justify-end gap-2 border-t border-[#F0E6DB] pt-3">
+                              {order.status === "Pending" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateOrderStatus(order.id, "Preparing")}
+                                  className="rounded-lg bg-[#70452D] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#593A28] cursor-pointer"
+                                >
+                                  Mark Preparing
+                                </button>
+                              )}
+                              {order.status === "Preparing" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateOrderStatus(order.id, "Ready")}
+                                  className="rounded-lg bg-[#28A745] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#218838] cursor-pointer"
+                                >
+                                  Mark Ready
+                                </button>
+                              )}
+                              {order.status === "Ready" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleUpdateOrderStatus(order.id, "Delivered")}
+                                  className="rounded-lg bg-[#007BFF] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#0069D9] cursor-pointer"
+                                >
+                                  Mark Delivered
+                                </button>
+                              )}
+                              {order.status === "Delivered" && (
+                                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600">
+                                  <CheckCircle2 size={14} /> Completed
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
         </main>
+
+        {/* ========================================================
+            TODAY'S DELIVERED SUMMARY MODAL (MATCHING USER SCREENSHOT)
+           ======================================================== */}
+        {isSummaryModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="relative w-full max-w-2xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl">
+              {/* Modal Brown Header matching user screenshot */}
+              <div className="flex items-center justify-between bg-[#7D533D] px-6 py-4 text-white">
+                <div className="flex items-center gap-2.5">
+                  <PieChart size={20} className="text-amber-200" />
+                  <h3 className="text-base font-bold text-white tracking-wide">
+                    Today's Delivered Summary
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsSummaryModalOpen(false)}
+                  className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white transition cursor-pointer"
+                  title="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Table Body matching user screenshot */}
+              {(() => {
+                // Filter delivered orders for today in the active location (or overall if no location selected)
+                const deliveredTodayOrders = orders.filter((o) => {
+                  if (o.status !== "Delivered") return false;
+                  if (!isOrderFromToday(o)) return false;
+                  if (selectedLocation) {
+                    return (
+                      o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
+                      (o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office")
+                    );
+                  }
+                  return true;
+                });
+
+                interface OrderDetailRow {
+                  orderId: string;
+                  seat: string;
+                  employeeName: string;
+                  qty: number;
+                  amount: number;
+                  preferenceText: string;
+                }
+
+                interface AggregatedItem {
+                  name: string;
+                  image: string;
+                  qty: number;
+                  totalAmount: number;
+                  orders: OrderDetailRow[];
+                }
+
+                // Aggregate by item name (stripping preference if already inside parenthetical name)
+                const itemSummaryMap: Record<string, AggregatedItem> = {};
+                let grandTotalItems = 0;
+                let grandTotalAmount = 0;
+
+                deliveredTodayOrders.forEach((o) => {
+                  o.items.forEach((it) => {
+                    let baseName = it.name || "Item";
+                    let pref = "";
+                    if (baseName.includes("(") && baseName.includes(")")) {
+                      const match = baseName.match(/^(.*?)\s*\((.*?)\)$/);
+                      if (match) {
+                        baseName = match[1].trim();
+                        pref = match[2].trim();
+                      }
+                    }
+
+                    const normalizedKey = baseName.toLowerCase().trim();
+                    const itemImg = itemImagesMap[normalizedKey] || "";
+
+                    if (!itemSummaryMap[baseName]) {
+                      itemSummaryMap[baseName] = {
+                        name: baseName,
+                        image: itemImg,
+                        qty: 0,
+                        totalAmount: 0,
+                        orders: [],
+                      };
+                    }
+
+                    const lineQty = Number(it.qty) || 0;
+                    const lineTotal = lineQty * (Number(it.price) || 0);
+
+                    itemSummaryMap[baseName].qty += lineQty;
+                    itemSummaryMap[baseName].totalAmount += lineTotal;
+                    if (!itemSummaryMap[baseName].image && itemImg) {
+                      itemSummaryMap[baseName].image = itemImg;
+                    }
+
+                    // Format preference display
+                    const prefDisplay = pref
+                      ? (pref.includes(":") ? pref : `Sugar: ${pref}`)
+                      : "Standard";
+
+                    itemSummaryMap[baseName].orders.push({
+                      orderId: o.id,
+                      seat: o.seat,
+                      employeeName: o.employeeName,
+                      qty: lineQty,
+                      amount: lineTotal,
+                      preferenceText: prefDisplay,
+                    });
+
+                    grandTotalItems += lineQty;
+                    grandTotalAmount += lineTotal;
+                  });
+                });
+
+                const summaryRows = Object.values(itemSummaryMap);
+
+                const toggleExpand = (name: string) => {
+                  setExpandedSummaryItems((prev) => ({
+                    ...prev,
+                    [name]: !prev[name],
+                  }));
+                };
+
+                return (
+                  <div>
+                    {/* Table Header matching user screenshot */}
+                    <div className="grid grid-cols-12 border-b border-gray-200 bg-gray-50/70 px-6 py-3 text-xs font-bold text-gray-700">
+                      <div className="col-span-6">Item</div>
+                      <div className="col-span-3 text-center">Quantity Sold</div>
+                      <div className="col-span-3 text-right">Total Amount</div>
+                    </div>
+
+                    {/* Table Content */}
+                    <div className="max-h-[380px] min-h-[220px] overflow-y-auto">
+                      {summaryRows.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center text-gray-400">
+                          <Inbox size={42} className="text-gray-300 mb-2 stroke-1" />
+                          <p className="text-sm font-medium text-gray-500">
+                            No orders found for today
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-gray-100">
+                          {summaryRows.map((item) => {
+                            const isExpanded = !!expandedSummaryItems[item.name];
+
+                            return (
+                              <div key={item.name} className="flex flex-col">
+                                {/* Parent Item Row matching user screenshot */}
+                                <div
+                                  onClick={() => toggleExpand(item.name)}
+                                  className="grid grid-cols-12 items-center px-6 py-3 text-xs hover:bg-[#FCFAF8] transition cursor-pointer"
+                                  title="Click to view/hide order details"
+                                >
+                                  {/* Col 1: Thumbnail + Item Name + Details pill */}
+                                  <div className="col-span-6 flex items-center gap-3">
+                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-[#FAF8F5] shadow-2xs">
+                                      {item.image ? (
+                                        <img
+                                          src={item.image}
+                                          alt={item.name}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-[#8C5835]">
+                                          <Coffee size={18} />
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-sm text-gray-900">
+                                        {item.name}
+                                      </span>
+
+                                      {/* Details (N) Pill button */}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleExpand(item.name);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronUp size={12} className="text-gray-500" />
+                                        ) : (
+                                          <ChevronDown size={12} className="text-gray-500" />
+                                        )}
+                                        <span>Details ({item.orders.length})</span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Col 2: Quantity Sold Pill matching user screenshot */}
+                                  <div className="col-span-3 flex justify-center">
+                                    <span className="flex h-6 min-w-[28px] items-center justify-center rounded-full bg-[#0E2038] px-2 text-xs font-bold text-white shadow-xs">
+                                      {item.qty}
+                                    </span>
+                                  </div>
+
+                                  {/* Col 3: Total Amount matching green text in user screenshot */}
+                                  <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
+                                    ₹ {item.totalAmount.toFixed(2)}
+                                  </div>
+                                </div>
+
+                                {/* Collapsible Nested Drawer: Seat & Preference Details matching user screenshot */}
+                                {isExpanded && (
+                                  <div className="border-y border-gray-200 bg-gray-50/80 px-6 py-3 text-xs animate-in fade-in slide-in-from-top-1 duration-150">
+                                    {/* Sub-header */}
+                                    <div className="flex items-center justify-between pb-2 text-[11px]">
+                                      <span className="flex items-center gap-1.5 font-bold text-gray-700">
+                                        <span>&bull;&bull;&bull;</span>
+                                        <span>Seat & Preference Details ({item.orders.length} order{item.orders.length > 1 ? "s" : ""})</span>
+                                      </span>
+                                      <span className="text-[10px] text-gray-500 italic">
+                                        Click row to collapse
+                                      </span>
+                                    </div>
+
+                                    {/* Nested Table Header */}
+                                    <div className="grid grid-cols-12 border-b border-gray-200 pb-1.5 pt-1 text-[11px] font-bold text-gray-600">
+                                      <div className="col-span-6">Seat No / Order</div>
+                                      <div className="col-span-2 text-center">Qty</div>
+                                      <div className="col-span-2 text-center">Preference Details</div>
+                                      <div className="col-span-2 text-right">Amount</div>
+                                    </div>
+
+                                    {/* Nested Table Rows */}
+                                    <div className="divide-y divide-gray-200/60 pt-1 space-y-1">
+                                      {item.orders.map((sub, sIdx) => (
+                                        <div
+                                          key={sIdx}
+                                          className="grid grid-cols-12 items-center py-2 text-xs"
+                                        >
+                                          {/* Seat Pill & Order Code */}
+                                          <div className="col-span-6 flex items-center gap-2">
+                                            <span className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs">
+                                              Seat: {sub.employeeName ? sub.employeeName.split("@")[0] : `Seat ${sub.seat}`}
+                                            </span>
+                                            <span className="font-mono text-[10px] text-gray-400">
+                                              {sub.orderId}
+                                            </span>
+                                          </div>
+
+                                          {/* Qty Pill */}
+                                          <div className="col-span-2 text-center">
+                                            <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#0E2038] text-[10px] font-bold text-white">
+                                              {sub.qty}
+                                            </span>
+                                          </div>
+
+                                          {/* Preference Details Tag */}
+                                          <div className="col-span-2 flex justify-center">
+                                            <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-bold text-blue-800">
+                                              {sub.preferenceText}
+                                            </span>
+                                          </div>
+
+                                          {/* Amount */}
+                                          <div className="col-span-2 text-right font-bold text-gray-800">
+                                            ₹ {sub.amount.toFixed(2)}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Modal Footer with GRAND TOTAL, Total Items, and Total Amount Pills */}
+                    <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50/80 px-6 py-4 text-xs">
+                      <div className="font-extrabold uppercase tracking-wider text-gray-600">
+                        GRAND TOTAL
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="rounded-md bg-stone-600 px-3 py-1 font-bold text-white shadow-2xs">
+                          Total Items: {grandTotalItems}
+                        </span>
+                        <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
+                          Total Amount: ₹ {grandTotalAmount.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
       </div>
     </Background>
   );

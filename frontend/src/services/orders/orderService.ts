@@ -1,0 +1,61 @@
+import { api } from "../apiClient";
+
+export interface OrderItem {
+  name: string;
+  qty: number;
+  price: number;
+}
+
+export type OrderStatus = "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";
+
+export interface ProviderOrder {
+  id: string;
+  seat: string;
+  locationName: string;
+  locationId?: string;
+  employeeName: string;
+  items: OrderItem[];
+  total: number;
+  time: string;
+  status: OrderStatus;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface GetOrdersParams {
+  location?: string;
+  status?: string;
+}
+
+export const orderApi = {
+  async getOrders(params?: GetOrdersParams): Promise<ProviderOrder[]> {
+    const res = await api.get<{ success: boolean; orders: ProviderOrder[] }>("/api/orders", params);
+    return res.orders || [];
+  },
+
+  async getOrderById(id: string): Promise<ProviderOrder> {
+    const res = await api.get<{ success: boolean; order: ProviderOrder }>(`/api/orders/${encodeURIComponent(id)}`);
+    return res.order;
+  },
+
+  async createOrder(order: Partial<ProviderOrder>): Promise<ProviderOrder> {
+    const res = await api.post<{ success: boolean; order: ProviderOrder }>("/api/orders", order);
+    return res.order;
+  },
+
+  async updateStatus(orderId: string, status: OrderStatus): Promise<ProviderOrder> {
+    const res = await api.patch<{ success: boolean; order: ProviderOrder }>(
+      `/api/orders/${encodeURIComponent(orderId)}/status`,
+      { status }
+    );
+    return res.order;
+  },
+
+  async deleteOrder(orderId: string): Promise<void> {
+    await api.delete<{ success: boolean }>(`/api/orders/${encodeURIComponent(orderId)}`);
+  },
+};
+
+export const orderService = orderApi;
+export default orderService;

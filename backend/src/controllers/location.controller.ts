@@ -16,7 +16,7 @@ export interface LocationModel {
   updatedAt?: string;
 }
 
-let locationsStore: LocationModel[] = [];
+export let locationsStore: LocationModel[] = [];
 
 function syncLocationsFromDb() {
   try {
@@ -54,8 +54,6 @@ function syncLocationsFromDb() {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       }));
-    } else {
-      locationsStore = [];
     }
   } catch (err) {
     console.warn("Could not sync locations from SQLite:", err);
@@ -218,7 +216,17 @@ export const locationController = {
       }
 
       syncLocationsFromDb();
-      const found = locationsStore.find((l) => l.id === id);
+      let found = locationsStore.find((l) => l.id === id);
+      if (found) {
+        if (body.name) found.name = body.name.trim();
+        if (body.status) found.status = body.status;
+        if (body.totalSeats) found.totalSeats = Number(body.totalSeats);
+        if (body.image !== undefined) found.image = body.image;
+        if (body.assignedProviderId !== undefined) found.assignedProviderId = body.assignedProviderId;
+        if (body.assignedProviderName !== undefined) found.assignedProviderName = body.assignedProviderName;
+        if (body.assignedProviderEmail !== undefined) found.assignedProviderEmail = body.assignedProviderEmail;
+        found.updatedAt = now;
+      }
       return c.json({ success: true, location: found || body });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
@@ -254,7 +262,13 @@ export const locationController = {
       }
 
       syncLocationsFromDb();
-      const found = locationsStore.find((l) => l.id === id);
+      let found = locationsStore.find((l) => l.id === id);
+      if (found) {
+        found.assignedProviderId = body.assignedProviderId;
+        found.assignedProviderName = body.assignedProviderName;
+        found.assignedProviderEmail = body.assignedProviderEmail;
+        found.updatedAt = now;
+      }
       return c.json({ success: true, location: found || { id, ...body } });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);

@@ -92,10 +92,10 @@ export default function AssignCard({
       }
     } catch {}
 
-    import("../../services/userApi").then(({ userApi }) => {
+    import("../../services/users").then(({ userApi }) => {
       userApi
         .getUsers("Provider", orgShortCode || undefined)
-        .then((users) => {
+        .then((users: any) => {
           if (Array.isArray(users)) {
             const mapped: ProviderUserItem[] = users
               .filter((u: any) => (u.userType || "").toLowerCase() === "provider")

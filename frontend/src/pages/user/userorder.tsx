@@ -3,102 +3,213 @@ import { useParams, useSearchParams } from "react-router-dom";
 import {
   Coffee,
   CheckCircle2,
-  Sparkles,
   ShoppingBag,
   Plus,
   Minus,
-  X,
-  MapPin,
+  ImageIcon,
 } from "lucide-react";
 import Background from "../../components/background";
-import { orderApi } from "../../services/orderApi";
+import { orderApi } from "../../services/orders";
+import { itemsApi } from "../../services/items";
+import { locationApi } from "../../services/locations";
 
-
-export interface MenuItem {
+export interface UserOrderItem {
   id: string;
   name: string;
   description: string;
   image: string;
   price: number;
   category: string;
+  preferenceKey?: string;
+  preferenceOptions?: string[];
+  selectedPreference?: string;
 }
 
-const defaultMenu: MenuItem[] = [
-  {
-    id: "1",
-    name: "Tea",
-    description: "Milk Tea brewed with freshly grounded spices",
-    image: "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
-    price: 18,
-    category: "Beverages",
-  },
-  {
-    id: "2",
-    name: "Coffee",
-    description: "Freshly brewed artisan coffee with rich crema",
-    image: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=600&q=80",
-    price: 20,
-    category: "Beverages",
-  },
-  {
-    id: "3",
-    name: "Black Tea",
-    description: "Without milk, pure organic infusion",
-    image: "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80",
-    price: 18,
-    category: "Beverages",
-  },
-  {
-    id: "4",
-    name: "Lemon Tea",
-    description: "Zesty lemon brew with crisp mint leaves",
-    image: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=600&q=80",
-    price: 20,
-    category: "Beverages",
-  },
-  {
-    id: "5",
-    name: "Black Coffee",
-    description: "Rich dark roast coffee for maximum focus",
-    image: "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=600&q=80",
-    price: 18,
-    category: "Beverages",
-  },
-  {
-    id: "6",
-    name: "Milk",
-    description: "Pure warm steamed whole milk",
-    image: "https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=600&q=80",
-    price: 18,
-    category: "Beverages",
-  },
-];
-
 export default function UserOrderPage() {
-  const { locationId, seatNumber } = useParams<{
+  const { locationId, seatNumber, shortCode } = useParams<{
     locationId?: string;
     seatNumber?: string;
+    shortCode?: string;
   }>();
   const [searchParams] = useSearchParams();
 
-  // Try finding location name and seat employee from localStorage or parameters
+  // Try finding location name and seat employee from backend, localStorage or parameters
   const [locationName, setLocationName] = useState<string>("Office");
   const [seatId, setSeatId] = useState<string>("");
-  const [employeeEmail, setEmployeeEmail] = useState<string>("");
+  const [employeeEmail, setEmployeeEmail] = useState<string>("employee@office.com");
   const [employeeName, setEmployeeName] = useState<string>("");
 
+  // Live menu loaded from backend database
+  const [menuItems, setMenuItems] = useState<UserOrderItem[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   // Items quantity state: { [itemId]: number }
   const [cartQuantities, setCartQuantities] = useState<Record<string, number>>({});
-  const [isModalOpen, setIsModalOpen] = useState(true);
-  const [orderSentSuccess, setOrderSentSuccess] = useState(false);
-  const [lastOrderDetails, setLastOrderDetails] = useState<any>(null);
-  const [specialInstructions, setSpecialInstructions] = useState("");
+  // Selected preferences for items: { [itemId]: string } e.g. { "1": "Medium" }
+  const [itemPreferences, setItemPreferences] = useState<Record<string, string>>({});
+
+  // Placed order tracking
+  const [placedOrder, setPlacedOrder] = useState<any>(null);
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
   const activeSeatNumber = seatNumber || searchParams.get("seat") || "01";
-  const activeLocationId = locationId || "3"; // default to 'office' (id: 3)
+  const activeLocationId = locationId || searchParams.get("locationId") || "1";
+
+  // Helper to parse key-value preference string e.g. "Sugar : No,Low,Medium,High"
+  const parsePref = (prefStr?: string) => {
+    if (!prefStr || !prefStr.trim()) {
+      return { key: "Sugar", options: ["No", "Low", "Medium", "High"] };
+    }
+    if (prefStr.includes(":")) {
+      const parts = prefStr.split(":");
+      const key = parts[0].trim() || "Sugar";
+      const opts = parts[1]
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      return { key, options: opts.length > 0 ? opts : ["No", "Low", "Medium", "High"] };
+    }
+    return {
+      key: "Preference",
+      options: prefStr.split(",").map((s) => s.trim()).filter(Boolean),
+    };
+  };
+
+  // 1. Resolve organization shortCode
+  const [effectiveShortCode, setEffectiveShortCode] = useState<string>(shortCode || "");
 
   useEffect(() => {
-    // 1. Identify location name from localStorage
+    if (shortCode) {
+      setEffectiveShortCode(shortCode.toUpperCase());
+      return;
+    }
+    locationApi
+      .getLocations()
+      .then((locs) => {
+        if (Array.isArray(locs)) {
+          const found = locs.find((l) => String(l.id) === String(activeLocationId));
+          if (found) {
+            setLocationName(found.name);
+            if (found.shortCode) {
+              setEffectiveShortCode(found.shortCode.toUpperCase());
+            }
+          }
+        }
+      })
+      .catch(() => { });
+
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) {
+        const u = JSON.parse(stored);
+        if (u.shortCode) {
+          setEffectiveShortCode((prev) => prev || u.shortCode.toUpperCase());
+        }
+      }
+    } catch { }
+  }, [shortCode, activeLocationId]);
+
+  // 2. Fetch live items strictly from organization's items in database
+  useEffect(() => {
+    let isMounted = true;
+    setIsLoadingMenu(true);
+    itemsApi
+      .getItems(effectiveShortCode || undefined)
+      .then((dbItems) => {
+        if (!isMounted) return;
+        if (Array.isArray(dbItems)) {
+          const filtered = effectiveShortCode
+            ? dbItems.filter(
+              (it) =>
+                !it.shortCode ||
+                it.shortCode.toUpperCase() === effectiveShortCode.toUpperCase()
+            )
+            : dbItems;
+
+          const mapped: UserOrderItem[] = filtered
+            .filter((it) => it.status !== "Out of Stock")
+            .map((it) => {
+              const parsed = parsePref(it.preference || it.preferences);
+              return {
+                id: it.id,
+                name: it.name,
+                description: it.description || "",
+                image: it.image || "",
+                price: Number(it.amount) || 0,
+                category: it.type || it.category || "Beverages",
+                preferenceKey: parsed.key,
+                preferenceOptions: parsed.options,
+              };
+            });
+
+          setMenuItems(mapped);
+          const defaultPrefs: Record<string, string> = {};
+          mapped.forEach((m) => {
+            if (m.preferenceOptions && m.preferenceOptions.length > 0) {
+              defaultPrefs[m.id] = m.preferenceOptions[0];
+            }
+          });
+          setItemPreferences((prev) => ({ ...defaultPrefs, ...prev }));
+        }
+        setIsLoadingMenu(false);
+      })
+      .catch((err) => {
+        console.warn("Could not load items from backend:", err);
+        try {
+          const cacheKey = effectiveShortCode ? `cafe4x_items_${effectiveShortCode}` : "cafe4x_items";
+          const cached = localStorage.getItem(cacheKey);
+          if (cached && isMounted) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) {
+              const mapped: UserOrderItem[] = parsed
+                .filter((it: any) => it.status !== "Out of Stock")
+                .map((it: any) => {
+                  const p = parsePref(it.preference || it.preferences);
+                  return {
+                    id: it.id,
+                    name: it.name,
+                    description: it.description || "",
+                    image: it.image || "",
+                    price: Number(it.amount) || 0,
+                    category: it.type || it.category || "Beverages",
+                    preferenceKey: p.key,
+                    preferenceOptions: p.options,
+                  };
+                });
+              setMenuItems(mapped);
+            }
+          }
+        } catch { }
+        if (isMounted) setIsLoadingMenu(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [effectiveShortCode]);
+
+  // 3. Fetch location and seat details
+  useEffect(() => {
+    const seatIdParam = searchParams.get("seatId");
+    if (seatIdParam) {
+      setSeatId(seatIdParam);
+    }
+
+    locationApi
+      .getLocations(undefined, effectiveShortCode || undefined)
+      .then((locs) => {
+        if (Array.isArray(locs)) {
+          const found = locs.find(
+            (l) =>
+              String(l.id) === String(activeLocationId) ||
+              l.name.toLowerCase() === activeLocationId?.toLowerCase()
+          );
+          if (found) {
+            setLocationName(found.name);
+          }
+        }
+      })
+      .catch(() => { });
+
     try {
       const storedLocs = localStorage.getItem("cafe4x_locations");
       if (storedLocs) {
@@ -106,57 +217,60 @@ export default function UserOrderPage() {
         const found = parsed.find(
           (l: any) =>
             String(l.id) === String(activeLocationId) ||
-            l.name.toLowerCase() === "office" ||
             l.name.toLowerCase() === activeLocationId?.toLowerCase()
         );
         if (found) {
           setLocationName(found.name);
         }
       }
-    } catch {}
+    } catch { }
 
-    // 2. Identify seat information and assigned employee
     try {
-      const storedSeats = localStorage.getItem("cafe4x_seatsByLoc");
-      if (storedSeats) {
-        const parsed = JSON.parse(storedSeats);
-        const locSeats = parsed[activeLocationId] || parsed["3"] || parsed["1"] || [];
-        const foundSeat = locSeats.find(
-          (s: any) =>
-            String(s.number).padStart(2, "0") === String(activeSeatNumber).padStart(2, "0")
-        );
-        if (foundSeat) {
-          setSeatId(foundSeat.id || `Seat-${activeSeatNumber}`);
-          if (foundSeat.employee) {
-            setEmployeeEmail(foundSeat.employee);
-            const prefix = foundSeat.employee.split("@")[0];
-            setEmployeeName(prefix.charAt(0).toUpperCase() + prefix.slice(1));
+      const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
+      for (const k of allKeys) {
+        const storedSeats = localStorage.getItem(k);
+        if (storedSeats) {
+          const parsed = JSON.parse(storedSeats);
+          const locSeats = parsed[activeLocationId] || [];
+          const foundSeat = locSeats.find(
+            (s: any) =>
+              String(s.number).padStart(2, "0") === String(activeSeatNumber).padStart(2, "0")
+          );
+          if (foundSeat) {
+            setSeatId((prev) => prev || foundSeat.id || `Seat-${activeSeatNumber}`);
+            if (foundSeat.employee) {
+              setEmployeeEmail(foundSeat.employee);
+              const prefix = foundSeat.employee.split("@")[0];
+              setEmployeeName(prefix.charAt(0).toUpperCase() + prefix.slice(1));
+            }
+            break;
           }
         }
       }
-    } catch {}
-
-    // Fallbacks if not stored yet:
-    // Check known mapped employees
-    const seatMap: Record<string, { email: string; name: string; id: string }> = {
-      "01": { email: "rizwi@faaztech", name: "Rizwan", id: "S003-F1-01" },
-      "1": { email: "rizwi@faaztech", name: "Rizwan", id: "S003-F1-01" },
-      "02": { email: "imthi@faaztech", name: "Imthiyaz", id: "S003-F1-02" },
-      "2": { email: "imthi@faaztech", name: "Imthiyaz", id: "S003-F1-02" },
-      "03": { email: "saif@faaztech", name: "Saif", id: "S003-F1-03" },
-      "3": { email: "saif@faaztech", name: "Saif", id: "S003-F1-03" },
-    };
+    } catch { }
 
     const padded = String(activeSeatNumber).padStart(2, "0");
-    if (seatMap[padded]) {
-      setEmployeeEmail((prev) => prev || seatMap[padded].email);
-      setEmployeeName((prev) => prev || seatMap[padded].name);
-      setSeatId((prev) => prev || seatMap[padded].id);
-    } else {
-      setSeatId((prev) => prev || `S003-F1-${padded}`);
-      setEmployeeName((prev) => prev || `Seat ${padded} Guest`);
-    }
-  }, [activeLocationId, activeSeatNumber]);
+    setSeatId((prev) => prev || `S00${activeLocationId}-F1-${padded}`);
+    setEmployeeName((prev) => prev || `Seat ${padded} Employee`);
+  }, [activeLocationId, activeSeatNumber, effectiveShortCode, searchParams]);
+
+  // Periodic polling for status update of placed order
+  useEffect(() => {
+    if (!placedOrder?.id) return;
+    const interval = setInterval(() => {
+      try {
+        const raw = localStorage.getItem("cafe4x_provider_orders");
+        if (raw) {
+          const orders = JSON.parse(raw);
+          const matched = orders.find((o: any) => o.id === placedOrder.id);
+          if (matched && matched.status !== placedOrder.status) {
+            setPlacedOrder((prev: any) => ({ ...prev, status: matched.status }));
+          }
+        }
+      } catch { }
+    }, 4000);
+    return () => clearInterval(interval);
+  }, [placedOrder]);
 
   const updateQuantity = (itemId: string, delta: number) => {
     setCartQuantities((prev) => {
@@ -171,15 +285,21 @@ export default function UserOrderPage() {
     });
   };
 
+  const currentDisplayMenu = menuItems;
+
   const selectedItems = useMemo(() => {
-    return defaultMenu
+    return currentDisplayMenu
       .filter((item) => (cartQuantities[item.id] || 0) > 0)
-      .map((item) => ({
-        ...item,
-        qty: cartQuantities[item.id],
-        totalPrice: item.price * cartQuantities[item.id],
-      }));
-  }, [cartQuantities]);
+      .map((item) => {
+        const selectedPref = itemPreferences[item.id] || (item.preferenceOptions?.[0] || "");
+        return {
+          ...item,
+          qty: cartQuantities[item.id],
+          preferenceChoice: selectedPref,
+          totalPrice: item.price * cartQuantities[item.id],
+        };
+      });
+  }, [cartQuantities, currentDisplayMenu, itemPreferences]);
 
   const totalItemCount = useMemo(() => {
     return Object.values(cartQuantities).reduce((acc, count) => acc + count, 0);
@@ -189,85 +309,119 @@ export default function UserOrderPage() {
     return selectedItems.reduce((acc, item) => acc + item.totalPrice, 0);
   }, [selectedItems]);
 
-  const handleSendOrder = () => {
+  const handlePlaceOrder = async () => {
     if (selectedItems.length === 0) {
       alert("Please select at least 1 item to place an order.");
       return;
     }
 
+    setIsSubmittingOrder(true);
     const orderIdNum = Math.floor(1000 + Math.random() * 9000);
-    const newOrder = {
+    const orderData = {
       id: `#ORD-${orderIdNum}`,
       seat: String(activeSeatNumber).padStart(2, "0"),
       locationName: locationName || "Office",
+      locationId: activeLocationId,
       employeeName: employeeName || employeeEmail || `Seat ${activeSeatNumber}`,
       items: selectedItems.map((it) => ({
-        name: it.name,
+        name: it.preferenceChoice ? `${it.name} (${it.preferenceChoice})` : it.name,
         qty: it.qty,
         price: it.price,
       })),
       total: grandTotal,
-      time: "Just now",
-      status: "Pending",
-      notes: specialInstructions.trim() || undefined,
+      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+      status: "Pending" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
 
-    // 1. Sync to localStorage "cafe4x_provider_orders" so Provider Page receives it immediately
+    // 1. Sync to localStorage "cafe4x_provider_orders"
     try {
       const existingStr = localStorage.getItem("cafe4x_provider_orders");
       const existingOrders = existingStr ? JSON.parse(existingStr) : [];
-      localStorage.setItem("cafe4x_provider_orders", JSON.stringify([newOrder, ...existingOrders]));
-    } catch {}
+      localStorage.setItem(
+        "cafe4x_provider_orders",
+        JSON.stringify([orderData, ...existingOrders])
+      );
+    } catch { }
 
-    // 2. Also sync to backend API
-    orderApi.createOrder({
-      id: newOrder.id,
-      seat: newOrder.seat,
-      locationName: newOrder.locationName,
-      locationId: activeLocationId,
-      employeeName: newOrder.employeeName,
-      items: newOrder.items,
-      total: newOrder.total,
-      notes: newOrder.notes,
-    }).catch((err) => {
+    // 2. Sync to backend API
+    try {
+      await orderApi.createOrder({
+        id: orderData.id,
+        seat: orderData.seat,
+        locationName: orderData.locationName,
+        locationId: activeLocationId,
+        employeeName: orderData.employeeName,
+        items: orderData.items,
+        total: orderData.total,
+      });
+    } catch (err) {
       console.warn("Could not sync order to backend:", err);
-    });
+    }
 
-    // 3. Also sync to admin orders in localStorage
+    // 3. Sync to admin orders in localStorage
     try {
       const existingStr = localStorage.getItem("cafe4x_admin_orders");
       const existingOrders = existingStr ? JSON.parse(existingStr) : [];
       const adminOrderRecord = {
-        id: newOrder.id,
-        employeeName: newOrder.employeeName,
+        id: orderData.id,
+        employeeName: orderData.employeeName,
         department: "Office Team",
-        avatarInitials: newOrder.employeeName.slice(0, 2).toUpperCase(),
-        items: newOrder.items.map((i: any) => ({
+        avatarInitials: orderData.employeeName.slice(0, 2).toUpperCase(),
+        items: orderData.items.map((i: any) => ({
           name: i.name,
           price: i.price,
           qty: i.qty,
-          image: defaultMenu.find((m) => m.name === i.name)?.image || defaultMenu[0].image,
+          image:
+            currentDisplayMenu.find((m) => m.name === i.name)?.image ||
+            currentDisplayMenu[0]?.image ||
+            "",
         })),
-        itemSummary: newOrder.items.map((i: any) => `${i.name} x${i.qty}`).join(", "),
-        seat: `Seat ${newOrder.seat}`,
-        total: newOrder.total,
-        orderTime: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        itemSummary: orderData.items.map((i: any) => `${i.name} x${i.qty}`).join(", "),
+        seat: `Seat ${orderData.seat}`,
+        total: orderData.total,
+        orderTime: orderData.time,
         status: "Pending",
       };
-      localStorage.setItem("cafe4x_admin_orders", JSON.stringify([adminOrderRecord, ...existingOrders]));
-    } catch {}
+      localStorage.setItem(
+        "cafe4x_admin_orders",
+        JSON.stringify([adminOrderRecord, ...existingOrders])
+      );
+    } catch { }
 
+    setPlacedOrder(orderData);
+    setCartQuantities({});
+    setIsSubmittingOrder(false);
 
-    setLastOrderDetails(newOrder);
-    setOrderSentSuccess(true);
-    setIsModalOpen(false);
+    // Smooth scroll down to order details view
+    setTimeout(() => {
+      document.getElementById("placed-order-section")?.scrollIntoView({ behavior: "smooth" });
+    }, 150);
+  };
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case "Pending":
+        return "bg-amber-100 text-amber-800 border-amber-300";
+      case "Preparing":
+        return "bg-blue-100 text-blue-800 border-blue-300";
+      case "Ready":
+        return "bg-purple-100 text-purple-800 border-purple-300";
+      case "Delivered":
+        return "bg-emerald-100 text-emerald-800 border-emerald-300";
+      case "Canceled":
+        return "bg-rose-100 text-rose-800 border-rose-300";
+      default:
+        return "bg-gray-100 text-gray-800 border-gray-300";
+    }
   };
 
   return (
     <Background>
-      {/* User / Employee Dedicated Header */}
+      {/* Clean, minimalist customer ordering header */}
       <header className="sticky top-0 z-40 border-b border-[#EEE5DC] bg-white/90 backdrop-blur-md shadow-xs">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-[#75472D] to-[#9A6747] text-white shadow-md">
               <Coffee size={20} />
@@ -276,339 +430,293 @@ export default function UserOrderPage() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-black tracking-tight text-[#342219]">Cafe4X</h1>
                 <span className="rounded-full bg-[#EFE8E1] px-2 py-0.5 text-[10px] font-bold text-[#70452D]">
-                  EmpOrder
+                  Customer Order
                 </span>
               </div>
-              <p className="text-xs text-[#8A7667]">
-                Quick Office Refreshments &bull; Fast Delivery
+              <p className="text-[11px] text-[#8A7667]">
+                {locationName} &bull; Seat {String(activeSeatNumber).padStart(2, "0")} {seatId ? `(${seatId})` : ""}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            {/* Quick seat badge */}
-            <div className="flex items-center gap-2 rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] px-3 py-1.5 shadow-2xs">
-              <MapPin size={14} className="text-[#8C5835]" />
-              <div className="text-right">
-                <div className="text-[10px] font-semibold text-[#8A7667]">
-                  {locationName} &bull; Seat {String(activeSeatNumber).padStart(2, "0")}
-                </div>
-                <div className="text-xs font-bold text-[#342219]">
-                  {employeeEmail ? employeeEmail : seatId}
-                </div>
-              </div>
+          {/* Quick status pill if order placed */}
+          {placedOrder && (
+            <div className="flex items-center gap-2">
+              <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${getStatusBadge(placedOrder.status)}`}>
+                <span className="h-2 w-2 rounded-full bg-current animate-pulse" />
+                Order {placedOrder.id}: {placedOrder.status}
+              </span>
             </div>
-
-            <button
-              type="button"
-              onClick={() => setIsModalOpen(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-4 py-2 text-xs font-bold text-white shadow-md transition hover:opacity-95"
-            >
-              <ShoppingBag size={14} />
-              <span>New Order</span>
-              {totalItemCount > 0 && (
-                <span className="ml-1 rounded-full bg-white px-1.5 py-0.2 text-[10px] font-black text-[#754329]">
-                  {totalItemCount}
-                </span>
-              )}
-            </button>
-          </div>
+          )}
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-        {/* Banner with Greeting */}
-        <div className="mb-8 rounded-3xl border border-[#EEE5DC] bg-white/90 p-6 shadow-md shadow-[#70452D]/5 backdrop-blur-md sm:p-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="space-y-1.5">
-              <div className="inline-flex items-center gap-2 rounded-full border border-[#E9D7C6] bg-[#FAF6F1] px-3 py-1 text-xs font-semibold text-[#80563C]">
-                <Sparkles size={14} />
-                Welcome {employeeName ? employeeName : "Employee"}
-              </div>
-              <h2 className="text-2xl font-black text-[#342219] sm:text-3xl">
-                Ready for a fresh cup?
-              </h2>
-              <p className="text-sm text-[#8A7667]">
-                Your orders are routed straight to the office provider kitchen and delivered directly to your chair.
-              </p>
-            </div>
-
-            {/* Seat info card */}
-            <div className="flex items-center gap-3 rounded-2xl border border-[#DEC5B0] bg-gradient-to-br from-[#FFFDFB] to-[#F9F5F0] p-4 shadow-sm">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#75472D] text-lg font-black text-white shadow-md">
-                {String(activeSeatNumber).padStart(2, "0")}
-              </div>
-              <div>
-                <div className="text-xs font-semibold text-[#8A7667]">Assigned Workspace</div>
-                <div className="text-sm font-bold text-[#342219]">Seat {activeSeatNumber} ({locationName})</div>
-                <div className="text-xs font-medium text-[#70452D] truncate max-w-[180px]">
-                  {employeeEmail}
-                </div>
-              </div>
-            </div>
+      {/* Main Container - Focused purely on Menu & Ordering */}
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        {/* Café Menu Section Header */}
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-2xl font-black text-[#342219]">Café Menu</h2>
+            <p className="text-xs text-[#8A7667] mt-0.5">
+              Choose your items, select your preferences, and tap Order Now.
+            </p>
           </div>
+
+          {/* Floating / Header Order Action Indicator */}
+          {totalItemCount > 0 && (
+            <div className="flex items-center gap-3 bg-[#FAF4ED] border border-[#E8DED4] px-4 py-2 rounded-2xl shadow-xs">
+              <div className="text-xs text-[#704225]">
+                <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">₹{grandTotal}</span>
+              </div>
+              <button
+                type="button"
+                onClick={handlePlaceOrder}
+                disabled={isSubmittingOrder}
+                className="flex items-center gap-1.5 rounded-xl bg-[#704225] px-4 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#59341D] cursor-pointer disabled:opacity-50"
+              >
+                <ShoppingBag size={13} />
+                <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Order Success Banner (If placed) */}
-        {orderSentSuccess && lastOrderDetails && (
-          <div className="mb-8 overflow-hidden rounded-3xl border border-emerald-200 bg-emerald-50/90 p-6 shadow-md backdrop-blur-md">
-            <div className="flex items-start gap-4">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md">
-                <CheckCircle2 size={24} />
-              </div>
-              <div className="flex-1">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-bold text-emerald-950">
-                    Order {lastOrderDetails.id} Placed Successfully!
-                  </h3>
-                  <span className="rounded-full bg-emerald-200/80 px-2.5 py-0.5 text-xs font-bold text-emerald-900">
-                    Sent to Kitchen Provider
-                  </span>
-                </div>
-                <p className="mt-1 text-xs text-emerald-800">
-                  Your refreshments are being prepared. The café provider will deliver them to Seat{" "}
-                  {lastOrderDetails.seat} ({lastOrderDetails.locationName}) shortly.
-                </p>
+        {/* Loading Menu State */}
+        {isLoadingMenu ? (
+          <div className="flex flex-col items-center justify-center rounded-3xl border border-[#EEE5DC] bg-white p-16 text-center shadow-xs">
+            <div className="h-8 w-8 animate-spin rounded-full border-3 border-[#8C5835] border-t-transparent" />
+            <p className="mt-3 text-xs font-semibold text-[#8A7667]">Loading café menu...</p>
+          </div>
+        ) : currentDisplayMenu.length === 0 ? (
+          <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-[#DEC5B0] bg-white/70 p-16 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#FAF6F1] text-[#8C5835]">
+              <Coffee size={28} />
+            </div>
+            <h4 className="mt-3 text-base font-bold text-[#342219]">No Menu Items Available</h4>
+            <p className="mt-1 max-w-sm text-xs text-[#8A7667]">
+              There are currently no items available for ordering at this location.
+            </p>
+          </div>
+        ) : (
+          /* Café Menu Grid */
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {currentDisplayMenu.map((item) => {
+              const count = cartQuantities[item.id] || 0;
+              const currentChoice =
+                itemPreferences[item.id] || item.preferenceOptions?.[0] || "";
 
-                <div className="mt-3 flex flex-wrap gap-4 border-t border-emerald-200/60 pt-3 text-xs font-semibold text-emerald-900">
-                  <div>
-                    Items:{" "}
-                    <span className="font-bold">
-                      {lastOrderDetails.items.map((i: any) => `${i.name} x${i.qty}`).join(", ")}
-                    </span>
+              return (
+                <div
+                  key={item.id}
+                  className={`group flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${count > 0 ? "border-[#8C5835] ring-1 ring-[#8C5835]/30" : "border-[#EEE5DC]"
+                    }`}
+                >
+                  {/* Item Image with Price Tag */}
+                  <div className="relative h-48 w-full overflow-hidden bg-[#FAF6F1]">
+                    {item.image ? (
+                      <img
+                        src={item.image}
+                        alt={item.name}
+                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-stone-100 text-stone-400">
+                        <ImageIcon size={36} />
+                      </div>
+                    )}
+                    <div className="absolute top-3 right-3 rounded-lg bg-black/65 px-2.5 py-1 text-xs font-black text-white backdrop-blur-xs shadow-xs">
+                      ₹{item.price}
+                    </div>
                   </div>
-                  <div>
-                    Total: <span className="font-bold">₹{lastOrderDetails.total}</span>
-                  </div>
-                  <div>
-                    Time: <span className="font-bold">{lastOrderDetails.time}</span>
+
+                  {/* Item Content */}
+                  <div className="flex flex-1 flex-col p-4">
+                    <div className="flex items-start justify-between">
+                      <h3 className="text-base font-bold text-[#342219]">{item.name}</h3>
+                      <span className="text-[11px] font-semibold text-[#8C5835] bg-[#FAF4ED] px-2 py-0.5 rounded-md">
+                        {item.category}
+                      </span>
+                    </div>
+
+                    <p className="mt-1 flex-1 text-xs text-[#8A7667] line-clamp-2">
+                      {item.description || "Freshly made refreshments."}
+                    </p>
+
+                    {/* Available Customization Options (Preferences) */}
+                    {item.preferenceOptions && item.preferenceOptions.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-[#F5EFE8]">
+                        <div className="flex items-center justify-between text-[11px] font-semibold text-[#8C5835] mb-1.5">
+                          <span>{item.preferenceKey || "Preference"}:</span>
+                          <span className="font-bold text-[#342219]">{currentChoice}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {item.preferenceOptions.map((opt) => (
+                            <button
+                              key={opt}
+                              type="button"
+                              onClick={() =>
+                                setItemPreferences((prev) => ({ ...prev, [item.id]: opt }))
+                              }
+                              className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${currentChoice === opt
+                                  ? "bg-[#704225] text-white shadow-2xs"
+                                  : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+                                }`}
+                            >
+                              {opt}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Price & Quantity Controls */}
+                    <div className="mt-4 flex items-center justify-between border-t border-[#F0E6DB] pt-3">
+                      <div>
+                        <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Price</span>
+                        <span className="text-base font-black text-[#754329]">₹{item.price}</span>
+                      </div>
+
+                      <div className="flex items-center gap-2 rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] p-1">
+                        <button
+                          type="button"
+                          onClick={() => updateQuantity(item.id, -1)}
+                          disabled={count === 0}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white text-[#70452D] shadow-2xs hover:bg-[#FAF6F1] cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          title="Decrease quantity"
+                        >
+                          <Minus size={13} />
+                        </button>
+                        <span className="w-6 text-center text-xs font-bold text-[#342219]">
+                          {count}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => updateQuantity(item.id, 1)}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#70452D] text-white shadow-2xs hover:bg-[#593A28] cursor-pointer"
+                          title="Increase quantity"
+                        >
+                          <Plus size={13} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 </div>
+              );
+            })}
+          </div>
+        )}
 
-                <div className="mt-4 flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCartQuantities({});
-                      setOrderSentSuccess(false);
-                      setIsModalOpen(true);
-                    }}
-                    className="rounded-xl bg-emerald-700 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-800"
-                  >
-                    Place Another Order
-                  </button>
+        {/* Floating Bottom Bar: Order Now action if items are selected */}
+        {totalItemCount > 0 && (
+          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-xl">
+            <div className="flex items-center justify-between rounded-2xl border border-[#DEC5B0] bg-[#342219] px-5 py-3.5 text-white shadow-2xl backdrop-blur-md">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-amber-200">
+                  <ShoppingBag size={20} />
+                </div>
+                <div>
+                  <div className="text-xs text-stone-300">
+                    <span className="font-bold text-white">{totalItemCount} item{totalItemCount > 1 ? "s" : ""}</span> in cart
+                  </div>
+                  <div className="text-base font-black text-amber-300">
+                    Total: ₹{grandTotal}
+                  </div>
                 </div>
               </div>
+
+              <button
+                type="button"
+                onClick={handlePlaceOrder}
+                disabled={isSubmittingOrder}
+                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#28A745] to-[#208337] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-95 cursor-pointer disabled:opacity-50"
+              >
+                <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
+              </button>
             </div>
           </div>
         )}
 
-        {/* Menu Cards Display on page as well */}
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <h3 className="text-xl font-bold text-[#342219]">Café Menu</h3>
-            <p className="text-xs text-[#8A7667]">Click on items or open the Order popup to customize</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setIsModalOpen(true)}
-            className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-3.5 py-1.5 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1]"
-          >
-            <span>Open Order Window</span>
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3">
-          {defaultMenu.map((item) => {
-            const count = cartQuantities[item.id] || 0;
-            return (
-              <div
-                key={item.id}
-                className="group flex flex-col overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
-              >
-                <div className="relative h-44 w-full overflow-hidden bg-[#FAF6F1]">
-                  <img
-                    src={item.image}
-                    alt={item.name}
-                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  />
-                  <div className="absolute top-2.5 right-2.5 rounded-lg bg-black/60 px-2 py-0.5 text-xs font-black text-white backdrop-blur-xs">
-                    ₹{item.price}
+        {/* AFTER ORDER PLACED: ORDER DETAILS SECTION */}
+        {placedOrder && (
+          <section id="placed-order-section" className="mt-12 pt-8 border-t border-[#DEC5B0]">
+            <div className="overflow-hidden rounded-3xl border border-[#DEC5B0] bg-white shadow-md">
+              {/* Status Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-[#EEE5DC] bg-gradient-to-r from-[#FAF4ED] to-[#FAF8F5] p-6">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md">
+                    <CheckCircle2 size={26} />
                   </div>
-                </div>
-
-                <div className="flex flex-1 flex-col p-4">
-                  <h4 className="text-base font-bold text-[#342219]">{item.name}</h4>
-                  <p className="mt-1 flex-1 text-xs text-[#8A7667] line-clamp-2">{item.description}</p>
-
-                  <div className="mt-4 flex items-center justify-between border-t border-[#F0E6DB] pt-3">
-                    <span className="text-sm font-black text-[#754329]">₹{item.price}</span>
-                    <div className="flex items-center gap-2 rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] p-1">
-                      <button
-                        type="button"
-                        onClick={() => updateQuantity(item.id, -1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-white text-[#70452D] shadow-2xs hover:bg-[#FAF6F1]"
-                      >
-                        <Minus size={13} />
-                      </button>
-                      <span className="w-5 text-center text-xs font-bold text-[#342219]">
-                        {count}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-black text-[#342219]">Order Details</h3>
+                      <span className="text-xs font-bold text-[#704225] bg-[#EFE8E1] px-2 py-0.5 rounded-md">
+                        {placedOrder.id}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => updateQuantity(item.id, 1)}
-                        className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#70452D] text-white shadow-2xs hover:bg-[#593A28]"
-                      >
-                        <Plus size={13} />
-                      </button>
                     </div>
+                    <p className="text-xs text-[#8A7667] mt-0.5">
+                      Placed at {placedOrder.time} &bull; Delivered to Seat {placedOrder.seat} ({placedOrder.locationName})
+                    </p>
                   </div>
                 </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#8A7667]">Status:</span>
+                  <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1 text-xs font-bold ${getStatusBadge(placedOrder.status)}`}>
+                    <span className="h-2 w-2 rounded-full bg-current" />
+                    {placedOrder.status}
+                  </span>
+                </div>
               </div>
-            );
-          })}
-        </div>
+
+              {/* Items Table / List */}
+              <div className="p-6">
+                <h4 className="text-xs font-bold text-[#8C5835] uppercase tracking-wider mb-3">
+                  Ordered Items ({placedOrder.items?.length || 0})
+                </h4>
+
+                <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 overflow-hidden">
+                  {placedOrder.items?.map((it: any, idx: number) => (
+                    <div key={idx} className="flex items-center justify-between p-3.5 bg-white text-xs">
+                      <div>
+                        <span className="font-bold text-[#342219] text-sm">{it.name}</span>
+                        <span className="text-gray-500 ml-2">x {it.qty}</span>
+                      </div>
+                      <div className="font-bold text-[#342219] text-sm">
+                        ₹{Number(it.price) * Number(it.qty)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Total Summary Row */}
+                <div className="mt-4 flex items-center justify-between rounded-xl bg-[#FAF6F1] p-4 border border-[#EFE8E1]">
+                  <div>
+                    <span className="text-xs font-semibold text-[#8A7667] block">Grand Total</span>
+                    <span className="text-xs text-gray-500">Includes all taxes and delivery to desk</span>
+                  </div>
+                  <div className="text-xl font-black text-[#754329]">
+                    ₹{placedOrder.total}
+                  </div>
+                </div>
+
+                {/* Action button */}
+                <div className="mt-6 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="rounded-xl border border-[#D5C2B1] bg-white px-5 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] cursor-pointer"
+                  >
+                    Order More Refreshments
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
       </main>
-
-      {/* =========================================================================
-          POPUP MODAL: ITEMS ORDER SCREEN (MATCHING USER'S EXACT SCREENSHOT)
-         ========================================================================= */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-          <div className="relative w-full max-w-3xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            {/* Modal Header matching Screenshot */}
-            <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
-              <div className="flex items-center gap-3">
-                <h2 className="text-xl font-bold text-gray-900">Items</h2>
-                <span className="text-xs font-semibold text-amber-800">
-                  seatId: {employeeName || employeeEmail || `Seat-${activeSeatNumber}`}
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg bg-rose-400 font-bold text-white transition hover:bg-rose-500 shadow-2xs"
-                title="Close"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            {/* Modal Grid of 6 Items Cards matching Screenshot */}
-            <div className="max-h-[70vh] overflow-y-auto p-6">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {defaultMenu.map((item) => {
-                  const qty = cartQuantities[item.id] || 0;
-                  return (
-                    <div
-                      key={item.id}
-                      className="flex items-center gap-3.5 rounded-xl border border-gray-200 bg-white p-3 shadow-2xs transition hover:border-gray-300"
-                    >
-                      {/* Image Thumbnail */}
-                      <div className="h-16 w-20 shrink-0 overflow-hidden rounded-lg bg-gray-100">
-                        <img
-                          src={item.image}
-                          alt={item.name}
-                          className="h-full w-full object-cover"
-                        />
-                      </div>
-
-                      {/* Content & Counter */}
-                      <div className="flex flex-1 flex-col justify-between">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h4 className="text-sm font-bold text-gray-900">{item.name}</h4>
-                            <p className="text-[11px] text-gray-500 line-clamp-1">
-                              {item.description}
-                            </p>
-                          </div>
-                          <span className="font-sans text-xs font-bold text-gray-800">
-                            ₹ {item.price}
-                          </span>
-                        </div>
-
-                        {/* Quantity Counter Pill */}
-                        <div className="mt-2.5 flex items-center justify-start">
-                          <div className="flex items-center rounded-lg border border-gray-300 bg-gray-50/80 px-2 py-0.5">
-                            <button
-                              type="button"
-                              onClick={() => updateQuantity(item.id, -1)}
-                              className="px-1.5 py-0.5 text-xs font-bold text-gray-600 hover:text-black"
-                            >
-                              -
-                            </button>
-                            <span className="w-6 text-center text-xs font-bold text-gray-900">
-                              {qty}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => updateQuantity(item.id, 1)}
-                              className="px-1.5 py-0.5 text-xs font-bold text-gray-600 hover:text-black"
-                            >
-                              +
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Special instructions / notes */}
-              <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-3">
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Special Request (Optional):
-                </label>
-                <input
-                  type="text"
-                  value={specialInstructions}
-                  onChange={(e) => setSpecialInstructions(e.target.value)}
-                  placeholder="e.g., Less sugar, extra hot, etc."
-                  className="w-full rounded-lg border border-gray-200 bg-white p-2 text-xs text-gray-800 outline-none focus:border-amber-700"
-                />
-              </div>
-
-              {/* Live Order Summary */}
-              {selectedItems.length > 0 && (
-                <div className="mt-4 flex items-center justify-between rounded-xl bg-amber-50 px-4 py-2.5 border border-amber-200 text-xs">
-                  <div className="text-amber-900">
-                    <span className="font-bold">{totalItemCount} item(s)</span> selected
-                  </div>
-                  <div className="font-bold text-amber-900 text-sm">
-                    Grand Total: ₹{grandTotal}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Modal Footer matching Screenshot */}
-            <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50/50 px-6 py-4">
-              <button
-                type="button"
-                onClick={() => setIsModalOpen(false)}
-                className="rounded-lg bg-gray-600 px-5 py-2 text-xs font-bold text-white transition hover:bg-gray-700 shadow-2xs"
-              >
-                Close
-              </button>
-
-              <button
-                type="button"
-                disabled={totalItemCount === 0}
-                onClick={handleSendOrder}
-                className={`rounded-lg px-6 py-2 text-xs font-bold text-white shadow-md transition ${
-                  totalItemCount > 0
-                    ? "bg-[#A68A77] hover:bg-[#8F7462] cursor-pointer"
-                    : "bg-[#C4B7AC] cursor-not-allowed opacity-75"
-                }`}
-              >
-                Send Order
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </Background>
   );
 }
+

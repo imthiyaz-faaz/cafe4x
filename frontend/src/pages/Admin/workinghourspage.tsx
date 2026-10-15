@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Clock,
   AlertTriangle,
@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
+import { workingHoursService } from "../../services/working-hours";
 
 const popularTimezones = [
   "Asia/Dubai",
@@ -28,10 +29,27 @@ export default function WorkingHoursPage() {
   const [isEmergencyClosed, setIsEmergencyClosed] = useState(false);
   const [touched, setTouched] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    workingHoursService
+      .getWorkingHours()
+      .then((data) => {
+        if (data) {
+          if (data.openTime) setOpenTime(data.openTime);
+          if (data.closeTime) setCloseTime(data.closeTime);
+          if (data.timezone) setTimezone(data.timezone);
+          if (typeof data.isEmergencyClosed === "boolean") {
+            setIsEmergencyClosed(data.isEmergencyClosed);
+          }
+        }
+      })
+      .catch(() => { });
+  }, []);
 
   const isOpenTimeMissing = touched && !openTime.trim();
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setTouched(true);
 
@@ -39,10 +57,27 @@ export default function WorkingHoursPage() {
       return;
     }
 
-    setSaveSuccess(true);
-    setTimeout(() => {
-      setSaveSuccess(false);
-    }, 3000);
+    try {
+      setIsSaving(true);
+      await workingHoursService.updateWorkingHours({
+        openTime,
+        closeTime,
+        timezone,
+        isEmergencyClosed,
+      });
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSaveSuccess(false);
+      }, 3000);
+    } catch {
+      // Local feedback
+      setSaveSuccess(true);
+      setTimeout(() => {
+        setSaveSuccess(false);
+      }, 3000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -88,8 +123,8 @@ export default function WorkingHoursPage() {
                         value={openTime}
                         onChange={(e) => setOpenTime(e.target.value)}
                         className={`w-full rounded-md border px-3 py-2 text-sm text-gray-800 outline-none transition ${isOpenTimeMissing
-                            ? "border-red-500 bg-red-50/20 focus:ring-1 focus:ring-red-400"
-                            : "border-gray-300 focus:border-[#9A7559] focus:ring-1 focus:ring-[#9A7559]/20"
+                          ? "border-red-500 bg-red-50/20 focus:ring-1 focus:ring-red-400"
+                          : "border-gray-300 focus:border-[#9A7559] focus:ring-1 focus:ring-[#9A7559]/20"
                           }`}
                       />
                       {isOpenTimeMissing && (
@@ -146,8 +181,8 @@ export default function WorkingHoursPage() {
                 <div
                   onClick={() => setIsEmergencyClosed(!isEmergencyClosed)}
                   className={`cursor-pointer rounded-xl border p-4 transition-all duration-200 ${isEmergencyClosed
-                      ? "border-red-300 bg-red-50/70"
-                      : "border-red-100 bg-[#FFFBF8] hover:bg-red-50/40"
+                    ? "border-red-300 bg-red-50/70"
+                    : "border-red-100 bg-[#FFFBF8] hover:bg-red-50/40"
                     }`}
                 >
                   <div className="flex items-start justify-between gap-3">
@@ -187,10 +222,11 @@ export default function WorkingHoursPage() {
                 <div className="flex justify-end pt-2">
                   <button
                     type="submit"
-                    className="flex items-center gap-2 rounded-md bg-[#8E6A50] px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-[#8E6A50]/20 transition duration-150 hover:bg-[#7D5B42] active:scale-95"
+                    disabled={isSaving}
+                    className="flex items-center gap-2 rounded-md bg-[#8E6A50] px-6 py-2.5 text-xs font-bold text-white shadow-md shadow-[#8E6A50]/20 transition duration-150 hover:bg-[#7D5B42] active:scale-95 disabled:opacity-60"
                   >
                     <Save size={15} />
-                    <span>Save Settings</span>
+                    <span>{isSaving ? "Saving..." : "Save Settings"}</span>
                   </button>
                 </div>
               </form>

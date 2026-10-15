@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import {
   UserRound,
   Plus,
@@ -32,92 +33,52 @@ export interface UserItem {
   userType: string;
   email: string;
   mobileNumber: string;
+  organization?: string;
+  shortCode?: string;
 }
 
-const initialUsers: UserItem[] = [
-  {
-    id: "1",
-    name: "AdminUser",
-    email: "Admin@gmail.com",
-    userName: "AdminUser",
-    password: "password123",
-    mobileNumber: "987654321",
-    userType: "Admin",
-  },
-  {
-    id: "2",
-    name: "FTS Admin",
-    email: "admin@faaztechsolutions.com",
-    userName: "Adminuser",
-    password: "password123",
-    mobileNumber: "9876543211",
-    userType: "Admin",
-  },
-  {
-    id: "3",
-    name: "Cafe Provider",
-    email: "provider@cafe4x.com",
-    userName: "provider",
-    password: "provider123",
-    mobileNumber: "9876543212",
-    userType: "Provider",
-  },
-];
-
 export default function UsersPage() {
-  const [users, setUsers] = useState<UserItem[]>(() => {
-    try {
-      const stored = localStorage.getItem("cafe4x_users");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch { }
-    return initialUsers;
-  });
+  const params = useParams();
+  const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
 
-  // Load users from backend on mount and sync to localStorage
+  const [users, setUsers] = useState<UserItem[]>([]);
+
+  // Load users from backend on mount and sync
   useEffect(() => {
-    userApi.getUsers()
+    userApi.getUsers(undefined, currentShortCode || undefined)
       .then((serverUsers) => {
-        if (Array.isArray(serverUsers) && serverUsers.length > 0) {
-          // Merge passwords from localStorage if available
-          let localPasswords: Record<string, string> = {};
-          try {
-            const stored = localStorage.getItem("cafe4x_users");
-            if (stored) {
-              const parsed = JSON.parse(stored);
-              if (Array.isArray(parsed)) {
-                parsed.forEach((u: any) => {
-                  if (u.id && u.password) localPasswords[u.id] = u.password;
-                });
-              }
-            }
-          } catch {}
-
-          const fullUsers: UserItem[] = serverUsers.map((su) => ({
-            id: String(su.id),
-            name: su.name,
-            userName: su.userName,
-            email: su.email,
-            mobileNumber: su.mobileNumber || "",
-            userType: su.userType,
-            password: su.password || localPasswords[su.id] || "password123",
-          }));
-
-          setUsers(fullUsers);
-          try {
-            localStorage.setItem("cafe4x_users", JSON.stringify(fullUsers));
-          } catch {}
+        if (Array.isArray(serverUsers)) {
+          const scoped = currentShortCode
+            ? serverUsers.filter((u: any) => (u.shortCode || "").toUpperCase() === currentShortCode)
+            : serverUsers;
+          setUsers(scoped as UserItem[]);
         }
       })
-      .catch(() => {});
-  }, []);
+      .catch((err) => {
+        console.warn("Could not fetch users from server:", err);
+      });
+  }, [currentShortCode]);
 
   const saveUsers = (newUsers: UserItem[]) => {
     setUsers(newUsers);
     try {
-      localStorage.setItem("cafe4x_users", JSON.stringify(newUsers));
+      // Merge with global cafe4x_users store
+      const stored = localStorage.getItem("cafe4x_users");
+      let allUsers: UserItem[] = [];
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) allUsers = parsed;
+      }
+      if (currentShortCode) {
+        // Replace current org users in storage
+        const others = allUsers.filter(
+          (u) => (u.shortCode || "").toUpperCase() !== currentShortCode
+        );
+        allUsers = [...others, ...newUsers];
+      } else {
+        allUsers = newUsers;
+      }
+      localStorage.setItem("cafe4x_users", JSON.stringify(allUsers));
     } catch { }
   };
 
@@ -209,10 +170,22 @@ export default function UsersPage() {
 
   // User Created Callback
   const handleUserCreated = (newUser: UserItem) => {
-    const updated = [newUser, ...users];
+    let currentUserOrg = "";
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) currentUserOrg = JSON.parse(stored).organization || "";
+    } catch {}
+
+    const userWithOrg: UserItem = {
+      ...newUser,
+      shortCode: currentShortCode || newUser.shortCode,
+      organization: currentUserOrg || newUser.organization,
+    };
+
+    const updated = [userWithOrg, ...users];
     saveUsers(updated);
 
-    userApi.createUser(newUser).catch((err) => {
+    userApi.createUser(userWithOrg).catch((err) => {
       console.warn("Could not sync user to backend:", err);
     });
   };

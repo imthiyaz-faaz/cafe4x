@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -36,63 +37,21 @@ interface SeatItem {
   orderUrl: string;
 }
 
-const initialLocationsList: LocationItem[] = [
-  { id: "3", name: "office", status: "Active", totalSeats: 10, assignedProviderId: "3", assignedProviderEmail: "provider@cafe4x.com", assignedProviderName: "Cafe Provider" },
-];
-
-
-const defaultSeats: SeatItem[] = [
-  { number: "01", id: "S001-F1-01", orderUrl: "https://cafe4x.com/order/738/1" },
-  { number: "02", id: "S001-F1-02", orderUrl: "https://cafe4x.com/order/738/2" },
-  { number: "03", id: "S001-F1-03", employee: "arjun.kumar@office.com", orderUrl: "https://cafe4x.com/order/738/3" },
-  { number: "04", id: "S001-F1-04", orderUrl: "https://cafe4x.com/order/738/4" },
-  { number: "05", id: "S001-F1-05", orderUrl: "https://cafe4x.com/order/738/5" },
-  { number: "06", id: "S001-F1-06", orderUrl: "https://cafe4x.com/order/738/6" },
-  { number: "07", id: "S001-F1-07", employee: "priya.sharma@office.com", orderUrl: "https://cafe4x.com/order/738/7" },
-  { number: "08", id: "S001-F1-08", orderUrl: "https://cafe4x.com/order/738/8" },
-  { number: "09", id: "S001-F1-09", orderUrl: "https://cafe4x.com/order/738/9" },
-  { number: "10", id: "S001-F1-10", employee: "vikram.singh@office.com", orderUrl: "https://cafe4x.com/order/738/10" },
-];
-
-const officeSeats: SeatItem[] = [
-  { number: "01", id: "S003-F1-01", employee: "rizwi@faaztech", orderUrl: `${window.location.origin}/order/3/01` },
-  { number: "02", id: "S003-F1-02", employee: "imthi@faaztech", orderUrl: `${window.location.origin}/order/3/02` },
-  { number: "03", id: "S003-F1-03", employee: "saif@faaztech", orderUrl: `${window.location.origin}/order/3/03` },
-  { number: "04", id: "S003-F1-04", orderUrl: `${window.location.origin}/order/3/04` },
-  { number: "05", id: "S003-F1-05", orderUrl: `${window.location.origin}/order/3/05` },
-  { number: "06", id: "S003-F1-06", orderUrl: `${window.location.origin}/order/3/06` },
-  { number: "07", id: "S003-F1-07", orderUrl: `${window.location.origin}/order/3/07` },
-  { number: "08", id: "S003-F1-08", orderUrl: `${window.location.origin}/order/3/08` },
-  { number: "09", id: "S003-F1-09", orderUrl: `${window.location.origin}/order/3/09` },
-  { number: "10", id: "S003-F1-10", orderUrl: `${window.location.origin}/order/3/10` },
-];
-
-const initialSeatsByLoc: Record<string, SeatItem[]> = {
-  "1": defaultSeats,
-  "2": defaultSeats.map((s) => ({ ...s, id: `S002-F1-${s.number}` })),
-  "3": officeSeats,
-};
-
 export default function LocationPage() {
+  const params = useParams();
+  const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const locStorageKey = currentShortCode ? `cafe4x_locations_${currentShortCode}` : "cafe4x_locations";
+  const seatsStorageKey = currentShortCode ? `cafe4x_seatsByLoc_${currentShortCode}` : "cafe4x_seatsByLoc";
+
   const [locations, setLocations] = useState<LocationItem[]>(() => {
     try {
-      const stored = localStorage.getItem("cafe4x_locations");
+      const stored = localStorage.getItem(locStorageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out deprecated initial default locations: Meeting Room and Workspace
-          const cleaned = parsed.filter(
-            (l: any) =>
-              l.name?.toLowerCase() !== "meeting room" &&
-              l.name?.toLowerCase() !== "workspace" &&
-              l.id !== "1" &&
-              l.id !== "2"
-          );
-          if (cleaned.length > 0) return cleaned;
-        }
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch { }
-    return initialLocationsList;
+    return [];
   });
 
   const [selectedLocation, setSelectedLocation] = useState<LocationItem | null>(null);
@@ -107,6 +66,9 @@ export default function LocationPage() {
   const [isEditLocationOpen, setIsEditLocationOpen] = useState(false);
   const [editingLoc, setEditingLoc] = useState<LocationItem | null>(null);
   const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationStatus, setNewLocationStatus] = useState<"Active" | "Inactive">("Active");
+  const [newLocationImage, setNewLocationImage] = useState<string>("");
+  const locationImageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Assign Provider Modal State
@@ -115,39 +77,37 @@ export default function LocationPage() {
   // Fetch from backend on mount and sync to local state
   useEffect(() => {
     let isMounted = true;
-    locationApi.getLocations()
+    locationApi.getLocations(undefined, currentShortCode || undefined)
       .then((serverLocs) => {
         if (!isMounted) return;
-        if (Array.isArray(serverLocs) && serverLocs.length > 0) {
-          const cleaned = serverLocs.filter(
-            (l: any) =>
-              l.name?.toLowerCase() !== "meeting room" &&
-              l.name?.toLowerCase() !== "workspace" &&
-              l.id !== "1" &&
-              l.id !== "2"
-          );
-          if (cleaned.length > 0) {
-            setLocations(cleaned);
-            try {
-              localStorage.setItem("cafe4x_locations", JSON.stringify(cleaned));
-            } catch { }
-          }
+        if (Array.isArray(serverLocs)) {
+          setLocations(serverLocs as LocationItem[]);
+          try {
+            localStorage.setItem(locStorageKey, JSON.stringify(serverLocs));
+          } catch { }
         }
       })
       .catch((err) => {
         console.warn("Could not fetch locations from server, using local storage:", err);
+        try {
+          const stored = localStorage.getItem(locStorageKey);
+          if (stored && isMounted) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) setLocations(parsed);
+          }
+        } catch {}
       });
 
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [locStorageKey]);
 
   const saveLocations = (newLocs: LocationItem[]) => {
     // 1. Always store locally in state and localStorage immediately
     setLocations(newLocs);
     try {
-      localStorage.setItem("cafe4x_locations", JSON.stringify(newLocs));
+      localStorage.setItem(locStorageKey, JSON.stringify(newLocs));
     } catch { }
   };
 
@@ -155,25 +115,19 @@ export default function LocationPage() {
   // Seating State for active location
   const [seatsByLoc, setSeatsByLoc] = useState<Record<string, SeatItem[]>>(() => {
     try {
-      const stored = localStorage.getItem("cafe4x_seatsByLoc");
+      const stored = localStorage.getItem(seatsStorageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed === "object") {
-          // ensure office has the employees if not already
-          if (!parsed["3"]) {
-            parsed["3"] = officeSeats;
-          }
-          return parsed;
-        }
+        if (parsed && typeof parsed === "object") return parsed;
       }
-    } catch { }
-    return initialSeatsByLoc;
+    } catch {}
+    return {};
   });
 
   const saveSeatsByLoc = (data: Record<string, SeatItem[]>) => {
     setSeatsByLoc(data);
     try {
-      localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(data));
+      localStorage.setItem(seatsStorageKey, JSON.stringify(data));
     } catch { }
   };
   const [selectedSeatNumber, setSelectedSeatNumber] = useState<string | null>(null);
@@ -208,8 +162,8 @@ export default function LocationPage() {
   }, [filteredLocations, validCurrentPage, pageSize]);
 
   // Active Seating State
-  const activeLocationId = selectedLocation?.id || "1";
-  const currentSeats = seatsByLoc[activeLocationId] || defaultSeats;
+  const activeLocationId = selectedLocation?.id || "";
+  const currentSeats = activeLocationId ? (seatsByLoc[activeLocationId] || []) : [];
   const currentSeat = selectedSeatNumber
     ? currentSeats.find((s) => s.number === selectedSeatNumber) || null
     : null;
@@ -234,11 +188,20 @@ export default function LocationPage() {
     e.preventDefault();
     if (!newLocationName.trim()) return;
     const newId = Date.now().toString();
+    let currentOrgId = "";
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) currentOrgId = JSON.parse(stored).organizationId || "";
+    } catch {}
+
     const newLoc: LocationItem = {
       id: newId,
       name: newLocationName.trim(),
-      status: "Active",
+      status: newLocationStatus,
       totalSeats: 12,
+      image: newLocationImage || undefined,
+      shortCode: currentShortCode || undefined,
+      organizationId: currentOrgId || undefined,
     };
     // 1. Store in local state immediately
     const updated = [...locations, newLoc];
@@ -249,16 +212,23 @@ export default function LocationPage() {
       console.warn("Could not save location to backend:", err);
     });
 
+    const generatedSeats: SeatItem[] = Array.from({ length: 12 }, (_, i) => {
+      const num = String(i + 1).padStart(2, "0");
+      return {
+        number: num,
+        id: `S${newId}-F1-${num}`,
+        orderUrl: `${window.location.origin}/order/${newId}/${i + 1}`,
+      };
+    });
+
     const updatedSeats = {
       ...seatsByLoc,
-      [newId]: defaultSeats.map((s) => ({
-        ...s,
-        id: `S${newId}-F1-${s.number}`,
-        orderUrl: `${window.location.origin}/order/${newId}/${parseInt(s.number, 10)}`,
-      })),
+      [newId]: generatedSeats,
     };
     saveSeatsByLoc(updatedSeats);
     setNewLocationName("");
+    setNewLocationStatus("Active");
+    setNewLocationImage("");
     setIsCreateLocationOpen(false);
   };
 
@@ -457,19 +427,27 @@ export default function LocationPage() {
                         key={loc.id}
                         className="group relative flex flex-col rounded-3xl border border-[#EEE5DC] bg-white p-5 shadow-lg shadow-[#70452D]/5 transition duration-300 hover:-translate-y-1 hover:border-[#DEC5B0] hover:shadow-xl"
                       >
-                        {/* Office Silhouette Graphic - Click opens realistic boardroom seats */}
+                        {/* Office Silhouette Graphic or Uploaded Image - Click opens realistic boardroom seats */}
                         <div
                           onClick={() => setSelectedLocation(loc)}
-                          className="flex h-44 w-full cursor-pointer items-center justify-center rounded-2xl bg-[#EBECEE] transition duration-200 group-hover:bg-[#E5E6EA]"
+                          className="flex h-44 w-full cursor-pointer items-center justify-center rounded-2xl bg-[#EBECEE] transition duration-200 group-hover:bg-[#E5E6EA] overflow-hidden"
                           title="Click to open realistic boardroom layout and seats"
                         >
-                          <svg
-                            className="h-32 w-32 text-[#3D4F5A] transition duration-200 group-hover:scale-105"
-                            viewBox="0 0 24 24"
-                            fill="currentColor"
-                          >
-                            <path d="M12 2C9.79 2 8 3.79 8 6C8 8.21 9.79 10 12 10C14.21 10 16 8.21 16 6C16 3.79 14.21 2 12 2ZM12 12C7.58 12 4 14.24 4 17V20C4 20.55 4.45 21 5 21H19C19.55 21 20 20.55 20 20V17C20 14.24 16.42 12 12 12Z" />
-                          </svg>
+                          {loc.image ? (
+                            <img
+                              src={loc.image}
+                              alt={loc.name}
+                              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+                            />
+                          ) : (
+                            <svg
+                              className="h-32 w-32 text-[#3D4F5A] transition duration-200 group-hover:scale-105"
+                              viewBox="0 0 24 24"
+                              fill="currentColor"
+                            >
+                              <path d="M12 2C9.79 2 8 3.79 8 6C8 8.21 9.79 10 12 10C14.21 10 16 8.21 16 6C16 3.79 14.21 2 12 2ZM12 12C7.58 12 4 14.24 4 17V20C4 20.55 4.45 21 5 21H19C19.55 21 20 20.55 20 20V17C20 14.24 16.42 12 12 12Z" />
+                            </svg>
+                          )}
                         </div>
 
                         {/* Title and Active Badge */}
@@ -1050,55 +1028,151 @@ export default function LocationPage() {
         </footer>
 
         {/* ========================================================
-            MODAL: CREATE LOCATION
+            MODAL: CREATE LOCATION (MATCHING APP UI THEME)
            ======================================================== */}
         {isCreateLocationOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
-            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-[#EEE5DC] bg-white p-6 shadow-2xl">
-              <div className="flex items-center justify-between border-b border-[#EEE5DC] pb-3">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs">
+            <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F6ECE2] text-[#8C5835]">
-                    <Plus size={18} />
-                  </div>
-                  <h3 className="text-lg font-bold text-[#342219]">Create Location</h3>
+                  <h3 className="text-xl font-semibold text-gray-800">
+                    Location Create
+                  </h3>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsCreateLocationOpen(false)}
-                  className="rounded-lg p-1 text-gray-400 hover:text-gray-700"
+                  className="rounded-lg p-1 text-gray-400 hover:text-gray-700 transition cursor-pointer"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <form onSubmit={handleCreateLocationSubmit} className="mt-4 space-y-4">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#45352B]">
-                    Location / Office Name *
+              {/* Form matching User Create and app UI layout */}
+              <form onSubmit={handleCreateLocationSubmit} className="mt-5 space-y-4 text-sm">
+                {/* Name */}
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <label
+                    htmlFor="location-name"
+                    className="col-span-4 font-semibold text-gray-800"
+                  >
+                    Name <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    required
-                    type="text"
-                    placeholder="e.g. office, meeting lounge"
-                    value={newLocationName}
-                    onChange={(e) => setNewLocationName(e.target.value)}
-                    className="w-full rounded-xl border border-[#E8DED4] px-3 py-2 text-sm text-[#342219] outline-none transition focus:border-[#8C5835]"
-                  />
+                  <div className="col-span-8">
+                    <input
+                      id="location-name"
+                      required
+                      type="text"
+                      placeholder="Name"
+                      value={newLocationName}
+                      onChange={(e) => setNewLocationName(e.target.value)}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+                    />
+                  </div>
                 </div>
 
-                <div className="flex justify-end gap-3 pt-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsCreateLocationOpen(false)}
-                    className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+                {/* Status */}
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <label
+                    htmlFor="location-status"
+                    className="col-span-4 font-semibold text-gray-800"
                   >
-                    Cancel
-                  </button>
+                    Status <span className="text-red-500">*</span>
+                  </label>
+                  <div className="col-span-8">
+                    <select
+                      id="location-status"
+                      required
+                      value={newLocationStatus}
+                      onChange={(e) => setNewLocationStatus(e.target.value as "Active" | "Inactive")}
+                      className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 bg-white outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 cursor-pointer"
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Image */}
+                <div className="grid grid-cols-12 items-start gap-3 pt-1">
+                  <label className="col-span-4 font-semibold text-gray-800 pt-2">
+                    Image
+                  </label>
+                  <div className="col-span-8">
+                    <input
+                      type="file"
+                      ref={locationImageInputRef}
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (ev) => {
+                            setNewLocationImage(ev.target?.result as string);
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                    />
+
+                    {/* Image Upload Trigger Box with upload icon */}
+                    <div
+                      onClick={() => locationImageInputRef.current?.click()}
+                      className="group relative flex h-28 w-32 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50/70 transition hover:border-[#8C5835] hover:bg-white overflow-hidden shadow-xs"
+                      title="Click to select image"
+                    >
+                      {newLocationImage ? (
+                        <div className="relative h-full w-full">
+                          <img
+                            src={newLocationImage}
+                            alt="Location preview"
+                            className="h-full w-full object-cover"
+                          />
+                          <div className="absolute inset-0 bg-black/35 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <span className="text-xs font-semibold text-white bg-black/60 px-2 py-1 rounded-md">Change</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center text-gray-500 group-hover:text-[#8C5835] transition">
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-12 w-12 stroke-current fill-none"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                            <circle cx="8.5" cy="8.5" r="1.5" />
+                            <polyline points="21 15 16 10 5 21" />
+                            <path d="M16 6v6" />
+                            <path d="M13 9l3-3 3 3" />
+                          </svg>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Buttons matching User Create */}
+                <div className="flex justify-end gap-3 pt-5 border-t border-gray-100">
                   <button
                     type="submit"
-                    className="rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 text-xs font-semibold text-white shadow-md hover:opacity-95"
+                    className="rounded-lg border border-[#28A745] bg-white px-5 py-2 font-semibold text-[#28A745] hover:bg-green-50 transition cursor-pointer shadow-sm text-sm"
                   >
-                    Create
+                    Submit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNewLocationName("");
+                      setNewLocationImage("");
+                      setIsCreateLocationOpen(false);
+                    }}
+                    className="rounded-lg bg-[#DC3545] px-5 py-2 font-semibold text-white hover:bg-red-700 transition cursor-pointer shadow-sm text-sm"
+                  >
+                    Close
                   </button>
                 </div>
               </form>

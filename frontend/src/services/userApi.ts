@@ -11,8 +11,11 @@ export interface UserItem {
 }
 
 export const userApi = {
-  async getUsers(type?: string): Promise<UserItem[]> {
-    const query = type ? `?type=${encodeURIComponent(type)}` : "";
+  async getUsers(type?: string, shortCode?: string): Promise<UserItem[]> {
+    const params = new URLSearchParams();
+    if (type) params.append("type", type);
+    if (shortCode) params.append("shortCode", shortCode);
+    const query = params.toString() ? `?${params.toString()}` : "";
     const res = await apiFetch<{ success: boolean; users: UserItem[] }>(`/api/users${query}`);
     return res.users || [];
   },

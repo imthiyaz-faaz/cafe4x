@@ -7,7 +7,7 @@ import {
   Phone,
   LockKeyhole,
   Building2,
-  MapPin,
+  Hash,
   ArrowRight,
   ArrowLeft,
   Check,
@@ -15,8 +15,10 @@ import {
   EyeOff,
   Sparkles,
   ShieldCheck,
+  Loader2,
 } from 'lucide-react'
 import Background from '../../../components/background'
+import { authApi } from '../../../services/authApi'
 
 interface SignupData {
   username: string
@@ -25,7 +27,7 @@ interface SignupData {
   email: string
   password: string
   organization: string
-  address: string
+  shortCode: string
 }
 
 const initialData: SignupData = {
@@ -35,7 +37,7 @@ const initialData: SignupData = {
   email: '',
   password: '',
   organization: '',
-  address: '',
+  shortCode: '',
 }
 
 const steps = [
@@ -49,6 +51,7 @@ export default function Signup() {
   const [data, setData] = useState<SignupData>(initialData)
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
   function updateField(field: keyof SignupData, value: string) {
     setData((previous) => ({
@@ -57,22 +60,120 @@ export default function Signup() {
     }))
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
 
     if (step === 1) {
+      if (!data.username || !data.email || !data.password) {
+        setError('Please fill in username, email, and password.')
+        return
+      }
       setStep(2)
       return
     }
 
     if (step === 2) {
-      setStep(3)
-      return
-    }
+      if (!data.organization.trim() || !data.shortCode.trim()) {
+        setError('Please provide both Organization Name and Short Code.')
+        return
+      }
 
-    // UI only: connect your existing signup API here.
-    console.log('Signup data:', data)
+      setIsLoading(true)
+      const cleanShortCode = data.shortCode.trim().toUpperCase()
+
+      const payload = {
+        name: data.name || data.username,
+        userName: data.username.trim().toLowerCase(),
+        email: data.email.trim().toLowerCase(),
+        password: data.password.trim(),
+        mobileNumber: data.mobile.trim(),
+        organization: data.organization.trim(),
+        shortCode: cleanShortCode,
+        userType: 'Admin',
+      }
+
+      try {
+        const res = await authApi.signup(payload)
+
+        // Store user in local storage users list as well for fallback & offline persistence
+        let userList: any[] = []
+        try {
+          const stored = localStorage.getItem('cafe4x_users')
+          if (stored) {
+            const parsed = JSON.parse(stored)
+            if (Array.isArray(parsed)) userList = parsed
+          }
+        } catch {}
+
+        const localUser = {
+          id: res.user?.id || Date.now().toString(),
+          name: payload.name,
+          userName: payload.userName,
+          email: payload.email,
+          password: payload.password,
+          mobileNumber: payload.mobileNumber,
+          organization: payload.organization,
+          shortCode: cleanShortCode,
+          userType: 'Admin',
+          createdAt: new Date().toISOString(),
+        }
+
+        userList.push(localUser)
+        localStorage.setItem('cafe4x_users', JSON.stringify(userList))
+
+        // Store organization in organizations directory if needed
+        let orgs: any[] = []
+        try {
+          const storedOrgs = localStorage.getItem('cafe4x_organizations')
+          if (storedOrgs) {
+            const parsed = JSON.parse(storedOrgs)
+            if (Array.isArray(parsed)) orgs = parsed
+          }
+        } catch {}
+        orgs.push({
+          name: payload.organization,
+          shortCode: cleanShortCode,
+          createdAt: new Date().toISOString(),
+        })
+        localStorage.setItem('cafe4x_organizations', JSON.stringify(orgs))
+
+        setStep(3)
+      } catch (err: any) {
+        // Fallback: save to local storage if offline/error
+        if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('NetworkError'))) {
+          let userList: any[] = []
+          try {
+            const stored = localStorage.getItem('cafe4x_users')
+            if (stored) {
+              const parsed = JSON.parse(stored)
+              if (Array.isArray(parsed)) userList = parsed
+            }
+          } catch {}
+
+          const localUser = {
+            id: Date.now().toString(),
+            name: payload.name,
+            userName: payload.userName,
+            email: payload.email,
+            password: payload.password,
+            mobileNumber: payload.mobileNumber,
+            organization: payload.organization,
+            shortCode: cleanShortCode,
+            userType: 'Admin',
+            createdAt: new Date().toISOString(),
+          }
+
+          userList.push(localUser)
+          localStorage.setItem('cafe4x_users', JSON.stringify(userList))
+          setStep(3)
+        } else {
+          setError(err.message || 'Failed to create organization account.')
+        }
+      } finally {
+        setIsLoading(false)
+      }
+    }
   }
 
   function handleBack() {
@@ -386,17 +487,17 @@ export default function Signup() {
                     </h2>
 
                     <p className="mt-1 text-sm leading-6 text-[#897B71]">
-                      Tell us about your café or organization.
+                      Enter your organization name and short code to create your workspace.
                     </p>
                   </div>
 
-                  {/* Organization */}
+                  {/* Organization name */}
                   <div>
                     <label
                       htmlFor="organization"
                       className="mb-2 block text-sm font-semibold text-[#45352B]"
                     >
-                      Organization / Café name
+                      Organization name
                     </label>
 
                     <div className="relative">
@@ -409,7 +510,7 @@ export default function Signup() {
                         id="organization"
                         required
                         autoComplete="organization"
-                        placeholder="Enter organization name"
+                        placeholder="e.g. Acme Corporation"
                         value={data.organization}
                         onChange={(event) =>
                           updateField('organization', event.target.value)
@@ -419,31 +520,36 @@ export default function Signup() {
                     </div>
                   </div>
 
-                  {/* Address */}
+                  {/* Short code */}
                   <div>
-                    <label
-                      htmlFor="address"
-                      className="mb-2 block text-sm font-semibold text-[#45352B]"
-                    >
-                      Organization address
-                    </label>
+                    <div className="mb-2 flex items-center justify-between">
+                      <label
+                        htmlFor="shortCode"
+                        className="block text-sm font-semibold text-[#45352B]"
+                      >
+                        Short code
+                      </label>
+                      <span className="text-xs text-[#9A8778]">
+                        Used in page URLs (e.g. /{data.shortCode.trim().toUpperCase() || 'CODE'}/landing)
+                      </span>
+                    </div>
 
                     <div className="relative">
-                      <MapPin
+                      <Hash
                         size={18}
-                        className="absolute left-4 top-4 text-[#A08C7D]"
+                        className="absolute left-4 top-1/2 -translate-y-1/2 text-[#A08C7D]"
                       />
 
-                      <textarea
-                        id="address"
+                      <input
+                        id="shortCode"
                         required
-                        autoComplete="street-address"
-                        placeholder="Enter your organization address"
-                        value={data.address}
+                        placeholder="e.g. ACME or FTS"
+                        maxLength={10}
+                        value={data.shortCode}
                         onChange={(event) =>
-                          updateField('address', event.target.value)
+                          updateField('shortCode', event.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase())
                         }
-                        className={`${inputClass} min-h-32 resize-y py-4`}
+                        className={`${inputClass} uppercase tracking-wider font-semibold`}
                       />
                     </div>
                   </div>
@@ -458,7 +564,8 @@ export default function Signup() {
                     <button
                       type="button"
                       onClick={handleBack}
-                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8DED4] bg-white px-5 py-3.5 text-sm font-semibold text-[#6F4228] transition hover:bg-[#F7F2EB]"
+                      disabled={isLoading}
+                      className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-[#E8DED4] bg-white px-5 py-3.5 text-sm font-semibold text-[#6F4228] transition hover:bg-[#F7F2EB] disabled:opacity-60"
                     >
                       <ArrowLeft size={17} />
                       Back
@@ -466,13 +573,23 @@ export default function Signup() {
 
                     <button
                       type="submit"
-                      className="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl"
+                      disabled={isLoading}
+                      className="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:opacity-70"
                     >
-                      Complete Signup
-                      <ArrowRight
-                        size={18}
-                        className="transition-transform group-hover:translate-x-1"
-                      />
+                      {isLoading ? (
+                        <>
+                          <Loader2 size={18} className="animate-spin" />
+                          Creating Organization...
+                        </>
+                      ) : (
+                        <>
+                          Complete Signup
+                          <ArrowRight
+                            size={18}
+                            className="transition-transform group-hover:translate-x-1"
+                          />
+                        </>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -487,7 +604,7 @@ export default function Signup() {
                   </div>
 
                   <p className="mb-3 text-xs font-semibold uppercase tracking-[0.2em] text-[#A66F48]">
-                    Registration details collected
+                    Organization Created
                   </p>
 
                   <h2 className="text-3xl font-bold text-[#342219]">
@@ -495,27 +612,30 @@ export default function Signup() {
                   </h2>
 
                   <p className="mx-auto mt-4 max-w-sm text-sm leading-7 text-[#897B71]">
-                    Your details have been collected successfully. Connect the
-                    registration API to create your account and finish the
-                    registration process.
+                    Your account and organization workspace have been created successfully. Sign in with your new credentials to access your organization portal.
                   </p>
 
-                  <div className="mt-7 rounded-xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left">
+                  <div className="mt-7 rounded-xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left space-y-2">
                     <p className="text-xs font-semibold uppercase tracking-wider text-[#9A6747]">
                       Registration summary
                     </p>
 
-                    <p className="mt-3 text-sm font-semibold text-[#45352B]">
-                      {data.name}
-                    </p>
+                    <div className="flex justify-between items-center text-sm border-b border-[#EFE7DE] pb-2">
+                      <span className="text-[#897B71]">User:</span>
+                      <span className="font-semibold text-[#45352B]">{data.name || data.username} ({data.email})</span>
+                    </div>
 
-                    <p className="mt-1 text-sm text-[#897B71]">
-                      {data.email}
-                    </p>
+                    <div className="flex justify-between items-center text-sm border-b border-[#EFE7DE] pb-2">
+                      <span className="text-[#897B71]">Organization:</span>
+                      <span className="font-semibold text-[#45352B]">{data.organization}</span>
+                    </div>
 
-                    <p className="mt-1 text-sm text-[#897B71]">
-                      {data.organization}
-                    </p>
+                    <div className="flex justify-between items-center text-sm pt-1">
+                      <span className="text-[#897B71]">Short Code / Portal URL:</span>
+                      <span className="font-bold text-[#754329] bg-[#EAD5C0]/60 px-2 py-0.5 rounded">
+                        /{data.shortCode.trim().toUpperCase()}/landing
+                      </span>
+                    </div>
                   </div>
 
                   <Link

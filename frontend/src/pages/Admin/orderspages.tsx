@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import {
   Search,
   X,
@@ -56,82 +57,23 @@ export interface EmployeeGroup {
   orders: OrderRecord[];
 }
 
-const initialOrders: OrderRecord[] = [
-  {
-    id: "#ORD-1001",
-    employeeName: "Rizwan Khan",
-    department: "Development",
-    avatarInitials: "RK",
-    avatarBg: "bg-[#754329]",
-    items: [
-      {
-        name: "Tea",
-        price: 18,
-        qty: 2,
-        image: "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=150&q=80",
-      },
-    ],
-    itemSummary: "Tea x2",
-    seat: "Seat 01",
-    total: 36,
-    orderTime: "Just now",
-    status: "Pending",
-    locationName: "Office",
-  },
-  {
-    id: "#ORD-1002",
-    employeeName: "Imthiyaz",
-    department: "Tech Team",
-    avatarInitials: "IM",
-    avatarBg: "bg-[#8C5835]",
-    items: [
-      {
-        name: "Coffee",
-        price: 20,
-        qty: 1,
-        image: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=150&q=80",
-      },
-    ],
-    itemSummary: "Coffee x1",
-    seat: "Seat 02",
-    total: 20,
-    orderTime: "5 mins ago",
-    status: "Preparing",
-    locationName: "Office",
-  },
-  {
-    id: "#ORD-1003",
-    employeeName: "Saif",
-    department: "Design",
-    avatarInitials: "SA",
-    avatarBg: "bg-[#A67C52]",
-    items: [
-      {
-        name: "Lemon Tea",
-        price: 20,
-        qty: 1,
-        image: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=150&q=80",
-      },
-    ],
-    itemSummary: "Lemon Tea x1",
-    seat: "Seat 03",
-    total: 20,
-    orderTime: "15 mins ago",
-    status: "Ready",
-    locationName: "Office",
-  },
-];
+const initialOrders: OrderRecord[] = [];
 
 export default function OrdersPage() {
+  const params = useParams();
+  const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const isNewOrg = currentShortCode && currentShortCode !== "HQ" && currentShortCode !== "FTS";
+  const ordersStorageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
+
   const [orders, setOrders] = useState<OrderRecord[]>(() => {
     try {
-      const stored = localStorage.getItem("cafe4x_admin_orders");
+      const stored = localStorage.getItem(ordersStorageKey);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed)) return parsed;
       }
     } catch {}
-    return initialOrders;
+    return isNewOrg ? [] : initialOrders;
   });
 
   // Selected Employee Key for Right Drawer
@@ -196,18 +138,32 @@ export default function OrdersPage() {
             };
           });
 
+          if (isNewOrg) {
+            // For newly created organizations, only show orders if they belong to this org's storage or location
+            try {
+              const stored = localStorage.getItem(ordersStorageKey);
+              if (stored) {
+                const parsed = JSON.parse(stored);
+                if (Array.isArray(parsed)) setOrders(parsed);
+              } else {
+                setOrders([]);
+              }
+            } catch {}
+            return;
+          }
+
           setOrders(mapped);
           try {
-            localStorage.setItem("cafe4x_admin_orders", JSON.stringify(mapped));
+            localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
           } catch {}
         }
       })
       .catch(() => {
         try {
-          const stored = localStorage.getItem("cafe4x_admin_orders");
+          const stored = localStorage.getItem(ordersStorageKey);
           if (stored) {
             const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed) && parsed.length > 0) setOrders(parsed);
+            if (Array.isArray(parsed)) setOrders(parsed);
           }
         } catch {}
       });
@@ -218,10 +174,10 @@ export default function OrdersPage() {
 
     const handleStorage = () => {
       try {
-        const stored = localStorage.getItem("cafe4x_admin_orders");
+        const stored = localStorage.getItem(ordersStorageKey);
         if (stored) {
           const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed) && parsed.length > 0) setOrders(parsed);
+          if (Array.isArray(parsed)) setOrders(parsed);
         }
       } catch {}
     };

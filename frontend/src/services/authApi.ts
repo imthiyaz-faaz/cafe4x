@@ -14,8 +14,16 @@ export interface LoginResponse {
     email: string;
     userName?: string;
     name?: string;
+    organization?: string;
+    shortCode?: string;
     userType: "Admin" | "Provider" | "Staff";
   };
+  organizations?: Array<{
+    id: string;
+    name: string;
+    shortCode: string;
+    ownerUserId?: string;
+  }>;
 }
 
 export const authApi = {

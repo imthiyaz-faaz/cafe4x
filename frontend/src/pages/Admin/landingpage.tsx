@@ -1,9 +1,27 @@
 import { Sparkles, Utensils, Clock, ShieldCheck, HeartHandshake } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { useState, useEffect } from "react";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 
 export default function LandingPage() {
+  const params = useParams();
+  const shortCode = params.shortCode;
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) {
+        setCurrentUser(JSON.parse(stored));
+      }
+    } catch {}
+  }, []);
+
+  const orgName = currentUser?.organization || (shortCode ? `${shortCode.toUpperCase()} Workplace` : "Cafe4X");
+  const codeTag = currentUser?.shortCode || (shortCode ? shortCode.toUpperCase() : "");
+
   return (
     <Background>
       <div className="flex min-h-screen flex-col pt-20">
@@ -22,14 +40,15 @@ export default function LandingPage() {
                 {/* Badge */}
                 <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-[#E9D7C6] bg-white/90 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#80563C] shadow-sm sm:text-sm">
                   <Sparkles size={16} />
-                  Your workplace café, simplified
+                  {codeTag ? `${codeTag} • Your workplace café, simplified` : "Your workplace café, simplified"}
                 </div>
 
                 {/* Main Heading */}
                 <h1 className="text-3xl font-bold tracking-tight text-[#342219] sm:text-5xl lg:text-6xl">
                   Welcome to{" "}
                   <span className="text-[#8B5738]">
-                    Cafe4X<span className="text-[#C99A6B]">.</span>
+                    {orgName}
+                    <span className="text-[#C99A6B]">.</span>
                   </span>
                 </h1>
 

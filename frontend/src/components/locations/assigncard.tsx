@@ -16,6 +16,9 @@ export interface LocationItem {
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;
+  image?: string;
+  shortCode?: string;
+  organizationId?: string;
   assignedProviderId?: string;
   assignedProviderEmail?: string;
   assignedProviderName?: string;
@@ -75,35 +78,42 @@ export default function AssignCard({
     };
   }, [dropdownOpen]);
 
-  // Load only users who are Provider
-  const providerUsers: ProviderUserItem[] = useMemo(() => {
-    let allUsers: any[] = [];
+  const [providerUsers, setProviderUsers] = useState<ProviderUserItem[]>([]);
+
+  // Fetch only providers belonging to this organization from backend
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let orgShortCode = "";
     try {
-      const stored = localStorage.getItem("cafe4x_users");
+      const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) allUsers = parsed;
+        orgShortCode = JSON.parse(stored).shortCode || "";
       }
     } catch {}
 
-    if (allUsers.length === 0) {
-      allUsers = [
-        {
-          id: "3",
-          name: "Cafe Provider",
-          email: "provider@cafe4x.com",
-          userName: "provider",
-          userType: "Provider",
-        },
-      ];
-    }
-
-    return allUsers.filter(
-      (u) =>
-        (u.userType && u.userType.toLowerCase() === "provider") ||
-        (u.role && u.role.toLowerCase() === "provider") ||
-        (u.userName && u.userName.toLowerCase().includes("provider"))
-    );
+    import("../../services/userApi").then(({ userApi }) => {
+      userApi
+        .getUsers("Provider", orgShortCode || undefined)
+        .then((users) => {
+          if (Array.isArray(users)) {
+            const mapped: ProviderUserItem[] = users
+              .filter((u: any) => (u.userType || "").toLowerCase() === "provider")
+              .map((u: any) => ({
+                id: String(u.id),
+                name: u.name,
+                userName: u.userName,
+                email: u.email,
+                userType: u.userType,
+              }));
+            setProviderUsers(mapped);
+          }
+        })
+        .catch((err) => {
+          console.warn("Could not fetch organization providers:", err);
+          setProviderUsers([]);
+        });
+    });
   }, [isOpen]);
 
   // Filter provider list based on search inside dropdown

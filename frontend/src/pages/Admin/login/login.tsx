@@ -48,11 +48,18 @@ export default function Login() {
         }
         localStorage.setItem("cafe4x_currentUser", JSON.stringify(res.user));
 
+        if (res.organizations && res.organizations.length > 0) {
+          localStorage.setItem("cafe4x_organizations", JSON.stringify(res.organizations));
+        }
+
         if (res.user.userType === "Provider") {
-          navigate("/provider");
+          const userShortCode = res.user.shortCode ? res.user.shortCode.toUpperCase() : "";
+          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider");
           return;
         }
-        navigate("/landing");
+
+        // Navigate to Choose Organization page
+        navigate("/home");
         return;
       }
     } catch (apiErr: any) {
@@ -85,10 +92,11 @@ export default function Login() {
         const { password: _, ...userSafe } = matchedUser;
         localStorage.setItem("cafe4x_currentUser", JSON.stringify(userSafe));
         if (userSafe.userType === "Provider") {
-          navigate("/provider");
+          const userShortCode = userSafe.shortCode ? userSafe.shortCode.toUpperCase() : "";
+          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider");
           return;
         }
-        navigate("/landing");
+        navigate("/home");
         return;
       }
 

@@ -13,8 +13,11 @@ export interface LocationItem {
 }
 
 export const locationApi = {
-  async getLocations(providerId?: string): Promise<LocationItem[]> {
-    const query = providerId ? `?providerId=${encodeURIComponent(providerId)}` : "";
+  async getLocations(providerId?: string, shortCode?: string): Promise<LocationItem[]> {
+    const params = new URLSearchParams();
+    if (providerId) params.append("providerId", providerId);
+    if (shortCode) params.append("shortCode", shortCode);
+    const query = params.toString() ? `?${params.toString()}` : "";
     const res = await apiFetch<{ success: boolean; locations: LocationItem[] }>(`/api/locations${query}`);
     return res.locations || [];
   },

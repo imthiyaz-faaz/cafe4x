@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { useParams } from "react-router-dom";
 import {
   Search,
   Plus,
-  Heart,
   Edit,
   Trash2,
   X,
@@ -33,113 +33,7 @@ export interface MenuItem {
   isLiked?: boolean;
 }
 
-const initialMenuItems: MenuItem[] = [
-  {
-    id: "1",
-    name: "Coffee",
-    description: "Freshly brewed coffee with rich aroma",
-    image: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    preferences: "Sugar : No,Low,Medium,High",
-    amount: 20,
-    type: "Beverages",
-    category: "Drinks",
-  },
-  {
-    id: "2",
-    name: "Tea",
-    description: "Classic milk tea with aromatic spices",
-    image: "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    preferences: "Sugar : No,Low,Medium,High",
-    amount: 15,
-    type: "Beverages",
-    category: "Drinks",
-  },
-  {
-    id: "3",
-    name: "Black Tea",
-    description: "Without milk, pure organic brew",
-    image: "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    preferences: "Sugar : No,Low,Medium,High",
-    amount: 15,
-    type: "Beverages",
-    category: "Drinks",
-  },
-  {
-    id: "4",
-    name: "Lemon Tea",
-    description: "Refreshing lemon tea with citrus mint",
-    image: "https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    preferences: "Sugar : No,Low,Medium,High",
-    amount: 20,
-    type: "Beverages",
-    category: "Drinks",
-  },
-  {
-    id: "5",
-    name: "Milk",
-    description: "Fresh and healthy steamed milk",
-    image: "https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    preferences: "Sugar : No,Low,Medium,High",
-    amount: 18,
-    type: "Beverages",
-    category: "Drinks",
-  },
-  {
-    id: "6",
-    name: "Vada",
-    description: "Crispy and tasty lentil vada",
-    image: "https://images.unsplash.com/photo-1626777552726-4a6b54c97e46?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    amount: 20,
-    type: "Snacks",
-    category: "Food",
-  },
-  {
-    id: "7",
-    name: "Egg Bonda",
-    description: "Spicy egg bonda fried golden brown",
-    image: "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    amount: 25,
-    type: "Snacks",
-    category: "Food",
-  },
-  {
-    id: "8",
-    name: "5rs Biscuit",
-    description: "Crunchy baked butter biscuit",
-    image: "https://images.unsplash.com/photo-1558961363-fa8fdf82db35?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    amount: 5,
-    type: "Snacks",
-    category: "Food",
-  },
-  {
-    id: "9",
-    name: "10rs Biscuit",
-    description: "Premium almond cookies",
-    image: "https://images.unsplash.com/photo-1590080875515-8a3a8dc5735e?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    amount: 10,
-    type: "Snacks",
-    category: "Food",
-  },
-  {
-    id: "10",
-    name: "French Fries",
-    description: "Crispy golden salted fries",
-    image: "https://images.unsplash.com/photo-1576107232684-1279f3908594?auto=format&fit=crop&w=600&q=80",
-    status: "Active",
-    amount: 50,
-    type: "Snacks",
-    category: "Food",
-  },
-];
+const initialMenuItems: MenuItem[] = [];
 
 const categoryTabs = [
   { key: "All", label: "All Items", icon: Sparkles },
@@ -148,10 +42,52 @@ const categoryTabs = [
 ];
 
 export default function Itemspage() {
-  const [items, setItems] = useState<MenuItem[]>(initialMenuItems);
+  const params = useParams();
+  const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const storageKey = currentShortCode ? `cafe4x_items_${currentShortCode}` : "cafe4x_items";
+
+  const [items, setItems] = useState<MenuItem[]>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {}
+    // If it's a newly created organization, start with NO items
+    if (currentShortCode && currentShortCode !== "HQ" && currentShortCode !== "FTS") {
+      return [];
+    }
+    return initialMenuItems;
+  });
+
+  const saveItems = (newItems: MenuItem[]) => {
+    setItems(newItems);
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(newItems));
+    } catch {}
+  };
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setItems(parsed);
+          return;
+        }
+      }
+    } catch {}
+    if (currentShortCode && currentShortCode !== "HQ" && currentShortCode !== "FTS") {
+      setItems([]);
+    } else {
+      setItems(initialMenuItems);
+    }
+  }, [storageKey, currentShortCode]);
+
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [searchQuery, setSearchQuery] = useState("");
-  const [cartBadgeCount, setCartBadgeCount] = useState<Record<string, number>>({});
 
   // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -231,7 +167,7 @@ export default function Itemspage() {
       category: formData.type === "Beverages" ? "Drinks" : "Food",
     };
 
-    setItems((prev) => [newItem, ...prev]);
+    saveItems([newItem, ...items]);
     setIsCreateOpen(false);
   };
 
@@ -240,25 +176,24 @@ export default function Itemspage() {
     e.preventDefault();
     if (!editingItem || !formData.name.trim()) return;
 
-    setItems((prev) =>
-      prev.map((it) =>
-        it.id === editingItem.id
-          ? {
-            ...it,
-            name: formData.name.trim(),
-            description: formData.description.trim(),
-            image:
-              formData.image.trim() ||
-              "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
-            status: formData.status,
-            preferences: formData.preference.trim() || undefined,
-            amount: parseFloat(formData.amount) || it.amount,
-            type: formData.type,
-            category: formData.type === "Beverages" ? "Drinks" : "Food",
-          }
-          : it
-      )
+    const updated = items.map((it) =>
+      it.id === editingItem.id
+        ? {
+          ...it,
+          name: formData.name.trim(),
+          description: formData.description.trim(),
+          image:
+            formData.image.trim() ||
+            "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=600&q=80",
+          status: formData.status,
+          preferences: formData.preference.trim() || undefined,
+          amount: parseFloat(formData.amount) || it.amount,
+          type: formData.type,
+          category: formData.type === "Beverages" ? "Drinks" : "Food",
+        }
+        : it
     );
+    saveItems(updated);
     setIsEditOpen(false);
     setEditingItem(null);
   };
@@ -267,26 +202,10 @@ export default function Itemspage() {
   const handleDeleteItem = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm("Are you sure you want to delete this item?")) {
-      setItems((prev) => prev.filter((it) => it.id !== id));
+      saveItems(items.filter((it) => it.id !== id));
     }
   };
 
-  // Toggle Heart Like
-  const toggleLike = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setItems((prev) =>
-      prev.map((it) => (it.id === id ? { ...it, isLiked: !it.isLiked } : it))
-    );
-  };
-
-  // Add to order count
-  const handleAddItemCount = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setCartBadgeCount((prev) => ({
-      ...prev,
-      [id]: (prev[id] || 0) + 1,
-    }));
-  };
 
   return (
     <Background>

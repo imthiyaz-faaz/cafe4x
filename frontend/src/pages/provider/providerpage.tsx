@@ -53,21 +53,6 @@ export interface ProviderOrder {
   status: "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";
 }
 
-// Initial Admin Created Locations matching screenshot
-const initialLocations: ProviderLocation[] = [
-  {
-    id: "3",
-    name: "office",
-    badgeCount: 10,
-    image: OFFICE_IMG,
-    totalSeats: 10,
-    assignedProviderId: "3",
-    assignedProviderEmail: "provider@cafe4x.com",
-    assignedProviderName: "Cafe Provider",
-  },
-];
-
-
 // Orders are created live by employees and synced via backend & localStorage
 
 export type OrderCategory = "pending" | "canceled" | "delivered" | "all";
@@ -178,59 +163,78 @@ export default function ProviderPage() {
     return null;
   }, []);
 
-  // Sync locations from localStorage if admin created any in Admin Location page
+  const [serverLocations, setServerLocations] = useState<ProviderLocation[]>([]);
+
+  // Fetch locations assigned to this provider from backend
+  useEffect(() => {
+    let providerId = currentUser?.id ? String(currentUser.id) : "";
+    let shortCode = currentUser?.shortCode || "";
+
+    import("../../services/locationApi").then(({ locationApi }) => {
+      locationApi
+        .getLocations(providerId || undefined, shortCode || undefined)
+        .then((locList) => {
+          if (Array.isArray(locList)) {
+            const mapped: ProviderLocation[] = locList.map((loc: any, idx: number) => ({
+              id: String(loc.id || idx),
+              name: loc.name || "Location",
+              badgeCount: loc.totalSeats || 12,
+              isRedBadge: idx % 2 === 1,
+              image: loc.image || OFFICE_IMG,
+              totalSeats: loc.totalSeats || 12,
+              assignedProviderId: loc.assignedProviderId,
+              assignedProviderEmail: loc.assignedProviderEmail,
+              assignedProviderName: loc.assignedProviderName,
+            }));
+            setServerLocations(mapped);
+          }
+        })
+        .catch((err) => {
+          console.warn("Could not fetch assigned locations for provider:", err);
+        });
+    });
+  }, [currentUser]);
+
+  // Sync locations: use backend fetched locations assigned to provider
   const locations = useMemo(() => {
-    let locList: ProviderLocation[] = initialLocations;
+    if (serverLocations.length > 0) {
+      return serverLocations;
+    }
+
+    let locList: ProviderLocation[] = [];
     try {
       const stored = localStorage.getItem("cafe4x_locations");
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          locList = parsed
-            .filter(
-              (loc: any) =>
-                loc.name?.toLowerCase() !== "meeting room" &&
-                loc.name?.toLowerCase() !== "workspace" &&
-                loc.id !== "1" &&
-                loc.id !== "2"
-            )
-            .map((loc: any, idx: number) => ({
-              id: String(loc.id || idx),
-              name: loc.name || "Location",
-              badgeCount: loc.totalSeats || 10,
-              isRedBadge: idx % 2 === 1,
-              image: OFFICE_IMG,
-              totalSeats: loc.totalSeats || 10,
-              assignedProviderId: loc.assignedProviderId,
-              assignedProviderEmail: loc.assignedProviderEmail,
-              assignedProviderName: loc.assignedProviderName,
-            }));
+          locList = parsed.map((loc: any, idx: number) => ({
+            id: String(loc.id || idx),
+            name: loc.name || "Location",
+            badgeCount: loc.totalSeats || 12,
+            isRedBadge: idx % 2 === 1,
+            image: loc.image || OFFICE_IMG,
+            totalSeats: loc.totalSeats || 12,
+            assignedProviderId: loc.assignedProviderId,
+            assignedProviderEmail: loc.assignedProviderEmail,
+            assignedProviderName: loc.assignedProviderName,
+          }));
         }
       }
-    } catch {
-      // fallback to initialLocations
-    }
+    } catch {}
 
-    // Connect location page with provider:
-    // If a provider is logged in, show only locations assigned to this provider.
-    // If no specific provider is logged in or user is admin, show all assigned/available locations.
     if (currentUser && currentUser.userType === "Provider") {
       const providerId = currentUser.id ? String(currentUser.id) : "";
       const providerEmail = currentUser.email ? currentUser.email.toLowerCase() : "";
 
-      const assignedToMe = locList.filter(
+      return locList.filter(
         (loc) =>
           (providerId && String(loc.assignedProviderId) === providerId) ||
           (providerEmail && loc.assignedProviderEmail?.toLowerCase() === providerEmail)
       );
-
-      // If assignments exist for this provider, show only those.
-      // If none assigned yet, return empty list or fallback assigned to default demo
-      return assignedToMe;
     }
 
     return locList;
-  }, [currentUser]);
+  }, [serverLocations, currentUser]);
 
 
   // Filter locations

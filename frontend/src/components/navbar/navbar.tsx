@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useLocation, useParams } from "react-router-dom";
 import {
   Users,
   MapPin,
@@ -14,29 +14,47 @@ import {
 } from "lucide-react";
 import logoImg from "../../assets/images/logo.png";
 
-const navItems = [
-  { name: "Overview", icon: LayoutDashboard, href: "/landing" },
-  { name: "Users", icon: Users, href: "/users" },
-  { name: "Location", icon: MapPin, href: "/location" },
-  { name: "Items", icon: ListTodo, href: "/items" },
-  { name: "Orders", icon: Truck, href: "/orders" },
-  { name: "Working Hours", icon: Clock, href: "/working-hours" },
-];
-
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
+  const params = useParams();
+  const shortCode = params.shortCode;
+
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("cafe4x_currentUser");
+      if (stored) {
+        setCurrentUser(JSON.parse(stored));
+      }
+    } catch {}
+  }, []);
+
+  const basePath = shortCode ? `/${shortCode}` : "";
+
+  const navItems = [
+    { name: "Overview", icon: LayoutDashboard, href: `${basePath}/landing` },
+    { name: "Users", icon: Users, href: `${basePath}/users` },
+    { name: "Location", icon: MapPin, href: `${basePath}/location` },
+    { name: "Items", icon: ListTodo, href: `${basePath}/items` },
+    { name: "Orders", icon: Truck, href: `${basePath}/orders` },
+    { name: "Working Hours", icon: Clock, href: `${basePath}/working-hours` },
+  ];
 
   const isCurrent = (href: string) => {
     if (href.startsWith("#")) return false;
     return location.pathname === href;
   };
 
+  const displayName = currentUser?.name || currentUser?.userName || "Admin User";
+  const orgName = currentUser?.organization || (shortCode ? `${shortCode.toUpperCase()} Workspace` : "Admin Access");
+
   return (
     <header className="fixed top-0 left-0 right-0 z-50 w-full border-b border-[#EEE5DC]/80 bg-white/90 px-4 backdrop-blur-md shadow-sm sm:px-6 lg:px-8">
       <nav className="mx-auto flex h-20 max-w-7xl items-center justify-between">
         {/* Brand with logo.png */}
-        <Link to="/" className="flex items-center gap-3">
+        <Link to={shortCode ? `/${shortCode}/landing` : "/"} className="flex items-center gap-3">
           <img
             src={logoImg}
             alt="Cafe4X Logo"
@@ -47,7 +65,7 @@ export default function Navbar() {
               Cafe<span className="text-[#A66C43]">4X</span>
             </h1>
             <p className="text-[9px] font-semibold tracking-[0.2em] text-[#A08C7D]">
-              OFFICE CAFE MANAGEMENT
+              {shortCode ? `${shortCode.toUpperCase()} CAFE` : "OFFICE CAFE MANAGEMENT"}
             </p>
           </div>
         </Link>
@@ -80,19 +98,35 @@ export default function Navbar() {
 
         {/* Right Action / Profile */}
         <div className="hidden items-center gap-3 sm:flex">
-          <div className="flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5">
+          <Link
+            to="/home"
+            title="Switch Organization"
+            className="flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5 transition hover:border-[#DEC5B0] hover:bg-[#F5ECE0]"
+          >
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
               <UserCircle size={24} />
             </div>
             <div className="text-left">
-              <p className="text-xs font-bold text-[#342219]">Admin User</p>
-              <p className="text-[10px] text-[#9A8778]">Admin Access</p>
+              <p className="text-xs font-bold text-[#342219]">{displayName}</p>
+              <div className="flex items-center gap-1 text-[10px] text-[#9A8778]">
+                {currentUser?.shortCode && (
+                  <span className="rounded bg-[#E3D3C4] px-1 py-0.2 font-semibold text-[#633B22]">
+                    {currentUser.shortCode}
+                  </span>
+                )}
+                <span>{orgName}</span>
+                <span className="ml-1 text-[9px] font-semibold text-[#009FB7]">⇄ Switch</span>
+              </div>
             </div>
-          </div>
+          </Link>
 
           <Link
             to="/login"
             title="Log out"
+            onClick={() => {
+              localStorage.removeItem("cafe4x_currentUser");
+              localStorage.removeItem("cafe4x_token");
+            }}
             className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#EFE7DE] bg-white text-[#9A8778] transition hover:border-[#DEC5B0] hover:bg-[#FAF6F1] hover:text-[#70452D]"
           >
             <LogOut size={18} />
@@ -147,8 +181,8 @@ export default function Navbar() {
                 <UserCircle size={24} />
               </div>
               <div className="text-left">
-                <p className="text-xs font-bold text-[#342219]">Admin User</p>
-                <p className="text-[10px] text-[#9A8778]">Admin Access</p>
+                <p className="text-xs font-bold text-[#342219]">{displayName}</p>
+                <p className="text-[10px] text-[#9A8778]">{orgName}</p>
               </div>
             </div>
             <Link

@@ -47,6 +47,34 @@ export const orderController = {
       const authUser = await getAuthUser(c);
       const location = c.req.query("location");
       const status = c.req.query("status");
+      const todayOnly = c.req.query("todayOnly") === "true";
+
+      // Resolve organization's configured timezone from working_hours
+      let orgTimezone = "Asia/Dubai";
+      try {
+        const whRow = (await db
+          .prepare(`SELECT timezone FROM working_hours WHERE organization_id = ?`)
+          .bind(org.organizationId)
+          .get()) as any;
+        if (whRow?.timezone) {
+          orgTimezone = whRow.timezone;
+        }
+      } catch {}
+
+      // Calculate today's date in organization's timezone (YYYY-MM-DD)
+      let todayDateStr = "";
+      try {
+        const now = new Date();
+        const formatter = new Intl.DateTimeFormat("en-CA", {
+          timeZone: orgTimezone,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+        });
+        todayDateStr = formatter.format(now); // "YYYY-MM-DD"
+      } catch {
+        todayDateStr = new Date().toISOString().slice(0, 10);
+      }
 
       let query = `
         SELECT 
@@ -91,8 +119,20 @@ export const orderController = {
       }
 
       if (status) {
-        query += ` AND o.status = ?`;
-        params.push(status);
+        if (status.includes(",")) {
+          const statuses = status.split(",").map((s) => s.trim());
+          const placeholders = statuses.map(() => "?").join(",");
+          query += ` AND o.status IN (${placeholders})`;
+          params.push(...statuses);
+        } else {
+          query += ` AND o.status = ?`;
+          params.push(status);
+        }
+      }
+
+      if (todayOnly && todayDateStr) {
+        query += ` AND (o.created_at LIKE ? OR o.created_at IS NULL)`;
+        params.push(`${todayDateStr}%`);
       }
 
       query += ` ORDER BY o.created_at DESC`;

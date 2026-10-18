@@ -30,6 +30,7 @@ export interface ProviderOrder {
 export interface GetOrdersParams {
   location?: string;
   status?: string;
+  todayOnly?: boolean;
 }
 
 export const orderApi = {

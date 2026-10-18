@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useParams, useLocation } from "react-router-dom";
 import {
   MapPin,
   UserCircle,
@@ -22,6 +22,36 @@ export default function ProviderNavbar({
   pendingOrdersCount = 0,
 }: ProviderNavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { shortCode } = useParams<{ shortCode?: string }>();
+
+  // Detect base path: if URL contains /FTS/Provider, keep that casing, else check shortCode or default
+  const getRoutePath = (tabId: "provider" | "pendingOrders") => {
+    const isFTS = location.pathname.toLowerCase().startsWith("/fts/provider");
+    let base = "";
+    if (isFTS) {
+      base = "/FTS/Provider";
+    } else if (shortCode) {
+      base = `/${shortCode}/provider`;
+    } else {
+      base = "/provider";
+    }
+
+    if (tabId === "provider") {
+      return base;
+    }
+    return `${base}/pending-orders`;
+  };
+
+  const handleNavClick = (tabId: "provider" | "pendingOrders") => {
+    if (onTabChange) {
+      onTabChange(tabId);
+    } else {
+      const target = getRoutePath(tabId);
+      navigate(target);
+    }
+  };
 
   // Retrieve logged-in provider's name / info if available
   const currentUser = useMemo(() => {
@@ -51,7 +81,7 @@ export default function ProviderNavbar({
     <header className="fixed top-0 left-0 right-0 z-50 w-full border-b border-[#EEE5DC]/80 bg-white/90 px-4 backdrop-blur-md shadow-sm sm:px-6 lg:px-8">
       <nav className="mx-auto flex h-20 max-w-7xl items-center justify-between">
         {/* Brand with logo.png */}
-        <Link to="/provider" className="flex items-center gap-3">
+        <Link to={getRoutePath("provider")} className="flex items-center gap-3">
           <img
             src={logoImg}
             alt="Cafe4X Logo"
@@ -77,7 +107,7 @@ export default function ProviderNavbar({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => onTabChange?.(item.id)}
+                onClick={() => handleNavClick(item.id)}
                 className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200 ${
                   active
                     ? "bg-gradient-to-r from-[#75472D] to-[#9A6747] text-white shadow-md shadow-[#75472D]/20"
@@ -154,7 +184,7 @@ export default function ProviderNavbar({
                   key={item.id}
                   type="button"
                   onClick={() => {
-                    onTabChange?.(item.id);
+                    handleNavClick(item.id);
                     setMobileMenuOpen(false);
                   }}
                   className={`flex w-full items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition ${

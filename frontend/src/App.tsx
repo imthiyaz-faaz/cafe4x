@@ -6,6 +6,7 @@ import ItemsPage from './pages/Admin/itemspage'
 import OrdersPage from './pages/Admin/orderspages'
 import WorkingHoursPage from './pages/Admin/workinghourspage'
 import ProviderPage from './pages/provider/providerpage'
+import PendingOrdersPage from './pages/provider/Pendingorderspage'
 import UserOrderPage from './pages/user/userorder'
 import Home from './pages/Admin/login/homepage'
 import Login from './pages/Admin/login/login'
@@ -27,7 +28,9 @@ export default function App() {
       <Route path="/orders" element={<OrdersPage />} />
       <Route path="/working-hours" element={<WorkingHoursPage />} />
       <Route path="/provider" element={<ProviderPage />} />
+      <Route path="/provider/pending-orders" element={<PendingOrdersPage />} />
       <Route path="/FTS/Provider" element={<ProviderPage />} />
+      <Route path="/FTS/Provider/pending-orders" element={<PendingOrdersPage />} />
 
       {/* Organization-specific routes with :shortCode prefix */}
       <Route path="/:shortCode/landing" element={<LandingPage />} />
@@ -37,6 +40,7 @@ export default function App() {
       <Route path="/:shortCode/orders" element={<OrdersPage />} />
       <Route path="/:shortCode/working-hours" element={<WorkingHoursPage />} />
       <Route path="/:shortCode/provider" element={<ProviderPage />} />
+      <Route path="/:shortCode/provider/pending-orders" element={<PendingOrdersPage />} />
 
       {/* Employee / Guest Order QR routes */}
       <Route path="/emporder" element={<UserOrderPage />} />

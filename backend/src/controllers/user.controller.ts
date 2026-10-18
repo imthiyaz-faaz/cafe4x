@@ -1,8 +1,12 @@
 import { Context } from "hono";
-import { getDb } from "../db";
+import { getUniversalDb } from "../db";
+import { AppEnv } from "../types";
+import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
+import { getNextId, hashPassword } from "../utils/id-generator";
 
 export interface UserModel {
   id: string;
+  displayId?: string;
   name: string;
   userName: string;
   password?: string;
@@ -15,35 +19,52 @@ export interface UserModel {
   createdAt: string;
 }
 
-export let usersStore: UserModel[] = [];
+export const userController = {
+  // GET /api/users
+  async getUsers(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
 
-export function syncFromDb() {
-  try {
-    const db = getDb();
-    const rows = db.prepare(`
-      SELECT 
-        u.id, 
-        u.name, 
-        u.user_name as userName, 
-        u.password, 
-        u.email, 
-        u.mobile_number as mobileNumber, 
-        u.user_type as userType, 
-        o.id as organizationId, 
-        o.short_code as shortCode,
-        o.name as organization,
-        u.created_at as createdAt
-      FROM users u
-      LEFT JOIN user_organizations uo ON u.id = uo.user_id
-      LEFT JOIN organizations o ON uo.organization_id = o.id
-    `).all() as any[];
+      const db = getUniversalDb(c.env?.DB);
+      const type = c.req.query("type");
 
-    if (rows && rows.length > 0) {
-      usersStore = rows.map((r) => ({
+      let query = `
+        SELECT 
+          u.id, 
+          u.display_id as displayId,
+          u.name, 
+          u.user_name as userName, 
+          u.email, 
+          u.mobile_number as mobileNumber, 
+          u.user_type as userType, 
+          o.id as organizationId, 
+          o.short_code as shortCode,
+          o.name as organization,
+          u.created_at as createdAt
+        FROM users u
+        JOIN user_organizations uo ON u.id = uo.user_id
+        JOIN organizations o ON uo.organization_id = o.id
+        WHERE o.id = ?
+      `;
+      const params: any[] = [org.organizationId];
+
+      if (type) {
+        query += ` AND LOWER(u.user_type) = LOWER(?)`;
+        params.push(type);
+      }
+
+      query += ` ORDER BY u.created_at DESC`;
+
+      const rows = (await db.prepare(query).bind(...params).all()) as any[];
+
+      const safeUsers = (rows || []).map((r) => ({
         id: String(r.id),
+        displayId: r.displayId || `USR-${r.id}`,
         name: r.name,
         userName: r.userName,
-        password: r.password,
         email: r.email,
         mobileNumber: r.mobileNumber || "",
         userType: r.userType,
@@ -52,35 +73,7 @@ export function syncFromDb() {
         organization: r.organization || "",
         createdAt: r.createdAt,
       }));
-    }
-  } catch (err) {
-    console.warn("Could not sync from SQLite, using in-memory store:", err);
-  }
-}
 
-// Initialize on load
-syncFromDb();
-
-export const userController = {
-  // GET /api/users
-  async getUsers(c: Context) {
-    try {
-      syncFromDb();
-      const type = c.req.query("type");
-      const shortCode = c.req.query("shortCode");
-      const organization = c.req.query("organization");
-
-      let list = [...usersStore];
-      if (type) {
-        list = list.filter((u) => u.userType.toLowerCase() === type.toLowerCase());
-      }
-      if (shortCode) {
-        list = list.filter((u) => (u.shortCode || "").toUpperCase() === shortCode.toUpperCase());
-      } else if (organization) {
-        list = list.filter((u) => (u.organization || "").toLowerCase() === organization.toLowerCase());
-      }
-
-      const safeUsers = list.map(({ password: _, ...rest }) => rest);
       return c.json({ success: true, users: safeUsers });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
@@ -88,26 +81,60 @@ export const userController = {
   },
 
   // GET /api/users/:id
-  async getUserById(c: Context) {
+  async getUserById(c: Context<AppEnv>) {
     try {
       const id = c.req.param("id");
-      const user = usersStore.find((u) => u.id === id);
-      if (!user) {
+      const db = getUniversalDb(c.env?.DB);
+
+      const row = (await db
+        .prepare(
+          `SELECT 
+            u.id, u.display_id as displayId, u.name, u.user_name as userName, u.email,
+            u.mobile_number as mobileNumber, u.user_type as userType,
+            o.id as organizationId, o.short_code as shortCode, o.name as organization,
+            u.created_at as createdAt
+           FROM users u
+           LEFT JOIN user_organizations uo ON u.id = uo.user_id
+           LEFT JOIN organizations o ON uo.organization_id = o.id
+           WHERE u.id = ? OR u.display_id = ?`
+        )
+        .bind(id, id)
+        .get()) as any;
+
+      if (!row) {
         return c.json({ success: false, message: "User not found" }, 404);
       }
-      const { password: _, ...safe } = user;
-      return c.json({ success: true, user: safe });
+
+      return c.json({
+        success: true,
+        user: {
+          id: String(row.id),
+          displayId: row.displayId,
+          name: row.name,
+          userName: row.userName,
+          email: row.email,
+          mobileNumber: row.mobileNumber || "",
+          userType: row.userType,
+          organizationId: row.organizationId,
+          shortCode: row.shortCode,
+          organization: row.organization || "",
+          createdAt: row.createdAt,
+        },
+      });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
 
-  // POST /api/users (Created from Users Page or Signup)
-  async createUser(c: Context) {
+  // POST /api/users
+  async createUser(c: Context<AppEnv>) {
     try {
-      const body = await c.req.json();
-      const identifier = (body.email || body.userName || "").trim().toLowerCase();
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
 
+      const body = await c.req.json();
       if (!body.name || !body.name.trim()) {
         return c.json({ success: false, message: "Name is required" }, 400);
       }
@@ -121,146 +148,168 @@ export const userController = {
         return c.json({ success: false, message: "Email is required" }, 400);
       }
 
-      // Check if duplicate user exists
-      const exists = usersStore.some(
-        (u) =>
-          u.email.toLowerCase() === body.email.trim().toLowerCase() ||
-          u.userName.toLowerCase() === body.userName.trim().toLowerCase()
-      );
+      const db = getUniversalDb(c.env?.DB);
+      const email = body.email.trim().toLowerCase();
+      const userName = body.userName.trim().toLowerCase();
 
-      if (exists) {
+      // Check if user already exists
+      let existingUser = (await db
+        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email FROM users WHERE LOWER(email) = ? OR LOWER(user_name) = ?`)
+        .bind(email, userName)
+        .get()) as any;
+
+      const { displayId: generatedDisplayId } = await getNextId(db, "USER");
+      const newUserId = existingUser ? existingUser.id : (body.id ? String(body.id) : generatedDisplayId);
+      const displayId = existingUser ? existingUser.displayId : generatedDisplayId;
+      const hashedPassword = await hashPassword(body.password.trim());
+      const now = new Date().toISOString();
+
+      if (!existingUser) {
+        await db
+          .prepare(
+            `INSERT INTO users (id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            newUserId,
+            displayId,
+            body.name.trim(),
+            userName,
+            body.password.trim(),
+            hashedPassword,
+            email,
+            body.mobileNumber ? String(body.mobileNumber).trim() : "",
+            body.userType || "Staff",
+            now
+          );
+      }
+
+      // Check if user is already linked to this organization
+      const link = (await db
+        .prepare(`SELECT id FROM user_organizations WHERE user_id = ? AND organization_id = ?`)
+        .bind(newUserId, org.organizationId)
+        .get()) as any;
+
+      if (link) {
         return c.json({
           success: false,
-          message: "A user with this email or username already exists",
+          message: "A user with this email or username is already in this organization",
         }, 409);
       }
 
-      const newUserId = body.id ? String(body.id) : Date.now().toString();
-      const orgName = (body.organization || "Default Org").trim();
-      const orgShort = (body.shortCode || "HQ").trim().toUpperCase();
-      const orgId = body.organizationId || `org_${orgShort.toLowerCase()}_${Date.now()}`;
+      // Link to organization
+      const role = body.userType === "Admin" ? "Owner" : (body.userType === "Provider" ? "Provider" : "Member");
+      await db
+        .prepare(
+          `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, newUserId, org.organizationId, role, now);
 
-      try {
-        const db = getDb();
-        // Upsert organization
-        db.prepare(`
-          INSERT INTO organizations (id, name, short_code)
-          VALUES (?, ?, ?)
-          ON CONFLICT(short_code) DO UPDATE SET name = excluded.name
-        `).run(orgId, orgName, orgShort);
-
-        // Fetch actual org id
-        const orgRow = db.prepare(`SELECT id FROM organizations WHERE short_code = ?`).get(orgShort) as any;
-        const actualOrgId = orgRow ? orgRow.id : orgId;
-
-        // Insert user
-        db.prepare(`
-          INSERT INTO users (id, name, user_name, password, email, mobile_number, user_type)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          newUserId,
-          body.name.trim(),
-          body.userName.trim(),
-          body.password.trim(),
-          body.email.trim().toLowerCase(),
-          body.mobileNumber ? String(body.mobileNumber).trim() : "",
-          body.userType || "Admin"
-        );
-
-        // Link in user_organizations
-        db.prepare(`
-          INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role)
-          VALUES (?, ?, ?, ?)
-        `).run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, newUserId, actualOrgId, body.userType === "Admin" ? "Owner" : "Member");
-      } catch (dbErr) {
-        console.warn("Could not insert user directly into SQLite:", dbErr);
-      }
-
-      const newUser: UserModel = {
-        id: newUserId,
-        name: body.name.trim(),
-        userName: body.userName.trim(),
-        password: body.password.trim(),
-        email: body.email.trim().toLowerCase(),
-        mobileNumber: body.mobileNumber ? String(body.mobileNumber).trim() : "",
-        organization: orgName,
-        shortCode: orgShort,
-        organizationId: orgId,
-        userType: body.userType || "Admin",
-        createdAt: new Date().toISOString(),
-      };
-
-      usersStore.push(newUser);
-      const { password: _, ...safeUser } = newUser;
-
-      return c.json({
-        success: true,
-        message: "User created successfully",
-        user: safeUser,
-      }, 201);
+      return c.json(
+        {
+          success: true,
+          message: "User created successfully",
+          user: {
+            id: newUserId,
+            displayId,
+            name: body.name.trim(),
+            userName,
+            email,
+            mobileNumber: body.mobileNumber ? String(body.mobileNumber).trim() : "",
+            userType: body.userType || "Staff",
+            organizationId: org.organizationId,
+            shortCode: org.shortCode,
+            createdAt: now,
+          },
+        },
+        201
+      );
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
 
   // PUT /api/users/:id
-  async updateUser(c: Context) {
+  async updateUser(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
       const id = c.req.param("id");
       const body = await c.req.json();
-      const index = usersStore.findIndex((u) => u.id === id);
+      const db = getUniversalDb(c.env?.DB);
 
-      if (index === -1) {
-        return c.json({ success: false, message: "User not found" }, 404);
+      const link = (await db
+        .prepare(`SELECT user_id as userId FROM user_organizations WHERE (user_id = ? OR user_id IN (SELECT id FROM users WHERE display_id = ?)) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .get()) as any;
+
+      if (!link) {
+        return c.json({ success: false, message: "User not found in this organization" }, 404);
       }
 
-      const updatedName = body.name !== undefined ? body.name : usersStore[index].name;
-      const updatedUserName = body.userName !== undefined ? body.userName : usersStore[index].userName;
-      const updatedEmail = body.email !== undefined ? body.email.toLowerCase() : usersStore[index].email;
-      const updatedMobile = body.mobileNumber !== undefined ? body.mobileNumber : usersStore[index].mobileNumber;
-      const updatedType = body.userType !== undefined ? body.userType : usersStore[index].userType;
-      const updatedPass = body.password ? body.password : usersStore[index].password;
+      const targetUserId = link.userId;
+      const newHash = body.password ? await hashPassword(body.password.trim()) : null;
 
-      try {
-        const db = getDb();
-        db.prepare(`
-          UPDATE users 
-          SET name = ?, user_name = ?, email = ?, mobile_number = ?, user_type = ?, password = ?
-          WHERE id = ?
-        `).run(updatedName, updatedUserName, updatedEmail, updatedMobile, updatedType, updatedPass, id);
-      } catch (dbErr) {
-        console.warn("Could not update user in SQLite:", dbErr);
-      }
+      await db
+        .prepare(
+          `UPDATE users 
+           SET 
+             name = COALESCE(?, name),
+             user_name = COALESCE(?, user_name),
+             email = COALESCE(?, email),
+             mobile_number = COALESCE(?, mobile_number),
+             user_type = COALESCE(?, user_type),
+             password = COALESCE(?, password),
+             password_hash = COALESCE(?, password_hash)
+           WHERE id = ?`
+        )
+        .run(
+          body.name ? body.name.trim() : null,
+          body.userName ? body.userName.trim() : null,
+          body.email ? body.email.toLowerCase() : null,
+          body.mobileNumber !== undefined ? body.mobileNumber : null,
+          body.userType !== undefined ? body.userType : null,
+          body.password ? body.password : null,
+          newHash,
+          targetUserId
+        );
 
-      usersStore[index] = {
-        ...usersStore[index],
-        name: updatedName,
-        userName: updatedUserName,
-        email: updatedEmail,
-        mobileNumber: updatedMobile,
-        userType: updatedType,
-        password: updatedPass,
-      };
+      const updated = (await db
+        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email, mobile_number as mobileNumber, user_type as userType FROM users WHERE id = ?`)
+        .bind(targetUserId)
+        .get()) as any;
 
-      const { password: _, ...safe } = usersStore[index];
-      return c.json({ success: true, user: safe });
+      return c.json({ success: true, user: updated });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
 
   // DELETE /api/users/:id
-  async deleteUser(c: Context) {
+  async deleteUser(c: Context<AppEnv>) {
     try {
-      const id = c.req.param("id");
-      try {
-        const db = getDb();
-        db.prepare(`DELETE FROM users WHERE id = ?`).run(id);
-      } catch (dbErr) {
-        console.warn("Could not delete user from SQLite:", dbErr);
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
       }
-      usersStore = usersStore.filter((u) => u.id !== id);
-      return c.json({ success: true, message: "User deleted successfully" });
+
+      const id = c.req.param("id");
+      const db = getUniversalDb(c.env?.DB);
+
+      const res = await db
+        .prepare(`DELETE FROM user_organizations WHERE (user_id = ? OR user_id IN (SELECT id FROM users WHERE display_id = ?)) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .run();
+
+      if (res.changes === 0) {
+        return c.json({ success: false, message: "User not found in this organization" }, 404);
+      }
+
+      return c.json({ success: true, message: "User removed from organization successfully" });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }

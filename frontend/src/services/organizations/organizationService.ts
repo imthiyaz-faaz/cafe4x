@@ -2,6 +2,7 @@ import { api } from "../apiClient";
 
 export interface Organization {
   id: string;
+  displayId?: string;
   name: string;
   shortCode: string;
   ownerUserId?: string;

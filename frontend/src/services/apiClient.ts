@@ -36,6 +36,23 @@ export async function apiRequest<T = any>(
   const token = localStorage.getItem("cafe4x_token");
   const headers = new Headers(customHeaders || {});
 
+  // Automatically attach active organization and current user context
+  try {
+    const userStr = localStorage.getItem("cafe4x_currentUser");
+    if (userStr) {
+      const u = JSON.parse(userStr);
+      if (u.id && !headers.has("x-user-id")) {
+        headers.set("x-user-id", u.id);
+      }
+      if (u.shortCode && !headers.has("x-shortcode")) {
+        headers.set("x-shortcode", u.shortCode.toUpperCase());
+      }
+      if (u.organizationId && !headers.has("x-organization-id")) {
+        headers.set("x-organization-id", u.organizationId);
+      }
+    }
+  } catch {}
+
   if (!headers.has("Content-Type") && !(fetchOptions.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
   }

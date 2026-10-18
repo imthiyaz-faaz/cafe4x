@@ -1,8 +1,12 @@
 import { Context } from "hono";
-import { getDb } from "../db";
+import { getUniversalDb } from "../db";
+import { AppEnv } from "../types";
+import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
+import { getNextId } from "../utils/id-generator";
 
 export interface ItemModel {
   id: string;
+  displayId?: string;
   organizationId?: string;
   shortCode?: string;
   name: string;
@@ -18,35 +22,53 @@ export interface ItemModel {
   updatedAt?: string;
 }
 
-export let itemsStore: ItemModel[] = [];
+export const itemsController = {
+  // GET /api/items
+  async getItems(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
 
-function syncItemsFromDb() {
-  try {
-    const db = getDb();
-    const rows = db.prepare(`
-      SELECT 
-        i.id,
-        i.organization_id as organizationId,
-        i.short_code as shortCode,
-        i.name,
-        i.description,
-        i.image,
-        i.status,
-        i.preference,
-        i.amount,
-        i.type,
-        i.category,
-        i.created_at as createdAt,
-        i.updated_at as updatedAt
-      FROM items i
-      ORDER BY i.created_at DESC
-    `).all() as any[];
+      const db = getUniversalDb(c.env?.DB);
+      const type = c.req.query("type");
 
-    if (rows && rows.length > 0) {
-      itemsStore = rows.map((r) => ({
+      let query = `
+        SELECT 
+          i.id,
+          i.display_id as displayId,
+          i.organization_id as organizationId,
+          i.short_code as shortCode,
+          i.name,
+          i.description,
+          i.image,
+          i.status,
+          i.preference,
+          i.amount,
+          i.type,
+          i.category,
+          i.created_at as createdAt,
+          i.updated_at as updatedAt
+        FROM items i
+        WHERE i.organization_id = ?
+      `;
+      const params: any[] = [org.organizationId];
+
+      if (type && type !== "All") {
+        query += ` AND LOWER(i.type) = LOWER(?)`;
+        params.push(type);
+      }
+
+      query += ` ORDER BY i.created_at DESC`;
+
+      const rows = (await db.prepare(query).bind(...params).all()) as any[];
+
+      const items: ItemModel[] = (rows || []).map((r) => ({
         id: String(r.id),
-        organizationId: r.organizationId || "",
-        shortCode: r.shortCode || "",
+        displayId: r.displayId || `ITEM-${r.shortCode || org.shortCode}-${r.id}`,
+        organizationId: r.organizationId || org.organizationId,
+        shortCode: r.shortCode || org.shortCode,
         name: r.name,
         description: r.description || "",
         image: r.image || "",
@@ -58,41 +80,10 @@ function syncItemsFromDb() {
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
       }));
-    }
-  } catch (err) {
-    console.warn("Could not sync items from SQLite:", err);
-  }
-}
-
-// Initial sync on startup
-syncItemsFromDb();
-
-export const itemsController = {
-  // GET /api/items?shortCode=xxx&organizationId=yyy&type=zzz
-  async getItems(c: Context) {
-    try {
-      syncItemsFromDb();
-      const shortCode = c.req.query("shortCode");
-      const organizationId = c.req.query("organizationId");
-      const type = c.req.query("type");
-
-      let result = [...itemsStore];
-
-      if (shortCode) {
-        result = result.filter(
-          (item) => (item.shortCode || "").toUpperCase() === shortCode.toUpperCase()
-        );
-      } else if (organizationId) {
-        result = result.filter((item) => item.organizationId === organizationId);
-      }
-
-      if (type && type !== "All") {
-        result = result.filter((item) => item.type.toLowerCase() === type.toLowerCase());
-      }
 
       return c.json({
         success: true,
-        items: result,
+        items,
       });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
@@ -100,29 +91,67 @@ export const itemsController = {
   },
 
   // GET /api/items/:id
-  async getItemById(c: Context) {
+  async getItemById(c: Context<AppEnv>) {
     try {
-      syncItemsFromDb();
       const id = c.req.param("id");
-      const found = itemsStore.find((i) => i.id === id);
-      if (!found) {
+      const db = getUniversalDb(c.env?.DB);
+
+      const row = (await db
+        .prepare(
+          `SELECT 
+            id, display_id as displayId, organization_id as organizationId, short_code as shortCode,
+            name, description, image, status, preference, amount, type, category,
+            created_at as createdAt, updated_at as updatedAt
+           FROM items WHERE id = ? OR display_id = ?`
+        )
+        .bind(id, id)
+        .get()) as any;
+
+      if (!row) {
         return c.json({ success: false, message: "Item not found" }, 404);
       }
-      return c.json({ success: true, item: found });
+
+      return c.json({
+        success: true,
+        item: {
+          id: String(row.id),
+          displayId: row.displayId,
+          organizationId: row.organizationId,
+          shortCode: row.shortCode,
+          name: row.name,
+          description: row.description || "",
+          image: row.image || "",
+          status: row.status,
+          preference: row.preference || "",
+          amount: Number(row.amount) || 0,
+          type: row.type,
+          category: row.category,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        },
+      });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
 
   // POST /api/items
-  async createItem(c: Context) {
+  async createItem(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
       const body = await c.req.json();
       if (!body.name || !body.name.trim()) {
         return c.json({ success: false, message: "Item name is required" }, 400);
       }
 
-      const id = body.id ? String(body.id) : Date.now().toString();
+      const db = getUniversalDb(c.env?.DB);
+      const { displayId } = await getNextId(db, "ITEM", org.shortCode);
+
+      const id = body.id ? String(body.id) : displayId;
       const name = body.name.trim();
       const description = body.description ? body.description.trim() : "";
       const image = body.image || "";
@@ -131,22 +160,20 @@ export const itemsController = {
       const amount = Number(body.amount) || 0;
       const type = body.type || "Beverages";
       const category = body.category || (type === "Snacks" ? "Food" : "Drinks");
-      const organizationId = body.organizationId || "";
-      const shortCode = (body.shortCode || "").toUpperCase();
       const now = new Date().toISOString();
 
-      try {
-        const db = getDb();
-        db.prepare(`
-          INSERT INTO items (
-            id, organization_id, short_code, name, description, image,
+      await db
+        .prepare(
+          `INSERT INTO items (
+            id, display_id, organization_id, short_code, name, description, image,
             status, preference, amount, type, category, created_at, updated_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
           id,
-          organizationId || null,
-          shortCode || null,
+          displayId,
+          org.organizationId,
+          org.shortCode,
           name,
           description || null,
           image || null,
@@ -158,12 +185,10 @@ export const itemsController = {
           now,
           now
         );
-      } catch (dbErr) {
-        console.warn("Could not insert item into SQLite:", dbErr);
-      }
 
       const newItem: ItemModel = {
         id,
+        displayId,
         name,
         description,
         image,
@@ -172,13 +197,12 @@ export const itemsController = {
         amount,
         type: type as "Beverages" | "Snacks",
         category,
-        organizationId,
-        shortCode,
+        organizationId: org.organizationId,
+        shortCode: org.shortCode,
         createdAt: now,
         updatedAt: now,
       };
 
-      itemsStore.unshift(newItem);
       return c.json({ success: true, item: newItem }, 201);
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
@@ -186,12 +210,28 @@ export const itemsController = {
   },
 
   // PUT /api/items/:id
-  async updateItem(c: Context) {
+  async updateItem(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
       const id = c.req.param("id");
       const body = await c.req.json();
       const now = new Date().toISOString();
+      const db = getUniversalDb(c.env?.DB);
 
+      const existing = (await db
+        .prepare(`SELECT id FROM items WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .get()) as any;
+
+      if (!existing) {
+        return c.json({ success: false, message: "Item not found in this organization" }, 404);
+      }
+
+      const targetId = existing.id;
       const name = body.name ? body.name.trim() : null;
       const description = body.description !== undefined ? body.description.trim() : null;
       const image = body.image !== undefined ? body.image : null;
@@ -201,22 +241,22 @@ export const itemsController = {
       const type = body.type !== undefined ? body.type : null;
       const category = body.category !== undefined ? body.category : (type ? (type === "Snacks" ? "Food" : "Drinks") : null);
 
-      try {
-        const db = getDb();
-        db.prepare(`
-          UPDATE items
-          SET 
-            name = COALESCE(?, name),
-            description = COALESCE(?, description),
-            image = COALESCE(?, image),
-            status = COALESCE(?, status),
-            preference = COALESCE(?, preference),
-            amount = COALESCE(?, amount),
-            type = COALESCE(?, type),
-            category = COALESCE(?, category),
-            updated_at = ?
-          WHERE id = ?
-        `).run(
+      await db
+        .prepare(
+          `UPDATE items
+           SET 
+             name = COALESCE(?, name),
+             description = COALESCE(?, description),
+             image = COALESCE(?, image),
+             status = COALESCE(?, status),
+             preference = COALESCE(?, preference),
+             amount = COALESCE(?, amount),
+             type = COALESCE(?, type),
+             category = COALESCE(?, category),
+             updated_at = ?
+           WHERE id = ? AND organization_id = ?`
+        )
+        .run(
           name,
           description,
           image,
@@ -226,32 +266,37 @@ export const itemsController = {
           type,
           category,
           now,
-          id
+          targetId,
+          org.organizationId
         );
-      } catch (dbErr) {
-        console.warn("Could not update item in SQLite:", dbErr);
-      }
 
-      syncItemsFromDb();
-      const found = itemsStore.find((i) => i.id === id);
-      return c.json({ success: true, item: found || { id, ...body } });
+      const updated = (await db.prepare(`SELECT * FROM items WHERE id = ?`).bind(targetId).get()) as any;
+      return c.json({ success: true, item: updated });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
 
   // DELETE /api/items/:id
-  async deleteItem(c: Context) {
+  async deleteItem(c: Context<AppEnv>) {
     try {
-      const id = c.req.param("id");
-      try {
-        const db = getDb();
-        db.prepare(`DELETE FROM items WHERE id = ?`).run(id);
-      } catch (dbErr) {
-        console.warn("Could not delete item from SQLite:", dbErr);
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
       }
 
-      itemsStore = itemsStore.filter((i) => i.id !== id);
+      const id = c.req.param("id");
+      const db = getUniversalDb(c.env?.DB);
+
+      const res = await db
+        .prepare(`DELETE FROM items WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .run();
+
+      if (res.changes === 0) {
+        return c.json({ success: false, message: "Item not found in this organization" }, 404);
+      }
+
       return c.json({ success: true, message: "Item deleted successfully" });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
@@ -259,7 +304,7 @@ export const itemsController = {
   },
 
   // POST /api/items/:id/like
-  async toggleLike(c: Context) {
+  async toggleLike(c: Context<AppEnv>) {
     const id = c.req.param("id");
     return c.json({ success: true, id, isLiked: true });
   },

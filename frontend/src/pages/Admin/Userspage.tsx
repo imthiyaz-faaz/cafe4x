@@ -43,19 +43,19 @@ export default function UsersPage() {
 
   const [users, setUsers] = useState<UserItem[]>([]);
 
-  // Load users from backend on mount and sync
+  // Load users from backend on mount or organization switch
   useEffect(() => {
     userApi.getUsers(undefined, currentShortCode || undefined)
       .then((serverUsers) => {
         if (Array.isArray(serverUsers)) {
-          const scoped = currentShortCode
-            ? serverUsers.filter((u: any) => (u.shortCode || "").toUpperCase() === currentShortCode)
-            : serverUsers;
-          setUsers(scoped as UserItem[]);
+          setUsers(serverUsers as UserItem[]);
+        } else {
+          setUsers([]);
         }
       })
       .catch((err) => {
         console.warn("Could not fetch users from server:", err);
+        setUsers([]);
       });
   }, [currentShortCode]);
 

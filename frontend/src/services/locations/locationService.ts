@@ -2,6 +2,7 @@ import { api } from "../apiClient";
 
 export interface LocationItem {
   id: string;
+  displayId?: string;
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;
@@ -13,6 +14,16 @@ export interface LocationItem {
   organizationId?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface SeatItem {
+  id: string;
+  displayId?: string;
+  locationId?: string;
+  organizationId?: string;
+  number: string;
+  employee?: string;
+  orderUrl?: string;
 }
 
 export interface GetLocationsParams {
@@ -79,6 +90,16 @@ export const locationApi = {
 
   async deleteLocation(id: string): Promise<void> {
     await api.delete<{ success: boolean }>(`/api/locations/${id}`);
+  },
+
+  async getSeats(locationId: string): Promise<SeatItem[]> {
+    const res = await api.get<{ success: boolean; seats: SeatItem[] }>(`/api/locations/${locationId}/seats`);
+    return res.seats || [];
+  },
+
+  async saveSeat(locationId: string, seat: Partial<SeatItem>): Promise<SeatItem> {
+    const res = await api.post<{ success: boolean; seat: SeatItem }>(`/api/locations/${locationId}/seats`, seat);
+    return res.seat;
   },
 };
 

@@ -10,6 +10,7 @@ export type OrderStatus = "Pending" | "Preparing" | "Ready" | "Delivered" | "Can
 
 export interface ProviderOrder {
   id: string;
+  displayId?: string;
   seat: string;
   locationName: string;
   locationId?: string;

@@ -2,6 +2,7 @@ import { api } from "../apiClient";
 
 export interface UserItem {
   id: string;
+  displayId?: string;
   name: string;
   userName: string;
   password?: string;

@@ -52,7 +52,7 @@ export default function Itemspage() {
     } catch { }
   };
 
-  // Fetch items from backend and keep synced
+  // Fetch items from backend on mount or organization switch
   useEffect(() => {
     let isMounted = true;
     itemsApi
@@ -64,17 +64,13 @@ export default function Itemspage() {
           try {
             localStorage.setItem(storageKey, JSON.stringify(serverItems));
           } catch { }
+        } else {
+          setItems([]);
         }
       })
       .catch((err) => {
-        console.warn("Could not fetch items from backend, using local cache:", err);
-        try {
-          const stored = localStorage.getItem(storageKey);
-          if (stored && isMounted) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) setItems(parsed);
-          }
-        } catch { }
+        console.warn("Could not fetch items from backend:", err);
+        setItems([]);
       });
 
     return () => {

@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import { AppEnv } from './types'
 
 import authRoutes from './routes/auth.routes'
 import itemsRoutes from './routes/items.routes'
@@ -10,7 +11,7 @@ import providerRoutes from './routes/provider.routes'
 import userRoutes from './routes/user.routes'
 import workingHoursRoutes from './routes/working-hours.routes'
 
-const app = new Hono()
+const app = new Hono<AppEnv>()
 
 app.use('*', cors())
 
@@ -22,9 +23,6 @@ app.route('/api/locations', locationRoutes)
 app.route('/api/orders', orderRoutes)
 app.route('/api/provider', providerRoutes)
 app.route('/api/working-hours', workingHoursRoutes)
-
-
-
 
 app.get('/', (c) => {
   return c.text('Hello Cafe4x Backend!')

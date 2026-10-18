@@ -2,6 +2,7 @@ import { api } from "../apiClient";
 
 export interface MenuItem {
   id: string;
+  displayId?: string;
   name: string;
   description: string;
   image: string;

@@ -42,7 +42,7 @@ interface SeatItem {
 export default function LocationPage() {
   const params = useParams();
   const urlShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
-  const [effectiveShortCode] = useState<string>(() => {
+  const currentShortCode = useMemo(() => {
     if (urlShortCode) return urlShortCode;
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
@@ -51,10 +51,9 @@ export default function LocationPage() {
         if (u.shortCode) return u.shortCode.toUpperCase();
       }
     } catch { }
-    return "FTS";
-  });
+    return "";
+  }, [urlShortCode]);
 
-  const currentShortCode = urlShortCode || effectiveShortCode || "FTS";
   const locStorageKey = currentShortCode ? `cafe4x_locations_${currentShortCode}` : "cafe4x_locations";
   const seatsStorageKey = currentShortCode ? `cafe4x_seatsByLoc_${currentShortCode}` : "cafe4x_seatsByLoc";
 
@@ -120,7 +119,7 @@ export default function LocationPage() {
   // Assign Provider Modal State
   const [assignModalLoc, setAssignModalLoc] = useState<LocationItem | null>(null);
 
-  // Fetch from backend on mount and sync to local state
+  // Fetch from backend on mount or organization switch and sync to local state
   useEffect(() => {
     let isMounted = true;
     locationApi.getLocations(undefined, currentShortCode || undefined)
@@ -134,20 +133,14 @@ export default function LocationPage() {
         }
       })
       .catch((err) => {
-        console.warn("Could not fetch locations from server, using local storage:", err);
-        try {
-          const stored = localStorage.getItem(locStorageKey);
-          if (stored && isMounted) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) setLocations(parsed);
-          }
-        } catch { }
+        console.warn("Could not fetch locations from server:", err);
+        setLocations([]);
       });
 
     return () => {
       isMounted = false;
     };
-  }, [locStorageKey]);
+  }, [locStorageKey, currentShortCode]);
 
   const saveLocations = (newLocs: LocationItem[]) => {
     // 1. Always store locally in state and localStorage immediately

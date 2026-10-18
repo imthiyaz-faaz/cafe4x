@@ -138,34 +138,16 @@ export default function OrdersPage() {
             };
           });
 
-          if (isNewOrg) {
-            // For newly created organizations, only show orders if they belong to this org's storage or location
-            try {
-              const stored = localStorage.getItem(ordersStorageKey);
-              if (stored) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed)) setOrders(parsed);
-              } else {
-                setOrders([]);
-              }
-            } catch { }
-            return;
-          }
-
           setOrders(mapped);
           try {
             localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
           } catch { }
+        } else {
+          setOrders([]);
         }
       })
       .catch(() => {
-        try {
-          const stored = localStorage.getItem(ordersStorageKey);
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) setOrders(parsed);
-          }
-        } catch { }
+        setOrders([]);
       });
   };
 

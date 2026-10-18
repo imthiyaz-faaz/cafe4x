@@ -22,6 +22,11 @@ import {
   Inbox,
   ChevronDown,
   ChevronUp,
+  CheckSquare,
+  Square,
+  Edit3,
+  Trash2,
+  AlertCircle,
 } from "lucide-react";
 import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
@@ -32,8 +37,6 @@ import cancelledOrdersImg from "../../assets/images/cancelled_4k.png";
 import deliveredOrdersImg from "../../assets/images/delivered_4k.png";
 import allOrdersImg from "../../assets/images/all_orders_4k.png";
 import { orderApi } from "../../services/orders";
-
-
 
 const OFFICE_IMG =
   "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80";
@@ -52,13 +55,19 @@ export interface ProviderLocation {
 
 export interface ProviderOrder {
   id: string;
+  displayId?: string;
   seat: string;
+  locationId?: string;
   locationName: string;
   employeeName: string;
-  items: { name: string; qty: number; price: number }[];
+  items: { name: string; qty: number; price: number; preference?: string }[];
+  subtotal?: number;
+  adjustmentAmount?: number;
+  discount?: number;
   total: number;
   time: string;
   status: "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";
+  notes?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -89,10 +98,41 @@ export default function ProviderPage() {
   const [categorySearch, setCategorySearch] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
+  // Category Queue pagination
+  const [categoryPage, setCategoryPage] = useState(1);
+  const [categoryPageSize, setCategoryPageSize] = useState(12);
+
+  // Pending Orders tab pagination
+  const [pendingPage, setPendingPage] = useState(1);
+  const [pendingPageSize, setPendingPageSize] = useState(6);
+
   // Delivered Summary Modal & expanded item details
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [expandedSummaryItems, setExpandedSummaryItems] = useState<Record<string, boolean>>({});
   const [itemImagesMap, setItemImagesMap] = useState<Record<string, string>>({});
+
+  // Today's Pending Summary Modal & Bulk Actions
+  const [isPendingSummaryModalOpen, setIsPendingSummaryModalOpen] = useState(false);
+  const [selectedPendingOrderIds, setSelectedPendingOrderIds] = useState<string[]>([]);
+  const [bulkActionConfirm, setBulkActionConfirm] = useState<{ action: "Delivered" | "Canceled"; count: number } | null>(null);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+
+  // Individual Order Update/Edit Modal
+  const [editingOrder, setEditingOrder] = useState<ProviderOrder | null>(null);
+  const [editAdjustmentAmount, setEditAdjustmentAmount] = useState<string>("0");
+  const [editDiscount, setEditDiscount] = useState<string>("0");
+  const [editSeat, setEditSeat] = useState<string>("");
+  const [editNotes, setEditNotes] = useState<string>("");
+  const [editStatus, setEditStatus] = useState<ProviderOrder["status"]>("Pending");
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+  // Individual Order Cancel Confirmation
+  const [cancelConfirmOrder, setCancelConfirmOrder] = useState<ProviderOrder | null>(null);
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false);
+
+  // Inline adjustment state in right sidebar workspace
+  const [inlineAdjustment, setInlineAdjustment] = useState<string>("0");
+  const [isSavingAdjustment, setIsSavingAdjustment] = useState(false);
 
   // Pending Orders Session Filter: "all" | "morning" | "evening"
   const [pendingSessionFilter, setPendingSessionFilter] = useState<"all" | "morning" | "evening">("all");
@@ -311,46 +351,67 @@ export default function ProviderPage() {
     });
   }, [currentUser]);
 
-  // Sync locations: use backend fetched locations assigned to provider
+  // Helper to test if an order matches a location (by id or by name, including default Office)
+  const isOrderInLocation = (order: ProviderOrder, loc: ProviderLocation) => {
+    if (order.locationId && String(order.locationId) === String(loc.id)) return true;
+    if (order.locationName && loc.name && order.locationName.trim().toLowerCase() === loc.name.trim().toLowerCase()) return true;
+    if (order.locationName?.trim().toLowerCase() === "office" && loc.name?.trim().toLowerCase() === "office") return true;
+    return false;
+  };
+
+  // Sync locations: use backend fetched locations assigned to provider, computing pending order badge counts
   const locations = useMemo(() => {
+    let baseList: ProviderLocation[] = [];
     if (serverLocations.length > 0) {
-      return serverLocations;
-    }
-
-    let locList: ProviderLocation[] = [];
-    try {
-      const stored = localStorage.getItem("cafe4x_locations");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          locList = parsed.map((loc: any, idx: number) => ({
-            id: String(loc.id || idx),
-            name: loc.name || "Location",
-            badgeCount: loc.totalSeats || 12,
-            isRedBadge: idx % 2 === 1,
-            image: loc.image || OFFICE_IMG,
-            totalSeats: loc.totalSeats || 12,
-            assignedProviderId: loc.assignedProviderId,
-            assignedProviderEmail: loc.assignedProviderEmail,
-            assignedProviderName: loc.assignedProviderName,
-          }));
+      baseList = serverLocations;
+    } else {
+      try {
+        const stored = localStorage.getItem("cafe4x_locations");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            baseList = parsed.map((loc: any, idx: number) => ({
+              id: String(loc.id || idx),
+              name: loc.name || "Location",
+              isRedBadge: idx % 2 === 1,
+              image: loc.image || OFFICE_IMG,
+              totalSeats: loc.totalSeats || 12,
+              assignedProviderId: loc.assignedProviderId,
+              assignedProviderEmail: loc.assignedProviderEmail,
+              assignedProviderName: loc.assignedProviderName,
+            }));
+          }
         }
+      } catch { }
+
+      if (currentUser && currentUser.userType === "Provider") {
+        const providerId = currentUser.id ? String(currentUser.id) : "";
+        const providerEmail = currentUser.email ? currentUser.email.toLowerCase() : "";
+
+        baseList = baseList.filter(
+          (loc) =>
+            (providerId && String(loc.assignedProviderId) === providerId) ||
+            (providerEmail && loc.assignedProviderEmail?.toLowerCase() === providerEmail)
+        );
       }
-    } catch { }
-
-    if (currentUser && currentUser.userType === "Provider") {
-      const providerId = currentUser.id ? String(currentUser.id) : "";
-      const providerEmail = currentUser.email ? currentUser.email.toLowerCase() : "";
-
-      return locList.filter(
-        (loc) =>
-          (providerId && String(loc.assignedProviderId) === providerId) ||
-          (providerEmail && loc.assignedProviderEmail?.toLowerCase() === providerEmail)
-      );
     }
 
-    return locList;
-  }, [serverLocations, currentUser]);
+    // Accurately compute badgeCount for each location based on actual pending orders for today
+    return baseList.map((loc, idx) => {
+      const pendingCount = orders.filter((o) => {
+        const isPendingStatus = o.status === "Pending" || o.status === "Preparing" || o.status === "Ready";
+        if (!isPendingStatus) return false;
+        if (!isOrderFromToday(o)) return false;
+        return isOrderInLocation(o, loc);
+      }).length;
+
+      return {
+        ...loc,
+        badgeCount: pendingCount,
+        isRedBadge: pendingCount > 0 ? (idx % 2 === 1) : false,
+      };
+    });
+  }, [serverLocations, currentUser, orders, todayDateString]);
 
 
   // Filter locations
@@ -369,15 +430,158 @@ export default function ProviderPage() {
   }, [filteredLocations, validCurrentPage, pageSize]);
 
   // Pending orders count
-  const pendingOrdersCount = orders.filter((o) => o.status === "Pending").length;
+  const pendingOrdersCount = orders.filter((o) => {
+    return (o.status === "Pending" || o.status === "Preparing" || o.status === "Ready") && isOrderFromToday(o);
+  }).length;
 
   const handleUpdateOrderStatus = (orderId: string, nextStatus: ProviderOrder["status"]) => {
-    const updated = orders.map((o) => (o.id === orderId ? { ...o, status: nextStatus } : o));
+    const updated = orders.map((o) => (o.id === orderId ? { ...o, status: nextStatus, updatedAt: new Date().toISOString() } : o));
     saveOrders(updated);
 
     orderApi.updateStatus(orderId, nextStatus).catch((err) => {
       console.warn("Could not sync order status to backend:", err);
     });
+  };
+
+  // Save inline adjustment for the active order in the right sidebar workspace
+  const handleSaveInlineAdjustment = async (activeOrder: ProviderOrder) => {
+    const adjNum = parseFloat(inlineAdjustment);
+    if (isNaN(adjNum)) {
+      alert("Please enter a valid numeric adjustment amount (e.g. 10 or -10)");
+      return;
+    }
+    const subtotal = activeOrder.subtotal !== undefined
+      ? activeOrder.subtotal
+      : (activeOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || activeOrder.total);
+    const discount = Number(activeOrder.discount) || 0;
+    const newTotal = Math.max(0, subtotal + adjNum - discount);
+
+    setIsSavingAdjustment(true);
+    try {
+      await orderApi.updateOrder(activeOrder.id, {
+        adjustmentAmount: adjNum,
+        total: newTotal,
+      });
+
+      const nextOrders = orders.map((o) => (o.id === activeOrder.id ? { ...o, adjustmentAmount: adjNum, total: newTotal, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+    } catch (err: any) {
+      console.error("Failed to save adjustment:", err);
+      // Fallback update locally
+      const nextOrders = orders.map((o) => (o.id === activeOrder.id ? { ...o, adjustmentAmount: adjNum, total: newTotal, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+    } finally {
+      setIsSavingAdjustment(false);
+    }
+  };
+
+  // Open Edit/Update Modal for an order
+  const handleOpenEditOrder = (order: ProviderOrder) => {
+    setEditingOrder(order);
+    setEditAdjustmentAmount(String(order.adjustmentAmount !== undefined ? order.adjustmentAmount : 0));
+    setEditDiscount(String(order.discount !== undefined ? order.discount : 0));
+    setEditSeat(order.seat || "");
+    setEditNotes(order.notes || "");
+    setEditStatus(order.status || "Pending");
+  };
+
+  // Save Edit/Update Modal changes
+  const handleSaveOrderEdit = async () => {
+    if (!editingOrder) return;
+    const adj = parseFloat(editAdjustmentAmount);
+    const disc = parseFloat(editDiscount);
+    if (isNaN(adj)) {
+      alert("Please enter a valid adjustment amount.");
+      return;
+    }
+    if (isNaN(disc) || disc < 0) {
+      alert("Please enter a valid discount amount (0 or positive).");
+      return;
+    }
+
+    const subtotal = editingOrder.subtotal !== undefined
+      ? editingOrder.subtotal
+      : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total);
+    const calculatedTotal = Math.max(0, subtotal + adj - disc);
+
+    setIsSavingEdit(true);
+    try {
+      await orderApi.updateOrder(editingOrder.id, {
+        adjustmentAmount: adj,
+        discount: disc,
+        total: calculatedTotal,
+        seat: editSeat.trim() || editingOrder.seat,
+        notes: editNotes.trim(),
+        status: editStatus,
+      });
+
+      const nextOrders = orders.map((o) => {
+        if (o.id === editingOrder.id) {
+          return {
+            ...o,
+            adjustmentAmount: adj,
+            discount: disc,
+            total: calculatedTotal,
+            seat: editSeat.trim() || editingOrder.seat,
+            notes: editNotes.trim(),
+            status: editStatus,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return o;
+      });
+      saveOrders(nextOrders);
+      setEditingOrder(null);
+    } catch (err: any) {
+      console.error("Failed to update order:", err);
+      alert("Failed to update order in database: " + (err.message || "Unknown error"));
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // Execute Individual Cancel
+  const handleConfirmCancelOrder = async () => {
+    if (!cancelConfirmOrder) return;
+    setIsCancellingOrder(true);
+    try {
+      await orderApi.updateStatus(cancelConfirmOrder.id, "Canceled");
+      const nextOrders = orders.map((o) => (o.id === cancelConfirmOrder.id ? { ...o, status: "Canceled" as const, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+      setCancelConfirmOrder(null);
+    } catch (err: any) {
+      console.error("Failed to cancel order:", err);
+      // Fallback update
+      const nextOrders = orders.map((o) => (o.id === cancelConfirmOrder.id ? { ...o, status: "Canceled" as const, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+      setCancelConfirmOrder(null);
+    } finally {
+      setIsCancellingOrder(false);
+    }
+  };
+
+  // Execute Bulk Action (Delivered or Canceled)
+  const handleExecuteBulkAction = async () => {
+    if (!bulkActionConfirm || selectedPendingOrderIds.length === 0) return;
+    const targetStatus = bulkActionConfirm.action;
+    setIsBulkUpdating(true);
+    try {
+      await orderApi.bulkUpdateStatus(selectedPendingOrderIds, targetStatus);
+      const idSet = new Set(selectedPendingOrderIds);
+      const nextOrders = orders.map((o) => (idSet.has(o.id) ? { ...o, status: targetStatus, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+      setSelectedPendingOrderIds([]);
+      setBulkActionConfirm(null);
+    } catch (err: any) {
+      console.error("Bulk update failed:", err);
+      const idSet = new Set(selectedPendingOrderIds);
+      const nextOrders = orders.map((o) => (idSet.has(o.id) ? { ...o, status: targetStatus, updatedAt: new Date().toISOString() } : o));
+      saveOrders(nextOrders);
+      setSelectedPendingOrderIds([]);
+      setBulkActionConfirm(null);
+    } finally {
+      setIsBulkUpdating(false);
+    }
   };
 
 
@@ -709,6 +913,21 @@ export default function ProviderPage() {
                       </button>
                     )}
 
+                    {/* Today's Pending Summary Button */}
+                    {(selectedCategory === "pending" || selectedCategory === "all") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedPendingOrderIds([]);
+                          setIsPendingSummaryModalOpen(true);
+                        }}
+                        className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#007BFF] to-[#0056b3] px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:opacity-95 hover:-translate-y-0.5 cursor-pointer"
+                      >
+                        <PieChart size={16} />
+                        <span>Today's Pending Summary</span>
+                      </button>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setSelectedCategory(null)}
@@ -781,9 +1000,18 @@ export default function ProviderPage() {
                     );
                   }
 
+                  // Dynamic Category Queue Pagination
+                  const catTotalRecords = filtered.length;
+                  const catTotalPages = Math.max(1, Math.ceil(catTotalRecords / categoryPageSize));
+                  const catValidPage = Math.min(Math.max(1, categoryPage), catTotalPages);
+                  const catPaginatedOrders = filtered.slice(
+                    (catValidPage - 1) * categoryPageSize,
+                    catValidPage * categoryPageSize
+                  );
+
                   // Default selected order if none clicked yet or invalid
                   const activeOrder =
-                    filtered.find((o) => o.id === selectedOrderId) || filtered[0];
+                    filtered.find((o) => o.id === selectedOrderId) || catPaginatedOrders[0] || filtered[0];
 
                   return (
                     <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -802,7 +1030,7 @@ export default function ProviderPage() {
 
                         {/* Scrollable list of orders */}
                         <div className="divide-y divide-[#F0E6DB] max-h-[600px] overflow-y-auto">
-                          {filtered.map((order) => {
+                          {catPaginatedOrders.map((order) => {
                             const isSelected = activeOrder?.id === order.id;
                             // Clean display name: first word e.g. "Imthiyaz", "Rizwan"
                             const shortName = order.employeeName.split(" ")[0].split("@")[0];
@@ -887,24 +1115,72 @@ export default function ProviderPage() {
 
                         {/* Bottom pagination matching screenshot: 12 < 1 of 1 > Total Records: X */}
                         <div className="flex items-center justify-between border-t border-[#F0E6DB] bg-[#FAF8F5] px-4 py-2.5 text-xs text-[#70523E]">
-                          <div className="flex items-center gap-2">
-                            <span className="rounded border border-stone-300 bg-white px-2 py-0.5 font-medium">
-                              12 ▼
+                          <div className="flex items-center gap-1.5">
+                            {/* Page Size Dropdown */}
+                            <select
+                              value={categoryPageSize}
+                              onChange={(e) => {
+                                setCategoryPageSize(Number(e.target.value));
+                                setCategoryPage(1);
+                              }}
+                              className="rounded border border-stone-300 bg-white px-1.5 py-0.5 font-medium text-xs text-[#70523E] outline-none"
+                            >
+                              <option value={6}>6</option>
+                              <option value={12}>12</option>
+                              <option value={24}>24</option>
+                            </select>
+
+                            {/* First Page */}
+                            <button
+                              type="button"
+                              disabled={catValidPage <= 1}
+                              onClick={() => setCategoryPage(1)}
+                              className="cursor-pointer font-bold px-1 text-stone-700 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              &laquo;
+                            </button>
+
+                            {/* Prev Page */}
+                            <button
+                              type="button"
+                              disabled={catValidPage <= 1}
+                              onClick={() => setCategoryPage((p) => Math.max(1, p - 1))}
+                              className="cursor-pointer font-bold px-1 text-stone-700 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              &lsaquo;
+                            </button>
+
+                            {/* Current Page */}
+                            <span className="rounded border border-stone-300 bg-white px-2 py-0.5 font-bold min-w-[24px] text-center">
+                              {catValidPage}
                             </span>
-                            <span className="cursor-pointer font-bold">&laquo;</span>
-                            <span className="cursor-pointer font-bold">&lsaquo;</span>
-                            <span className="rounded border border-stone-300 bg-white px-2 py-0.5 font-bold">
-                              1
-                            </span>
-                            <span>of 1</span>
-                            <span className="cursor-pointer font-bold">&rsaquo;</span>
-                            <span className="cursor-pointer font-bold">&raquo;</span>
+                            <span>of {catTotalPages}</span>
+
+                            {/* Next Page */}
+                            <button
+                              type="button"
+                              disabled={catValidPage >= catTotalPages}
+                              onClick={() => setCategoryPage((p) => Math.min(catTotalPages, p + 1))}
+                              className="cursor-pointer font-bold px-1 text-stone-700 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              &rsaquo;
+                            </button>
+
+                            {/* Last Page */}
+                            <button
+                              type="button"
+                              disabled={catValidPage >= catTotalPages}
+                              onClick={() => setCategoryPage(catTotalPages)}
+                              className="cursor-pointer font-bold px-1 text-stone-700 hover:text-black disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                              &raquo;
+                            </button>
                           </div>
 
                           <div className="flex items-center gap-1.5 font-medium italic">
                             <span>Total Records:</span>
                             <span className="rounded bg-[#007BFF] px-2 py-0.5 not-italic font-bold text-white">
-                              {filtered.length}
+                              {catTotalRecords}
                             </span>
                           </div>
                         </div>
@@ -1006,61 +1282,173 @@ export default function ProviderPage() {
                                   </div>
                                 )}
 
+                                {/* Financial Breakdown: Original Amount, Adjustment, Discount, Final Net Amount */}
+                                {(() => {
+                                  const subtotal = activeOrder.subtotal !== undefined
+                                    ? activeOrder.subtotal
+                                    : (activeOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || activeOrder.total);
+                                  const currentAdj = activeOrder.adjustmentAmount !== undefined ? activeOrder.adjustmentAmount : 0;
+                                  const discount = Number(activeOrder.discount) || 0;
+                                  const netTotal = activeOrder.total !== undefined ? activeOrder.total : Math.max(0, subtotal + currentAdj - discount);
+
+                                  return (
+                                    <div className="mt-5 rounded-2xl border border-[#DEC5B0] bg-[#FAF8F5] p-4 text-xs">
+                                      <div className="flex items-center justify-between border-b border-[#EFE5DC] pb-2 font-bold uppercase tracking-wider text-[#754329]">
+                                        <span>Order Financial Breakdown</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenEditOrder(activeOrder)}
+                                          className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 hover:underline cursor-pointer"
+                                        >
+                                          <Edit3 size={12} />
+                                          <span>Edit All Details</span>
+                                        </button>
+                                      </div>
+
+                                      <div className="divide-y divide-[#F0E6DB] pt-2">
+                                        <div className="flex items-center justify-between py-1.5 text-stone-700">
+                                          <span>Original Amount (Subtotal)</span>
+                                          <span className="font-semibold">₹ {subtotal.toFixed(2)}</span>
+                                        </div>
+
+                                        {/* Adjustment Amount Row with inline update */}
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between py-2 text-stone-700 gap-2">
+                                          <div className="flex items-center gap-1.5">
+                                            <span>Adjustment Amount</span>
+                                            <span className="text-[10px] text-stone-500">(+ or -)</span>
+                                          </div>
+                                          <div className="flex items-center gap-2">
+                                            {activeOrder.status === "Pending" || activeOrder.status === "Preparing" || activeOrder.status === "Ready" ? (
+                                              <div className="flex items-center gap-1.5">
+                                                <input
+                                                  type="number"
+                                                  step="any"
+                                                  value={inlineAdjustment}
+                                                  onChange={(e) => setInlineAdjustment(e.target.value)}
+                                                  placeholder="0"
+                                                  className="w-20 rounded-md border border-stone-300 bg-white px-2 py-0.5 text-xs text-right font-medium text-stone-800 outline-none focus:border-[#754329]"
+                                                />
+                                                <button
+                                                  type="button"
+                                                  disabled={isSavingAdjustment}
+                                                  onClick={() => handleSaveInlineAdjustment(activeOrder)}
+                                                  className="rounded bg-[#754329] px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs hover:bg-[#5f351f] disabled:opacity-50 cursor-pointer"
+                                                >
+                                                  {isSavingAdjustment ? "Saving..." : "Save"}
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <span className={`font-semibold ${currentAdj > 0 ? "text-emerald-700" : currentAdj < 0 ? "text-rose-700" : ""}`}>
+                                                {currentAdj >= 0 ? `+ ₹ ${currentAdj.toFixed(2)}` : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        <div className="flex items-center justify-between py-1.5 text-stone-700">
+                                          <span>Discount</span>
+                                          <span className="font-semibold text-rose-600">
+                                            {discount > 0 ? `- ₹ ${discount.toFixed(2)}` : "₹ 0.00"}
+                                          </span>
+                                        </div>
+
+                                        <div className="flex items-center justify-between pt-2 text-sm font-black text-[#342219]">
+                                          <span>Final Net Amount</span>
+                                          <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
+
                               </div>
                             </div>
 
                             {/* Action Buttons for Provider */}
-                            <div className="flex items-center justify-end gap-3 border-t border-[#F0E6DB] pt-4">
-                              {activeOrder.status === "Pending" && (
-                                <>
+                            <div className="flex items-center justify-between border-t border-[#F0E6DB] pt-4">
+                              <div>
+                                {(activeOrder.status === "Pending" || activeOrder.status === "Preparing" || activeOrder.status === "Ready") && (
                                   <button
                                     type="button"
-                                    onClick={() => handleUpdateOrderStatus(activeOrder.id, "Canceled")}
-                                    className="rounded-xl border border-rose-200 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 transition"
+                                    onClick={() => handleOpenEditOrder(activeOrder)}
+                                    className="inline-flex items-center gap-1.5 rounded-xl border border-stone-300 bg-stone-50 px-3 py-2 text-xs font-bold text-stone-700 hover:bg-stone-100 transition cursor-pointer"
                                   >
-                                    Decline Order
+                                    <Edit3 size={14} />
+                                    <span>Update Order</span>
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleUpdateOrderStatus(activeOrder.id, "Preparing")}
-                                    className="rounded-xl bg-[#754329] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
-                                  >
-                                    Start Preparing
-                                  </button>
-                                </>
-                              )}
+                                )}
+                              </div>
 
-                              {activeOrder.status === "Preparing" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateOrderStatus(activeOrder.id, "Ready")}
-                                  className="rounded-xl bg-[#28A745] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
-                                >
-                                  Mark Order Ready
-                                </button>
-                              )}
+                              <div className="flex items-center gap-3">
+                                {activeOrder.status === "Pending" && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCancelConfirmOrder(activeOrder)}
+                                      className="rounded-xl border border-rose-200 px-4 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                                    >
+                                      Cancel / Decline Order
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(activeOrder.id, "Preparing")}
+                                      className="rounded-xl bg-[#754329] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition cursor-pointer"
+                                    >
+                                      Start Preparing
+                                    </button>
+                                  </>
+                                )}
 
-                              {activeOrder.status === "Ready" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateOrderStatus(activeOrder.id, "Delivered")}
-                                  className="rounded-xl bg-[#007BFF] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition"
-                                >
-                                  Deliver to Seat {activeOrder.seat}
-                                </button>
-                              )}
+                                {activeOrder.status === "Preparing" && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCancelConfirmOrder(activeOrder)}
+                                      className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                                    >
+                                      Cancel Order
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(activeOrder.id, "Ready")}
+                                      className="rounded-xl bg-[#28A745] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition cursor-pointer"
+                                    >
+                                      Mark Order Ready
+                                    </button>
+                                  </>
+                                )}
 
-                              {activeOrder.status === "Delivered" && (
-                                <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
-                                  <CheckCircle2 size={16} /> Delivered to Seat {activeOrder.seat}
-                                </div>
-                              )}
+                                {activeOrder.status === "Ready" && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCancelConfirmOrder(activeOrder)}
+                                      className="rounded-xl border border-rose-200 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-50 transition cursor-pointer"
+                                    >
+                                      Cancel Order
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(activeOrder.id, "Delivered")}
+                                      className="rounded-xl bg-[#007BFF] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition cursor-pointer"
+                                    >
+                                      Deliver to Seat {activeOrder.seat}
+                                    </button>
+                                  </>
+                                )}
 
-                              {activeOrder.status === "Canceled" && (
-                                <div className="flex items-center gap-2 text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
-                                  <XCircle size={16} /> Order Canceled
-                                </div>
-                              )}
+                                {activeOrder.status === "Delivered" && (
+                                  <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
+                                    <CheckCircle2 size={16} /> Delivered to Seat {activeOrder.seat}
+                                  </div>
+                                )}
+
+                                {activeOrder.status === "Canceled" && (
+                                  <div className="flex items-center gap-2 text-xs font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl border border-rose-200">
+                                    <XCircle size={16} /> Order Canceled
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </div>
                         ) : (
@@ -1107,11 +1495,27 @@ export default function ProviderPage() {
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
+                    {/* Today's Pending Summary Button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPendingOrderIds([]);
+                        setIsPendingSummaryModalOpen(true);
+                      }}
+                      className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#007BFF] to-[#0056b3] px-4 py-2 text-xs font-bold text-white shadow-md shadow-blue-500/20 transition hover:opacity-95 hover:-translate-y-0.5 cursor-pointer"
+                    >
+                      <PieChart size={15} />
+                      <span>Today's Pending Summary</span>
+                    </button>
+
                     {/* Session Switcher Pills: All Today | Morning Session | Evening Session */}
                     <div className="flex items-center rounded-2xl bg-[#FAF8F5] p-1 border border-[#DEC5B0] shadow-xs">
                       <button
                         type="button"
-                        onClick={() => setPendingSessionFilter("all")}
+                        onClick={() => {
+                          setPendingSessionFilter("all");
+                          setPendingPage(1);
+                        }}
                         className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "all"
                             ? "bg-[#754329] text-white shadow-2xs"
                             : "text-[#70523E] hover:bg-white/80"
@@ -1123,7 +1527,10 @@ export default function ProviderPage() {
 
                       <button
                         type="button"
-                        onClick={() => setPendingSessionFilter("morning")}
+                        onClick={() => {
+                          setPendingSessionFilter("morning");
+                          setPendingPage(1);
+                        }}
                         className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "morning"
                             ? "bg-amber-600 text-white shadow-2xs"
                             : "text-[#70523E] hover:bg-white/80"
@@ -1135,7 +1542,10 @@ export default function ProviderPage() {
 
                       <button
                         type="button"
-                        onClick={() => setPendingSessionFilter("evening")}
+                        onClick={() => {
+                          setPendingSessionFilter("evening");
+                          setPendingPage(1);
+                        }}
                         className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition cursor-pointer ${pendingSessionFilter === "evening"
                             ? "bg-indigo-600 text-white shadow-2xs"
                             : "text-[#70523E] hover:bg-white/80"
@@ -1173,6 +1583,15 @@ export default function ProviderPage() {
                     return getOrderSession(o) === pendingSessionFilter;
                   });
 
+                  // Pagination for My Pending Orders
+                  const pTotalRecords = sessionFiltered.length;
+                  const pTotalPages = Math.max(1, Math.ceil(pTotalRecords / pendingPageSize));
+                  const pValidPage = Math.min(Math.max(1, pendingPage), pTotalPages);
+                  const pPaginatedOrders = sessionFiltered.slice(
+                    (pValidPage - 1) * pendingPageSize,
+                    pValidPage * pendingPageSize
+                  );
+
                   if (sessionFiltered.length === 0) {
                     return (
                       <div className="rounded-3xl border border-[#EEE5DC] bg-white/90 p-12 text-center shadow-xs">
@@ -1196,117 +1615,232 @@ export default function ProviderPage() {
                   }
 
                   return (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      {sessionFiltered.map((order) => {
-                        const session = getOrderSession(order);
-                        return (
-                          <div
-                            key={order.id}
-                            className="flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm transition hover:shadow-md"
-                          >
-                            <div>
-                              <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-mono text-sm font-bold text-[#70452D]">
-                                    {order.id}
-                                  </span>
-                                  <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
-                                    {order.locationName} &bull; Seat {order.seat}
-                                  </span>
-                                </div>
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                        {pPaginatedOrders.map((order) => {
+                          const session = getOrderSession(order);
+                          const subtotal = order.subtotal !== undefined
+                            ? order.subtotal
+                            : (order.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || order.total);
+                          const currentAdj = order.adjustmentAmount !== undefined ? order.adjustmentAmount : 0;
+                          const discount = Number(order.discount) || 0;
+                          const netTotal = order.total !== undefined ? order.total : Math.max(0, subtotal + currentAdj - discount);
 
-                                <div className="flex items-center gap-1.5">
-                                  {/* Session Badge */}
-                                  <span
-                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${session === "morning"
-                                        ? "bg-amber-100 text-amber-900 border border-amber-200"
-                                        : "bg-indigo-100 text-indigo-900 border border-indigo-200"
-                                      }`}
-                                  >
-                                    {session === "morning" ? <Sun size={10} /> : <Moon size={10} />}
-                                    {session === "morning" ? "Morning" : "Evening"}
-                                  </span>
-
-                                  <span
-                                    className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${order.status === "Pending"
-                                        ? "bg-amber-100 text-amber-800"
-                                        : order.status === "Preparing"
-                                          ? "bg-blue-100 text-blue-800"
-                                          : order.status === "Ready"
-                                            ? "bg-purple-100 text-purple-800"
-                                            : "bg-emerald-100 text-emerald-800"
-                                      }`}
-                                  >
-                                    {order.status}
-                                  </span>
-                                </div>
-                              </div>
-
-                              {/* Customer & Time */}
-                              <div className="mt-3 flex items-center justify-between text-xs text-[#897B71]">
-                                <span className="font-medium text-[#342219]">
-                                  Customer: {order.employeeName}
-                                </span>
-                                <span className="flex items-center gap-1 font-mono">
-                                  <Clock size={12} /> {getDisplayOrderTime(order)}
-                                </span>
-                              </div>
-
-                              {/* Order Items */}
-                              <div className="my-3 space-y-1.5 rounded-xl bg-[#FAF6F1] p-3 text-xs">
-                                {order.items.map((it, idx) => (
-                                  <div key={idx} className="flex justify-between font-medium text-[#342219]">
-                                    <span>
-                                      {it.name} &times; {it.qty}
+                          return (
+                            <div
+                              key={order.id}
+                              className="flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm transition hover:shadow-md"
+                            >
+                              <div>
+                                <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-mono text-sm font-bold text-[#70452D]">
+                                      {order.id}
                                     </span>
-                                    <span>₹{it.price * it.qty}</span>
+                                    <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
+                                      {order.locationName} &bull; Seat {order.seat}
+                                    </span>
                                   </div>
-                                ))}
-                                <div className="border-t border-[#E8DED4] pt-1.5 flex justify-between font-bold text-[#70452D]">
-                                  <span>Total</span>
-                                  <span>₹{order.total.toFixed(2)}</span>
+
+                                  <div className="flex items-center gap-1.5">
+                                    {/* Session Badge */}
+                                    <span
+                                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${session === "morning"
+                                          ? "bg-amber-100 text-amber-900 border border-amber-200"
+                                          : "bg-indigo-100 text-indigo-900 border border-indigo-200"
+                                        }`}
+                                    >
+                                      {session === "morning" ? <Sun size={10} /> : <Moon size={10} />}
+                                      {session === "morning" ? "Morning" : "Evening"}
+                                    </span>
+
+                                    <span
+                                      className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${order.status === "Pending"
+                                          ? "bg-amber-100 text-amber-800"
+                                          : order.status === "Preparing"
+                                            ? "bg-blue-100 text-blue-800"
+                                            : order.status === "Ready"
+                                              ? "bg-purple-100 text-purple-800"
+                                              : "bg-emerald-100 text-emerald-800"
+                                        }`}
+                                    >
+                                      {order.status}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Customer & Time */}
+                                <div className="mt-3 flex items-center justify-between text-xs text-[#897B71]">
+                                  <span className="font-medium text-[#342219]">
+                                    Customer: {order.employeeName}
+                                  </span>
+                                  <span className="flex items-center gap-1 font-mono">
+                                    <Clock size={12} /> {getDisplayOrderTime(order)}
+                                  </span>
+                                </div>
+
+                                {/* Order Items */}
+                                <div className="my-3 space-y-1.5 rounded-xl bg-[#FAF6F1] p-3 text-xs">
+                                  {order.items.map((it, idx) => (
+                                    <div key={idx} className="flex justify-between font-medium text-[#342219]">
+                                      <span>
+                                        {it.name} &times; {it.qty}
+                                      </span>
+                                      <span>₹{it.price * it.qty}</span>
+                                    </div>
+                                  ))}
+
+                                  {/* Financial Summary breakdown in card */}
+                                  <div className="border-t border-[#E8DED4] pt-2 mt-2 space-y-1 text-[11px] text-stone-600">
+                                    <div className="flex justify-between">
+                                      <span>Original Subtotal:</span>
+                                      <span className="font-medium">₹ {subtotal.toFixed(2)}</span>
+                                    </div>
+                                    {currentAdj !== 0 && (
+                                      <div className="flex justify-between text-amber-800">
+                                        <span>Adjustment:</span>
+                                        <span className="font-medium">
+                                          {currentAdj > 0 ? `+ ₹ ${currentAdj.toFixed(2)}` : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {discount > 0 && (
+                                      <div className="flex justify-between text-rose-700">
+                                        <span>Discount:</span>
+                                        <span className="font-medium">- ₹ {discount.toFixed(2)}</span>
+                                      </div>
+                                    )}
+                                    <div className="flex justify-between font-black text-sm text-[#70452D] pt-1 border-t border-[#E8DED4]">
+                                      <span>Net Amount:</span>
+                                      <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Action buttons */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[#F0E6DB] pt-3">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditOrder(order)}
+                                    title="Edit adjustment, discount, or details"
+                                    className="rounded-lg border border-stone-200 bg-stone-50 p-1.5 text-stone-700 hover:bg-stone-100 transition cursor-pointer"
+                                  >
+                                    <Edit3 size={13} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setCancelConfirmOrder(order)}
+                                    title="Cancel order"
+                                    className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-700 hover:bg-rose-100 transition cursor-pointer"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                  {order.status === "Pending" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(order.id, "Preparing")}
+                                      className="rounded-lg bg-[#70452D] px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#593A28] cursor-pointer"
+                                    >
+                                      Mark Preparing
+                                    </button>
+                                  )}
+                                  {order.status === "Preparing" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(order.id, "Ready")}
+                                      className="rounded-lg bg-[#28A745] px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#218838] cursor-pointer"
+                                    >
+                                      Mark Ready
+                                    </button>
+                                  )}
+                                  {order.status === "Ready" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUpdateOrderStatus(order.id, "Delivered")}
+                                      className="rounded-lg bg-[#007BFF] px-3 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#0069D9] cursor-pointer"
+                                    >
+                                      Mark Delivered
+                                    </button>
+                                  )}
+                                  {order.status === "Delivered" && (
+                                    <span className="flex items-center gap-1 text-xs font-bold text-emerald-600">
+                                      <CheckCircle2 size={14} /> Completed
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>
+                          );
+                        })}
+                      </div>
 
-                            {/* Action buttons */}
-                            <div className="flex items-center justify-end gap-2 border-t border-[#F0E6DB] pt-3">
-                              {order.status === "Pending" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateOrderStatus(order.id, "Preparing")}
-                                  className="rounded-lg bg-[#70452D] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#593A28] cursor-pointer"
-                                >
-                                  Mark Preparing
-                                </button>
-                              )}
-                              {order.status === "Preparing" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateOrderStatus(order.id, "Ready")}
-                                  className="rounded-lg bg-[#28A745] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#218838] cursor-pointer"
-                                >
-                                  Mark Ready
-                                </button>
-                              )}
-                              {order.status === "Ready" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleUpdateOrderStatus(order.id, "Delivered")}
-                                  className="rounded-lg bg-[#007BFF] px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#0069D9] cursor-pointer"
-                                >
-                                  Mark Delivered
-                                </button>
-                              )}
-                              {order.status === "Delivered" && (
-                                <span className="flex items-center gap-1 text-xs font-bold text-emerald-600">
-                                  <CheckCircle2 size={14} /> Completed
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {/* Pagination Bar for My Pending Orders */}
+                      <div className="flex items-center justify-between border-t border-[#E8DED4] bg-white rounded-2xl px-5 py-3 shadow-sm text-xs text-[#70523E]">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-stone-600">Per page:</span>
+                          <select
+                            value={pendingPageSize}
+                            onChange={(e) => {
+                              setPendingPageSize(Number(e.target.value));
+                              setPendingPage(1);
+                            }}
+                            className="rounded-md border border-stone-300 bg-white px-2 py-1 font-medium text-xs text-[#70523E] outline-none"
+                          >
+                            <option value={6}>6</option>
+                            <option value={12}>12</option>
+                            <option value={24}>24</option>
+                          </select>
+
+                          <button
+                            type="button"
+                            disabled={pValidPage <= 1}
+                            onClick={() => setPendingPage(1)}
+                            className="cursor-pointer font-bold px-1.5 py-0.5 rounded hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            &laquo;
+                          </button>
+                          <button
+                            type="button"
+                            disabled={pValidPage <= 1}
+                            onClick={() => setPendingPage((p) => Math.max(1, p - 1))}
+                            className="cursor-pointer font-bold px-1.5 py-0.5 rounded hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            &lsaquo;
+                          </button>
+                          <span className="rounded border border-stone-300 bg-white px-2.5 py-1 font-bold">
+                            {pValidPage}
+                          </span>
+                          <span>of {pTotalPages}</span>
+                          <button
+                            type="button"
+                            disabled={pValidPage >= pTotalPages}
+                            onClick={() => setPendingPage((p) => Math.min(pTotalPages, p + 1))}
+                            className="cursor-pointer font-bold px-1.5 py-0.5 rounded hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            &rsaquo;
+                          </button>
+                          <button
+                            type="button"
+                            disabled={pValidPage >= pTotalPages}
+                            onClick={() => setPendingPage(pTotalPages)}
+                            className="cursor-pointer font-bold px-1.5 py-0.5 rounded hover:bg-stone-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                          >
+                            &raquo;
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 font-medium italic">
+                          <span>Total Pending Records:</span>
+                          <span className="rounded bg-[#007BFF] px-2 py-0.5 not-italic font-bold text-white">
+                            {pTotalRecords}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   );
                 })()}
@@ -1443,8 +1977,8 @@ export default function ProviderPage() {
                     {/* Table Header matching user screenshot */}
                     <div className="grid grid-cols-12 border-b border-gray-200 bg-gray-50/70 px-6 py-3 text-xs font-bold text-gray-700">
                       <div className="col-span-6">Item</div>
-                      <div className="col-span-3 text-center">Quantity Sold</div>
-                      <div className="col-span-3 text-right">Total Amount</div>
+                      <div className="col-span-3 text-center">Quantity</div>
+                      <div className="col-span-3 text-right">Amount</div>
                     </div>
 
                     {/* Table Content */}
@@ -1608,6 +2142,611 @@ export default function ProviderPage() {
                   </div>
                 );
               })()}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            TODAY'S PENDING SUMMARY MODAL (WITH BULK & INDIVIDUAL ACTIONS)
+           ======================================================== */}
+        {isPendingSummaryModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="relative w-full max-w-4xl overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="flex items-center justify-between bg-gradient-to-r from-[#7D533D] to-[#593A28] px-6 py-4 text-white shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <PieChart size={20} className="text-amber-300" />
+                  <div>
+                    <h3 className="text-base font-bold text-white tracking-wide">
+                      Today's Pending Summary
+                    </h3>
+                    <p className="text-[11px] text-amber-100/80">
+                      Active orders awaiting completion {selectedLocation ? `for ${selectedLocation.name}` : "across assigned locations"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsPendingSummaryModalOpen(false)}
+                  className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white transition cursor-pointer"
+                  title="Close"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Aggregation & Content */}
+              {(() => {
+                // Filter actual pending orders for today
+                const pendingTodayOrders = orders.filter((o) => {
+                  const isPending = o.status === "Pending" || o.status === "Preparing" || o.status === "Ready";
+                  if (!isPending) return false;
+                  if (!isOrderFromToday(o)) return false;
+                  if (selectedLocation) {
+                    return isOrderInLocation(o, selectedLocation);
+                  }
+                  return true;
+                });
+
+                const allPendingIds = pendingTodayOrders.map((o) => o.id);
+                const isAllSelected = allPendingIds.length > 0 && selectedPendingOrderIds.length === allPendingIds.length;
+
+                const toggleSelectAll = () => {
+                  if (isAllSelected) {
+                    setSelectedPendingOrderIds([]);
+                  } else {
+                    setSelectedPendingOrderIds([...allPendingIds]);
+                  }
+                };
+
+                const toggleSelectOne = (id: string) => {
+                  if (selectedPendingOrderIds.includes(id)) {
+                    setSelectedPendingOrderIds(selectedPendingOrderIds.filter((x) => x !== id));
+                  } else {
+                    setSelectedPendingOrderIds([...selectedPendingOrderIds, id]);
+                  }
+                };
+
+                // Aggregated items for Pending Summary
+                interface PendingOrderDetailRow {
+                  order: ProviderOrder;
+                  qty: number;
+                  amount: number;
+                  preferenceText: string;
+                }
+
+                interface AggregatedPendingItem {
+                  name: string;
+                  image: string;
+                  qty: number;
+                  totalAmount: number;
+                  orders: PendingOrderDetailRow[];
+                }
+
+                const pendingItemMap: Record<string, AggregatedPendingItem> = {};
+                let grandPendingQty = 0;
+                let grandPendingAmount = 0;
+
+                pendingTodayOrders.forEach((o) => {
+                  o.items.forEach((it) => {
+                    let baseName = it.name || "Item";
+                    let pref = "";
+                    if (baseName.includes("(") && baseName.includes(")")) {
+                      const match = baseName.match(/^(.*?)\s*\((.*?)\)$/);
+                      if (match) {
+                        baseName = match[1].trim();
+                        pref = match[2].trim();
+                      }
+                    }
+
+                    const normalizedKey = baseName.toLowerCase().trim();
+                    const itemImg = itemImagesMap[normalizedKey] || "";
+
+                    if (!pendingItemMap[baseName]) {
+                      pendingItemMap[baseName] = {
+                        name: baseName,
+                        image: itemImg,
+                        qty: 0,
+                        totalAmount: 0,
+                        orders: [],
+                      };
+                    }
+
+                    const lineQty = Number(it.qty) || 0;
+                    const lineTotal = lineQty * (Number(it.price) || 0);
+
+                    pendingItemMap[baseName].qty += lineQty;
+                    pendingItemMap[baseName].totalAmount += lineTotal;
+                    if (!pendingItemMap[baseName].image && itemImg) {
+                      pendingItemMap[baseName].image = itemImg;
+                    }
+
+                    const prefDisplay = pref
+                      ? (pref.includes(":") ? pref : `Sugar: ${pref}`)
+                      : "Standard";
+
+                    pendingItemMap[baseName].orders.push({
+                      order: o,
+                      qty: lineQty,
+                      amount: lineTotal,
+                      preferenceText: prefDisplay,
+                    });
+
+                    grandPendingQty += lineQty;
+                    grandPendingAmount += lineTotal;
+                  });
+                });
+
+                const pendingSummaryRows = Object.values(pendingItemMap);
+
+                const toggleExpand = (name: string) => {
+                  setExpandedSummaryItems((prev) => ({
+                    ...prev,
+                    [name]: !prev[name],
+                  }));
+                };
+
+                return (
+                  <div className="flex flex-col flex-1 overflow-hidden">
+                    {/* Top Bulk Action Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-amber-50/60 px-6 py-3 shrink-0">
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={toggleSelectAll}
+                          disabled={allPendingIds.length === 0}
+                          className="flex items-center gap-1.5 text-xs font-bold text-stone-800 hover:text-black cursor-pointer disabled:opacity-40"
+                        >
+                          {isAllSelected ? (
+                            <CheckSquare size={17} className="text-[#754329]" />
+                          ) : (
+                            <Square size={17} className="text-stone-400" />
+                          )}
+                          <span>Select All ({allPendingIds.length})</span>
+                        </button>
+
+                        {selectedPendingOrderIds.length > 0 && (
+                          <span className="rounded-full bg-[#007BFF] px-2.5 py-0.5 text-xs font-bold text-white">
+                            {selectedPendingOrderIds.length} Selected
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Bulk Action Buttons */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={selectedPendingOrderIds.length === 0 || isBulkUpdating}
+                          onClick={() => setBulkActionConfirm({ action: "Delivered", count: selectedPendingOrderIds.length })}
+                          className="flex items-center gap-1.5 rounded-xl bg-[#28A745] px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-[#218838] transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <CheckCircle2 size={14} />
+                          <span>Bulk Delivered</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          disabled={selectedPendingOrderIds.length === 0 || isBulkUpdating}
+                          onClick={() => setBulkActionConfirm({ action: "Canceled", count: selectedPendingOrderIds.length })}
+                          className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-3.5 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <XCircle size={14} />
+                          <span>Bulk Cancel</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Table Header: Item, Quantity, Amount */}
+                    <div className="grid grid-cols-12 border-b border-gray-200 bg-gray-50/80 px-6 py-3 text-xs font-bold text-gray-700 shrink-0">
+                      <div className="col-span-6">Item</div>
+                      <div className="col-span-3 text-center">Quantity</div>
+                      <div className="col-span-3 text-right">Amount</div>
+                    </div>
+
+                    {/* Table Rows */}
+                    <div className="flex-1 overflow-y-auto min-h-[220px]">
+                      {pendingSummaryRows.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-16 text-center text-gray-400">
+                          <Inbox size={42} className="text-gray-300 mb-2 stroke-1" />
+                          <p className="text-sm font-medium text-gray-500">
+                            No pending orders found for today
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="divide-y divide-gray-100">
+                          {pendingSummaryRows.map((item) => {
+                            const isExpanded = !!expandedSummaryItems[item.name];
+
+                            return (
+                              <div key={item.name} className="flex flex-col">
+                                {/* Parent Row */}
+                                <div
+                                  onClick={() => toggleExpand(item.name)}
+                                  className="grid grid-cols-12 items-center px-6 py-3 text-xs hover:bg-[#FCFAF8] transition cursor-pointer"
+                                >
+                                  {/* Col 1: Item Thumbnail & Name & Details */}
+                                  <div className="col-span-6 flex items-center gap-3">
+                                    <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl border border-gray-200 bg-[#FAF8F5] shadow-2xs">
+                                      {item.image ? (
+                                        <img
+                                          src={item.image}
+                                          alt={item.name}
+                                          className="h-full w-full object-cover"
+                                        />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center text-[#8C5835]">
+                                          <Coffee size={18} />
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="font-bold text-sm text-gray-900">
+                                        {item.name}
+                                      </span>
+
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleExpand(item.name);
+                                        }}
+                                        className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-gray-700 shadow-2xs hover:bg-gray-50 transition cursor-pointer"
+                                      >
+                                        {isExpanded ? (
+                                          <ChevronUp size={12} className="text-gray-500" />
+                                        ) : (
+                                          <ChevronDown size={12} className="text-gray-500" />
+                                        )}
+                                        <span>Details ({item.orders.length})</span>
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Col 2: Quantity */}
+                                  <div className="col-span-3 flex justify-center">
+                                    <span className="flex h-6 min-w-[28px] items-center justify-center rounded-full bg-[#0E2038] px-2 text-xs font-bold text-white shadow-xs">
+                                      {item.qty}
+                                    </span>
+                                  </div>
+
+                                  {/* Col 3: Amount */}
+                                  <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
+                                    ₹ {item.totalAmount.toFixed(2)}
+                                  </div>
+                                </div>
+
+                                {/* Expanded Orders Drawer with Individual Actions */}
+                                {isExpanded && (
+                                  <div className="border-y border-gray-200 bg-gray-50/90 px-6 py-3 text-xs animate-in fade-in duration-150">
+                                    <div className="flex items-center justify-between pb-2 text-[11px] font-bold text-gray-600">
+                                      <span>Order Breakdown & Individual Actions ({item.orders.length})</span>
+                                      <span className="text-stone-400 font-normal italic">Click row to collapse</span>
+                                    </div>
+
+                                    {/* Nested table */}
+                                    <div className="divide-y divide-gray-200/60 pt-1 space-y-1.5">
+                                      {item.orders.map((sub, sIdx) => {
+                                        const isSelected = selectedPendingOrderIds.includes(sub.order.id);
+                                        return (
+                                          <div
+                                            key={sIdx}
+                                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 py-2 text-xs bg-white/70 p-2.5 rounded-xl border border-gray-100"
+                                          >
+                                            {/* Select Checkbox + Seat + Order ID */}
+                                            <div className="flex items-center gap-2.5">
+                                              <input
+                                                type="checkbox"
+                                                checked={isSelected}
+                                                onChange={() => toggleSelectOne(sub.order.id)}
+                                                className="h-4 w-4 rounded border-gray-300 text-[#754329] focus:ring-[#754329] cursor-pointer"
+                                              />
+                                              <span className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white">
+                                                Seat: {sub.order.employeeName ? sub.order.employeeName.split("@")[0] : `Seat ${sub.order.seat}`}
+                                              </span>
+                                              <span className="font-mono text-[11px] text-blue-600 font-bold">
+                                                {sub.order.id}
+                                              </span>
+                                              <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-800">
+                                                {sub.preferenceText}
+                                              </span>
+                                            </div>
+
+                                            {/* Qty, Amount, and Action Buttons */}
+                                            <div className="flex items-center gap-4 self-end sm:self-auto">
+                                              <div className="text-right">
+                                                <span className="text-[10px] text-gray-500 block">Qty: {sub.qty}</span>
+                                                <span className="font-bold text-gray-900">₹ {sub.amount.toFixed(2)}</span>
+                                              </div>
+
+                                              <div className="flex items-center gap-1.5">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => handleOpenEditOrder(sub.order)}
+                                                  className="flex items-center gap-1 rounded-lg border border-stone-300 bg-white px-2.5 py-1 text-[11px] font-bold text-stone-700 hover:bg-stone-50 transition shadow-2xs cursor-pointer"
+                                                >
+                                                  <Edit3 size={12} />
+                                                  <span>Update</span>
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  onClick={() => setCancelConfirmOrder(sub.order)}
+                                                  className="flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-bold text-rose-700 hover:bg-rose-100 transition shadow-2xs cursor-pointer"
+                                                >
+                                                  <Trash2 size={12} />
+                                                  <span>Cancel</span>
+                                                </button>
+                                              </div>
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between border-t border-gray-200 bg-gray-50/90 px-6 py-4 text-xs shrink-0">
+                      <div className="font-extrabold uppercase tracking-wider text-gray-600">
+                        PENDING GRAND TOTAL
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="rounded-md bg-stone-600 px-3 py-1 font-bold text-white shadow-2xs">
+                          Total Pending Items: {grandPendingQty}
+                        </span>
+                        <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
+                          Total Pending Amount: ₹ {grandPendingAmount.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            INDIVIDUAL ORDER UPDATE / EDIT MODAL
+           ======================================================== */}
+        {editingOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-2xl">
+              {/* Header */}
+              <div className="flex items-center justify-between bg-[#754329] px-6 py-4 text-white">
+                <div className="flex items-center gap-2">
+                  <Edit3 size={18} />
+                  <h3 className="text-base font-bold text-white">
+                    Update Order #{editingOrder.id}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEditingOrder(null)}
+                  className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form Content */}
+              <div className="p-6 space-y-4 text-xs">
+                {/* Employee & Seat */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-stone-700 mb-1">Customer</label>
+                    <input
+                      type="text"
+                      readOnly
+                      value={editingOrder.employeeName}
+                      className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-stone-600 font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-bold text-stone-700 mb-1">Seat Number</label>
+                    <input
+                      type="text"
+                      value={editSeat}
+                      onChange={(e) => setEditSeat(e.target.value)}
+                      className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-800 font-medium focus:border-[#754329] outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Subtotal (Original) */}
+                <div>
+                  <label className="block font-bold text-stone-700 mb-1">Original Subtotal (₹)</label>
+                  <input
+                    type="text"
+                    readOnly
+                    value={`₹ ${(editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total)).toFixed(2)}`}
+                    className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-stone-600 font-semibold"
+                  />
+                </div>
+
+                {/* Adjustment Amount */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block font-bold text-stone-700">Adjustment Amount (₹)</label>
+                    <span className="text-[10px] text-stone-500">e.g. 10 or -10</span>
+                  </div>
+                  <input
+                    type="number"
+                    step="any"
+                    value={editAdjustmentAmount}
+                    onChange={(e) => setEditAdjustmentAmount(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-800 font-semibold focus:border-[#754329] outline-none"
+                  />
+                </div>
+
+                {/* Discount */}
+                <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block font-bold text-stone-700">Discount (₹)</label>
+                    <span className="text-[10px] text-stone-500">Positive value</span>
+                  </div>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={editDiscount}
+                    onChange={(e) => setEditDiscount(e.target.value)}
+                    placeholder="0"
+                    className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-800 font-semibold focus:border-[#754329] outline-none"
+                  />
+                </div>
+
+                {/* Calculated Net Total */}
+                <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 flex justify-between items-center">
+                  <span className="font-bold text-emerald-900">Recalculated Net Amount:</span>
+                  <span className="font-black text-sm text-[#28A745]">
+                    ₹ {Math.max(
+                      0,
+                      ((editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total))) +
+                      (parseFloat(editAdjustmentAmount) || 0) -
+                      (parseFloat(editDiscount) || 0)
+                    ).toFixed(2)}
+                  </span>
+                </div>
+
+                {/* Status Dropdown */}
+                <div>
+                  <label className="block font-bold text-stone-700 mb-1">Order Status</label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => setEditStatus(e.target.value as any)}
+                    className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-800 font-medium focus:border-[#754329] outline-none"
+                  >
+                    <option value="Pending">Pending (New)</option>
+                    <option value="Preparing">Preparing</option>
+                    <option value="Ready">Ready</option>
+                    <option value="Delivered">Delivered</option>
+                    <option value="Canceled">Canceled</option>
+                  </select>
+                </div>
+
+                {/* Special Instructions / Notes */}
+                <div>
+                  <label className="block font-bold text-stone-700 mb-1">Special Instructions / Notes</label>
+                  <textarea
+                    rows={2}
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Special requests or instructions..."
+                    className="w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-stone-800 outline-none focus:border-[#754329]"
+                  />
+                </div>
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="flex items-center justify-end gap-2 border-t border-stone-200 bg-stone-50 px-6 py-3.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingOrder(null)}
+                  className="rounded-xl border border-stone-300 bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-100 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isSavingEdit}
+                  onClick={handleSaveOrderEdit}
+                  className="rounded-xl bg-[#754329] px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-[#5f351f] transition disabled:opacity-50"
+                >
+                  {isSavingEdit ? "Saving..." : "Save Changes"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            INDIVIDUAL ORDER CANCEL CONFIRMATION MODAL
+           ======================================================== */}
+        {cancelConfirmOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-rose-200 bg-white p-6 shadow-2xl text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-rose-100 text-rose-600">
+                <AlertCircle size={24} />
+              </div>
+              <h3 className="text-base font-bold text-stone-900">
+                Cancel Order #{cancelConfirmOrder.id}?
+              </h3>
+              <p className="mt-2 text-xs text-stone-600">
+                Are you sure you want to cancel the order for{" "}
+                <span className="font-semibold text-stone-900">{cancelConfirmOrder.employeeName}</span> at Seat {cancelConfirmOrder.seat}?
+              </p>
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  disabled={isCancellingOrder}
+                  onClick={() => setCancelConfirmOrder(null)}
+                  className="rounded-xl border border-stone-300 bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
+                >
+                  Keep Order
+                </button>
+                <button
+                  type="button"
+                  disabled={isCancellingOrder}
+                  onClick={handleConfirmCancelOrder}
+                  className="rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-rose-700 disabled:opacity-50"
+                >
+                  {isCancellingOrder ? "Cancelling..." : "Yes, Cancel Order"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            BULK ACTION CONFIRMATION MODAL
+           ======================================================== */}
+        {bulkActionConfirm && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-200">
+            <div className="relative w-full max-w-sm overflow-hidden rounded-2xl border border-stone-200 bg-white p-6 shadow-2xl text-center">
+              <div className={`mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full ${
+                bulkActionConfirm.action === "Delivered" ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
+              }`}>
+                {bulkActionConfirm.action === "Delivered" ? <CheckCircle2 size={24} /> : <AlertCircle size={24} />}
+              </div>
+              <h3 className="text-base font-bold text-stone-900">
+                Confirm Bulk {bulkActionConfirm.action}
+              </h3>
+              <p className="mt-2 text-xs text-stone-600">
+                Are you sure you want to mark <span className="font-bold text-stone-900">{bulkActionConfirm.count} pending orders</span> as{" "}
+                <span className={`font-bold ${bulkActionConfirm.action === "Delivered" ? "text-emerald-700" : "text-rose-700"}`}>
+                  {bulkActionConfirm.action}
+                </span>?
+              </p>
+              <div className="mt-5 flex items-center justify-center gap-3">
+                <button
+                  type="button"
+                  disabled={isBulkUpdating}
+                  onClick={() => setBulkActionConfirm(null)}
+                  className="rounded-xl border border-stone-300 bg-white px-4 py-2 text-xs font-bold text-stone-700 hover:bg-stone-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isBulkUpdating}
+                  onClick={handleExecuteBulkAction}
+                  className={`rounded-xl px-5 py-2 text-xs font-bold text-white shadow-md disabled:opacity-50 ${
+                    bulkActionConfirm.action === "Delivered"
+                      ? "bg-[#28A745] hover:bg-[#218838]"
+                      : "bg-rose-600 hover:bg-rose-700"
+                  }`}
+                >
+                  {isBulkUpdating ? "Updating..." : `Yes, Mark ${bulkActionConfirm.action}`}
+                </button>
+              </div>
             </div>
           </div>
         )}

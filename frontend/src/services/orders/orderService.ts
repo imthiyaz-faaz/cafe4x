@@ -16,6 +16,9 @@ export interface ProviderOrder {
   locationId?: string;
   employeeName: string;
   items: OrderItem[];
+  subtotal?: number;
+  adjustmentAmount?: number;
+  discount?: number;
   total: number;
   time: string;
   status: OrderStatus;
@@ -51,6 +54,21 @@ export const orderApi = {
       { status }
     );
     return res.order;
+  },
+
+  async updateOrder(orderId: string, updates: Partial<ProviderOrder>): Promise<ProviderOrder> {
+    const res = await api.put<{ success: boolean; order: ProviderOrder }>(
+      `/api/orders/${encodeURIComponent(orderId)}`,
+      updates
+    );
+    return res.order;
+  },
+
+  async bulkUpdateStatus(orderIds: string[], status: OrderStatus): Promise<{ success: boolean; updatedCount: number }> {
+    return await api.post<{ success: boolean; updatedCount: number }>(
+      "/api/orders/bulk-status",
+      { orderIds, status }
+    );
   },
 
   async deleteOrder(orderId: string): Promise<void> {

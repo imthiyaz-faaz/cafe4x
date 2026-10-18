@@ -23,6 +23,9 @@ export interface OrderModel {
   locationId?: string;
   employeeName: string;
   items: OrderItem[];
+  subtotal?: number;
+  adjustmentAmount?: number;
+  discount?: number;
   total: number;
   time: string;
   status: "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";
@@ -55,6 +58,9 @@ export const orderController = {
           o.location_id as locationId, 
           o.location_name as locationName,
           o.employee_name as employeeName, 
+          o.subtotal,
+          o.adjustment_amount as adjustmentAmount,
+          o.discount,
           o.total, 
           o.time, 
           o.status, 
@@ -123,6 +129,16 @@ export const orderController = {
             }
           }
 
+          const rawTotal = Number(r.total) || 0;
+          const subtotal = r.subtotal !== null && r.subtotal !== undefined
+            ? Number(r.subtotal)
+            : (items.length > 0 ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : rawTotal);
+          const adjustmentAmount = Number(r.adjustmentAmount) || 0;
+          const discount = Number(r.discount) || 0;
+          const total = r.subtotal !== null && r.subtotal !== undefined
+            ? Math.max(0, subtotal + adjustmentAmount - discount)
+            : rawTotal;
+
           return {
             id: r.id,
             displayId: r.displayId || r.id,
@@ -133,7 +149,10 @@ export const orderController = {
             locationName: r.locationName,
             employeeName: r.employeeName,
             items,
-            total: Number(r.total) || 0,
+            subtotal,
+            adjustmentAmount,
+            discount,
+            total,
             time: r.time,
             status: r.status,
             notes: r.notes || undefined,
@@ -160,7 +179,8 @@ export const orderController = {
           `SELECT 
             id, display_id as displayId, organization_id as organizationId, short_code as shortCode,
             seat, location_id as locationId, location_name as locationName,
-            employee_name as employeeName, total, time, status, notes,
+            employee_name as employeeName, subtotal, adjustment_amount as adjustmentAmount, discount,
+            total, time, status, notes,
             items_json as itemsJson, created_at as createdAt, updated_at as updatedAt
            FROM orders WHERE id = ? OR display_id = ?`
         )
@@ -192,6 +212,16 @@ export const orderController = {
         }
       } catch {}
 
+      const rawTotal = Number(row.total) || 0;
+      const subtotal = row.subtotal !== null && row.subtotal !== undefined
+        ? Number(row.subtotal)
+        : (items.length > 0 ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : rawTotal);
+      const adjustmentAmount = Number(row.adjustmentAmount) || 0;
+      const discount = Number(row.discount) || 0;
+      const total = row.subtotal !== null && row.subtotal !== undefined
+        ? Math.max(0, subtotal + adjustmentAmount - discount)
+        : rawTotal;
+
       return c.json({
         success: true,
         order: {
@@ -204,7 +234,10 @@ export const orderController = {
           locationName: row.locationName,
           employeeName: row.employeeName,
           items,
-          total: Number(row.total) || 0,
+          subtotal,
+          adjustmentAmount,
+          discount,
+          total,
           time: row.time,
           status: row.status,
           notes: row.notes || undefined,
@@ -247,13 +280,20 @@ export const orderController = {
       const itemsJson = JSON.stringify(items);
       const isoNow = now.toISOString();
 
+      const subtotal = body.subtotal !== undefined
+        ? Number(body.subtotal)
+        : (items.length > 0 ? items.reduce((sum: number, it: any) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : total);
+      const adjustmentAmount = Number(body.adjustmentAmount) || 0;
+      const discount = Number(body.discount) || 0;
+      const calculatedTotal = Math.max(0, subtotal + adjustmentAmount - discount);
+
       await db
         .prepare(
           `INSERT INTO orders (
             id, display_id, organization_id, short_code, seat, location_id, location_name,
-            employee_name, total, time, status, notes, items_json,
+            employee_name, subtotal, adjustment_amount, discount, total, time, status, notes, items_json,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           orderId,
@@ -264,7 +304,10 @@ export const orderController = {
           locationId,
           locationName,
           employeeName,
-          total,
+          subtotal,
+          adjustmentAmount,
+          discount,
+          calculatedTotal,
           time,
           status,
           notes,
@@ -309,7 +352,10 @@ export const orderController = {
         locationId: locationId || undefined,
         employeeName,
         items,
-        total,
+        subtotal,
+        adjustmentAmount,
+        discount,
+        total: calculatedTotal,
         time,
         status,
         notes: notes || undefined,
@@ -346,6 +392,16 @@ export const orderController = {
         items = updated.items_json ? JSON.parse(updated.items_json) : [];
       } catch {}
 
+      const rawTotal = Number(updated.total) || 0;
+      const subtotal = updated.subtotal !== null && updated.subtotal !== undefined
+        ? Number(updated.subtotal)
+        : (items.length > 0 ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : rawTotal);
+      const adjustmentAmount = Number(updated.adjustment_amount) || 0;
+      const discount = Number(updated.discount) || 0;
+      const total = updated.subtotal !== null && updated.subtotal !== undefined
+        ? Math.max(0, subtotal + adjustmentAmount - discount)
+        : rawTotal;
+
       return c.json({
         success: true,
         order: {
@@ -357,13 +413,150 @@ export const orderController = {
           locationName: updated.location_name,
           employeeName: updated.employee_name,
           items,
-          total: Number(updated.total) || 0,
+          subtotal,
+          adjustmentAmount,
+          discount,
+          total,
           time: updated.time,
           status: updated.status,
           notes: updated.notes || undefined,
           createdAt: updated.created_at,
           updatedAt: updated.updated_at,
         },
+      });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // PUT /api/orders/:id (Update order details, adjustment amount, discount, seat, notes, status)
+  async updateOrder(c: Context<AppEnv>) {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      const db = getUniversalDb(c.env?.DB);
+
+      const existing = (await db.prepare(`SELECT * FROM orders WHERE id = ? OR display_id = ?`).bind(id, id).get()) as any;
+      if (!existing) {
+        return c.json({ success: false, message: "Order not found" }, 404);
+      }
+
+      let items: OrderItem[] = [];
+      try {
+        items = existing.items_json ? JSON.parse(existing.items_json) : [];
+      } catch {}
+      if (Array.isArray(body.items)) {
+        items = body.items;
+      }
+
+      const rawExistingTotal = Number(existing.total) || 0;
+      const calculatedSubtotal = items.length > 0
+        ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0)
+        : rawExistingTotal;
+
+      const subtotal = body.subtotal !== undefined ? Number(body.subtotal) : (existing.subtotal !== null ? Number(existing.subtotal) : calculatedSubtotal);
+      const adjustmentAmount = body.adjustmentAmount !== undefined ? Number(body.adjustmentAmount) : (Number(existing.adjustment_amount) || 0);
+      const discount = body.discount !== undefined ? Number(body.discount) : (Number(existing.discount) || 0);
+      const total = Math.max(0, subtotal + adjustmentAmount - discount);
+
+      const status = body.status !== undefined ? body.status : existing.status;
+      const seat = body.seat !== undefined ? String(body.seat).padStart(2, "0") : existing.seat;
+      const notes = body.notes !== undefined ? body.notes : existing.notes;
+      const employeeName = body.employeeName !== undefined ? body.employeeName : existing.employee_name;
+      const itemsJson = Array.isArray(body.items) ? JSON.stringify(body.items) : existing.items_json;
+      const now = new Date().toISOString();
+
+      await db
+        .prepare(
+          `UPDATE orders SET 
+            subtotal = ?, adjustment_amount = ?, discount = ?, total = ?, 
+            status = ?, seat = ?, notes = ?, employee_name = ?, items_json = ?, updated_at = ?
+           WHERE id = ? OR display_id = ?`
+        )
+        .run(subtotal, adjustmentAmount, discount, total, status, seat, notes, employeeName, itemsJson, now, id, id);
+
+      return c.json({
+        success: true,
+        order: {
+          id: existing.id,
+          displayId: existing.display_id || existing.id,
+          organizationId: existing.organization_id,
+          shortCode: existing.short_code,
+          seat,
+          locationName: existing.location_name,
+          employeeName,
+          items,
+          subtotal,
+          adjustmentAmount,
+          discount,
+          total,
+          time: existing.time,
+          status,
+          notes: notes || undefined,
+          createdAt: existing.created_at,
+          updatedAt: now,
+        },
+      });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // POST /api/orders/bulk-status (Bulk update order statuses: Delivered or Canceled)
+  async bulkUpdateStatus(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 403);
+      }
+
+      const body = await c.req.json();
+      const orderIds: string[] = Array.isArray(body.orderIds) ? body.orderIds : [];
+      const nextStatus = body.status;
+
+      if (!orderIds || orderIds.length === 0) {
+        return c.json({ success: false, message: "No order IDs provided" }, 400);
+      }
+      if (!nextStatus || !["Delivered", "Canceled", "Preparing", "Ready"].includes(nextStatus)) {
+        return c.json({ success: false, message: "Invalid target status" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const authUser = await getAuthUser(c);
+      const now = new Date().toISOString();
+
+      // Only allow updating pending/active orders
+      let updatedCount = 0;
+      for (const oid of orderIds) {
+        // Enforce org isolation and provider assigned location verification
+        let checkQuery = `SELECT o.id, o.status FROM orders o WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?`;
+        const params: any[] = [oid, oid, org.organizationId];
+
+        if (authUser?.userType === "Provider") {
+          checkQuery = `
+            SELECT o.id, o.status 
+            FROM orders o
+            LEFT JOIN locations loc ON o.location_id = loc.id
+            LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
+            WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?
+              AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+          `;
+          params.push(authUser.id, authUser.id);
+        }
+
+        const orderRow = (await db.prepare(checkQuery).bind(...params).get()) as any;
+        if (orderRow && orderRow.status !== "Delivered" && orderRow.status !== "Canceled") {
+          await db
+            .prepare(`UPDATE orders SET status = ?, updated_at = ? WHERE id = ?`)
+            .run(nextStatus, now, orderRow.id);
+          updatedCount++;
+        }
+      }
+
+      return c.json({
+        success: true,
+        message: `Successfully updated ${updatedCount} orders to ${nextStatus}`,
+        updatedCount,
       });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);

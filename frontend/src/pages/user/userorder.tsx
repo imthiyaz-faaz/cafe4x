@@ -355,6 +355,8 @@ export default function UserOrderPage() {
         employeeName: orderData.employeeName,
         items: orderData.items,
         total: orderData.total,
+        time: orderData.time,
+        createdAt: orderData.createdAt,
       });
     } catch (err) {
       console.warn("Could not sync order to backend:", err);

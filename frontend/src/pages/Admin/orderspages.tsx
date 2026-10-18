@@ -131,7 +131,9 @@ export default function OrdersPage() {
               itemSummary: summary || "No items",
               seat: `Seat ${so.seat}`,
               total: so.total,
-              orderTime: so.time || "Recent",
+              orderTime: so.createdAt
+                ? new Date(so.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true })
+                : (so.time && so.time !== "Just now" ? so.time : "Recent"),
               status: so.status as any,
               notes: so.notes,
               locationName: so.locationName,

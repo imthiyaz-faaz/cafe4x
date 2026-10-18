@@ -122,6 +122,20 @@ export default function ProviderPage() {
     );
   };
 
+  // Helper to get formatted real order time instead of "Just now"
+  const getDisplayOrderTime = (order: ProviderOrder): string => {
+    if (order.createdAt) {
+      const d = new Date(order.createdAt);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
+      }
+    }
+    if (order.time && order.time.toLowerCase() !== "just now") {
+      return order.time;
+    }
+    return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
+  };
+
   // Helper to determine an order's session ("morning" if before 12:00 PM, "evening" if 12:00 PM or after)
   const getOrderSession = (order: ProviderOrder): "morning" | "evening" => {
     if (order.createdAt) {
@@ -847,9 +861,7 @@ export default function ProviderPage() {
                                   {/* Date & Time + New Status Badge */}
                                   <div className="mt-1 flex items-center justify-between">
                                     <span className="text-[11px] text-[#8A7667]">
-                                      {order.time.includes("ago")
-                                        ? `${new Date().toLocaleDateString("en-GB")} ${order.time}`
-                                        : order.time}
+                                      {getDisplayOrderTime(order)}
                                     </span>
 
                                     <span
@@ -943,7 +955,7 @@ export default function ProviderPage() {
                                 <div className="text-right">
                                   <span className="text-xs text-[#8A7667]">Order Time</span>
                                   <div className="text-xs font-bold text-[#342219]">
-                                    {activeOrder.time}
+                                    {getDisplayOrderTime(activeOrder)}
                                   </div>
                                 </div>
                               </div>
@@ -1236,7 +1248,7 @@ export default function ProviderPage() {
                                   Customer: {order.employeeName}
                                 </span>
                                 <span className="flex items-center gap-1 font-mono">
-                                  <Clock size={12} /> {order.time}
+                                  <Clock size={12} /> {getDisplayOrderTime(order)}
                                 </span>
                               </div>
 

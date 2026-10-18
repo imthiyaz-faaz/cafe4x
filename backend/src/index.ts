@@ -28,4 +28,12 @@ app.get('/', (c) => {
   return c.text('Hello Cafe4x Backend!')
 })
 
+app.get('/api/health', (c) => {
+  return c.json({
+    success: true,
+    message: 'Cafe4x Backend is running!',
+    timestamp: new Date().toISOString(),
+  })
+})
+
 export default app

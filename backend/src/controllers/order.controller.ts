@@ -239,7 +239,9 @@ export const orderController = {
       const employeeName = body.employeeName || `Seat ${seat} Guest`;
       const items = Array.isArray(body.items) ? body.items : [];
       const total = Number(body.total) || 0;
-      const time = "Just now";
+      const time = body.time && body.time !== "Just now"
+        ? body.time
+        : now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
       const status = "Pending";
       const notes = body.notes || null;
       const itemsJson = JSON.stringify(items);

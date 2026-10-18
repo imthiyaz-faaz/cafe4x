@@ -24,13 +24,16 @@ import {
   ArrowLeft,
   UserCheck,
   ExternalLink,
+  Key,
+  RefreshCw,
+  Ban,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import AssignCard, { type LocationItem } from "../../components/locations/assigncard";
 import { locationApi } from "../../services/locations";
+import { userApi, type UserItem } from "../../services/userApi";
 import CreateFormModal, { FormRow } from "../../components/common/CreateFormModal";
-
 
 interface SeatItem {
   number: string;
@@ -163,6 +166,28 @@ export default function LocationPage() {
     return {};
   });
 
+  // All employees/users in organization for employee QR code resolution
+  const [orgUsers, setOrgUsers] = useState<UserItem[]>([]);
+  const [tokenActionLoading, setTokenActionLoading] = useState(false);
+
+  // Fetch users from backend for the organization
+  const fetchOrgUsers = () => {
+    userApi
+      .getUsers(undefined, currentShortCode || undefined)
+      .then((users) => {
+        if (Array.isArray(users)) {
+          setOrgUsers(users);
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not fetch users for employee QR resolution:", err);
+      });
+  };
+
+  useEffect(() => {
+    fetchOrgUsers();
+  }, [currentShortCode]);
+
   const saveSeatsByLoc = (data: Record<string, SeatItem[]>) => {
     setSeatsByLoc(data);
     try {
@@ -172,12 +197,32 @@ export default function LocationPage() {
     } catch { }
   };
 
-  // Automatically generate seats with shortCode-based sequential seatId (e.g. FTS-01, FTS-02...) and orderUrl
+  // Helper to resolve an employee's secure QR order URL or fallback
+  const getEmployeeOrderUrl = (employeeIdentifier?: string, seatId?: string, locId?: string, seatNo?: string) => {
+    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+    if (employeeIdentifier && orgUsers.length > 0) {
+      const cleanIdent = employeeIdentifier.trim().toLowerCase();
+      const matched = orgUsers.find(
+        (u) =>
+          u.email.toLowerCase() === cleanIdent ||
+          u.name.toLowerCase() === cleanIdent ||
+          u.userName.toLowerCase() === cleanIdent ||
+          u.id === cleanIdent
+      );
+      if (matched?.qrToken) {
+        return `${window.location.origin}${orgPrefix}/qrorder/${matched.qrToken}`;
+      }
+    }
+    // Fallback if employee has not yet been assigned
+    const fallbackSeatId = seatId || `${currentShortCode || "FTS"}-${seatNo || "01"}`;
+    return `${window.location.origin}${orgPrefix}/order/${locId || "1"}/${parseInt(seatNo || "1", 10) || 1}?seatId=${fallbackSeatId}`;
+  };
+
+  // Automatically generate seats with shortCode-based sequential seatId (e.g. FTS-01, FTS-02...)
   useEffect(() => {
     if (!selectedLocation) return;
     const locId = String(selectedLocation.id);
     const existing = seatsByLoc[locId];
-    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
     const code = currentShortCode || "FTS";
 
     if (!existing || existing.length === 0) {
@@ -188,7 +233,7 @@ export default function LocationPage() {
         return {
           number: num,
           id: seatId,
-          orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${i + 1}?seatId=${seatId}`,
+          orderUrl: getEmployeeOrderUrl(undefined, seatId, locId, num),
         };
       });
       const nextSeats = { ...seatsByLoc, [locId]: generated };
@@ -200,9 +245,9 @@ export default function LocationPage() {
         const num = s.number || String(i + 1).padStart(2, "0");
         const expectedPrefix = `${code}-`;
         const seatId = (s.id && s.id.startsWith(expectedPrefix)) ? s.id : `${code}-${num}`;
-        const idealUrl = `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(num, 10) || i + 1}?seatId=${seatId}`;
+        const idealUrl = getEmployeeOrderUrl(s.employee, seatId, locId, num);
 
-        if (s.id !== seatId || !s.orderUrl || s.orderUrl.startsWith("https://cafe4x.com") || !s.orderUrl.includes(`seatId=${seatId}`) || (orgPrefix && !s.orderUrl.includes(orgPrefix))) {
+        if (s.id !== seatId || (s.employee && !s.orderUrl?.includes("/qrorder/") && idealUrl.includes("/qrorder/"))) {
           needsUpdate = true;
           return { ...s, id: seatId, orderUrl: idealUrl };
         }
@@ -212,7 +257,7 @@ export default function LocationPage() {
         saveSeatsByLoc({ ...seatsByLoc, [locId]: updated });
       }
     }
-  }, [selectedLocation, seatsByLoc, currentShortCode]);
+  }, [selectedLocation, seatsByLoc, currentShortCode, orgUsers]);
 
   const [selectedSeatNumber, setSelectedSeatNumber] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
@@ -1099,108 +1144,218 @@ export default function LocationPage() {
                         </div>
 
                         {/* Details & Identifiers */}
-                        <div className="mt-5 space-y-3.5 text-xs">
-                          {/* Assigned Employee */}
-                          {currentSeat.employee ? (
-                            <div className="flex flex-col gap-1 rounded-xl border border-[#EEE5DC] p-3">
-                              <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                              <div className="flex items-center gap-2">
-                                <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-                                  <User size={13} />
+                        {(() => {
+                          const cleanIdent = (currentSeat.employee || "").trim().toLowerCase();
+                          const matchedEmployee = cleanIdent
+                            ? orgUsers.find(
+                                (u) =>
+                                  u.email.toLowerCase() === cleanIdent ||
+                                  u.name.toLowerCase() === cleanIdent ||
+                                  u.userName.toLowerCase() === cleanIdent ||
+                                  u.id === cleanIdent
+                              )
+                            : null;
+
+                          return (
+                            <div className="mt-5 space-y-3.5 text-xs">
+                              {/* Assigned Employee */}
+                              {matchedEmployee ? (
+                                <div className="flex flex-col gap-1.5 rounded-xl border border-[#EEE5DC] p-3">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
+                                    <span
+                                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                        matchedEmployee.qrTokenStatus === "revoked"
+                                          ? "bg-rose-100 text-rose-700 border border-rose-200"
+                                          : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                      }`}
+                                    >
+                                      {matchedEmployee.qrTokenStatus === "revoked" ? "Token Revoked" : "Token Active"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
+                                      <User size={14} />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-bold text-xs text-[#342219] truncate">
+                                        {matchedEmployee.name}
+                                      </span>
+                                      <span className="text-[11px] text-[#8A7667] truncate">
+                                        {matchedEmployee.email}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
-                                <span className="font-bold text-xs text-[#342219] truncate">
-                                  {currentSeat.employee}
+                              ) : currentSeat.employee ? (
+                                <div className="flex flex-col gap-1 rounded-xl border border-[#EEE5DC] p-3">
+                                  <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
+                                      <User size={13} />
+                                    </div>
+                                    <span className="font-bold text-xs text-[#342219] truncate">
+                                      {currentSeat.employee}
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
+                                  <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
+                                  <span className="text-xs text-[#8A7667] italic">Unassigned (Free seat)</span>
+                                </div>
+                              )}
+
+                              {/* Seat ID */}
+                              <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
+                                <span className="font-semibold text-[#8A7667]">Seat Identifier</span>
+                                <span className="font-mono font-bold text-[#342219]">
+                                  {currentSeat.id}
                                 </span>
                               </div>
-                            </div>
-                          ) : (
-                            <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
-                              <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                              <span className="text-xs text-[#8A7667] italic">Unassigned (Free seat)</span>
-                            </div>
-                          )}
 
-                          {/* Seat ID */}
-                          <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
-                            <span className="font-semibold text-[#8A7667]">Seat Identifier</span>
-                            <span className="font-mono font-bold text-[#342219]">
-                              {currentSeat.id}
-                            </span>
-                          </div>
-
-                          {/* Order URL Box */}
-                          <div className="flex flex-col gap-1.5">
-                            <span className="font-semibold text-[#8A7667]">Order URL</span>
-                            <div className="flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] p-2.5">
-                              <span className="truncate text-xs font-mono text-[#70523E]">
-                                {currentSeat.orderUrl}
-                              </span>
-                              <div className="flex items-center gap-1.5 ml-2">
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(currentSeat.orderUrl)}
-                                  className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-[#8C5835] shadow-xs hover:bg-[#FAF6F1] cursor-pointer"
-                                  title="Copy URL"
-                                >
-                                  {copiedUrl ? <Check size={13} /> : <Copy size={13} />}
-                                  <span>{copiedUrl ? "Copied" : "Copy"}</span>
-                                </button>
-                                <a
-                                  href={currentSeat.orderUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="flex items-center gap-1 rounded-lg bg-[#8C5835] px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-[#774728] cursor-pointer"
-                                  title="Open Employee Order Page"
-                                >
-                                  <ExternalLink size={13} />
-                                  <span>Open</span>
-                                </a>
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Integrated Live QR Code Container */}
-                          <div className="mt-2 rounded-2xl border border-[#EEE5DC] bg-[#FAF8F5] p-3.5">
-                            <div className="flex items-center gap-3.5">
-                              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
-                                <img
-                                  src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-                                    currentSeat.orderUrl
-                                  )}`}
-                                  alt="Seat QR Code"
-                                  className="h-full w-full object-contain"
-                                />
-                              </div>
-
-                              <div className="flex-1 space-y-1">
-                                <p className="text-xs font-bold text-[#342219]">
-                                  Scan to Order (Seat {currentSeat.number})
-                                </p>
-                                <p className="text-[11px] text-[#8A7667]">
-                                  Guests scan this QR to order from their seat
-                                </p>
-                                <div className="pt-1 flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const link = document.createElement("a");
-                                      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-                                        currentSeat.orderUrl
-                                      )}`;
-                                      link.target = "_blank";
-                                      link.download = `seat_${currentSeat.number}_qr.png`;
-                                      link.click();
-                                    }}
-                                    className="flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#8C5835] border border-[#D5C2B1] hover:bg-[#FAF6F1]"
-                                  >
-                                    <Download size={12} />
-                                    <span>Download QR</span>
-                                  </button>
+                              {/* Order URL Box */}
+                              <div className="flex flex-col gap-1.5">
+                                <span className="font-semibold text-[#8A7667]">
+                                  {matchedEmployee ? "Employee Unique Order URL" : "Order URL"}
+                                </span>
+                                <div className="flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] p-2.5">
+                                  <span className="truncate text-xs font-mono text-[#70523E]">
+                                    {currentSeat.orderUrl}
+                                  </span>
+                                  <div className="flex items-center gap-1.5 ml-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopy(currentSeat.orderUrl)}
+                                      className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-[#8C5835] shadow-xs hover:bg-[#FAF6F1] cursor-pointer"
+                                      title="Copy URL"
+                                    >
+                                      {copiedUrl ? <Check size={13} /> : <Copy size={13} />}
+                                      <span>{copiedUrl ? "Copied" : "Copy"}</span>
+                                    </button>
+                                    <a
+                                      href={currentSeat.orderUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="flex items-center gap-1 rounded-lg bg-[#8C5835] px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-[#774728] cursor-pointer"
+                                      title="Open Employee Order Page"
+                                    >
+                                      <ExternalLink size={13} />
+                                      <span>Open</span>
+                                    </a>
+                                  </div>
                                 </div>
                               </div>
+
+                              {/* Integrated Live QR Code Container */}
+                              <div className="mt-2 rounded-2xl border border-[#EEE5DC] bg-[#FAF8F5] p-3.5">
+                                <div className="flex items-center gap-3.5">
+                                  <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
+                                    <img
+                                      src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
+                                        currentSeat.orderUrl
+                                      )}`}
+                                      alt="Employee QR Code"
+                                      className="h-full w-full object-contain"
+                                    />
+                                  </div>
+
+                                  <div className="flex-1 space-y-1">
+                                    <p className="text-xs font-bold text-[#342219]">
+                                      {matchedEmployee ? `Employee QR (${matchedEmployee.name})` : `Seat ${currentSeat.number} QR`}
+                                    </p>
+                                    <p className="text-[11px] text-[#8A7667]">
+                                      {matchedEmployee ? "Personal secure QR ordering token" : "Assign an employee to create personal QR link"}
+                                    </p>
+                                    <div className="pt-1 flex gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const link = document.createElement("a");
+                                          link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
+                                            currentSeat.orderUrl
+                                          )}`;
+                                          link.target = "_blank";
+                                          link.download = `${matchedEmployee ? matchedEmployee.name.replace(/\s+/g, "_") : `seat_${currentSeat.number}`}_qr.png`;
+                                          link.click();
+                                        }}
+                                        className="flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#8C5835] border border-[#D5C2B1] hover:bg-[#FAF6F1] cursor-pointer"
+                                      >
+                                        <Download size={12} />
+                                        <span>Download QR (PNG)</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Token Management Actions for Assigned Employee */}
+                              {matchedEmployee && (
+                                <div className="rounded-2xl border border-amber-200 bg-amber-50/60 p-3 mt-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="font-bold text-[11px] text-amber-900 flex items-center gap-1.5">
+                                      <Key size={12} />
+                                      Security & Token Control
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={tokenActionLoading}
+                                      onClick={async () => {
+                                        if (!confirm(`Are you sure you want to regenerate the QR token for ${matchedEmployee.name}? The old QR code will become invalid immediately.`)) {
+                                          return;
+                                        }
+                                        setTokenActionLoading(true);
+                                        try {
+                                          const res = await userApi.regenerateQrToken(matchedEmployee.id);
+                                          if (res.success) {
+                                            alert(`New QR token generated successfully for ${matchedEmployee.name}!`);
+                                            fetchOrgUsers();
+                                          }
+                                        } catch (err: any) {
+                                          alert(err.message || "Failed to regenerate token");
+                                        } finally {
+                                          setTokenActionLoading(false);
+                                        }
+                                      }}
+                                      className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-white border border-amber-300 px-2 py-1.5 text-[11px] font-bold text-amber-900 hover:bg-amber-100/50 cursor-pointer disabled:opacity-50"
+                                    >
+                                      <RefreshCw size={11} className={tokenActionLoading ? "animate-spin" : ""} />
+                                      <span>Regenerate</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={tokenActionLoading}
+                                      onClick={async () => {
+                                        if (!confirm(`Are you sure you want to revoke the QR token for ${matchedEmployee.name}? They will no longer be able to place orders until a new token is generated.`)) {
+                                          return;
+                                        }
+                                        setTokenActionLoading(true);
+                                        try {
+                                          const res = await userApi.revokeQrToken(matchedEmployee.id);
+                                          if (res.success) {
+                                            alert(`QR ordering token revoked for ${matchedEmployee.name}.`);
+                                            fetchOrgUsers();
+                                          }
+                                        } catch (err: any) {
+                                          alert(err.message || "Failed to revoke token");
+                                        } finally {
+                                          setTokenActionLoading(false);
+                                        }
+                                      }}
+                                      className="flex-1 flex items-center justify-center gap-1 rounded-xl bg-rose-50 border border-rose-300 px-2 py-1.5 text-[11px] font-bold text-rose-800 hover:bg-rose-100 cursor-pointer disabled:opacity-50"
+                                    >
+                                      <Ban size={11} />
+                                      <span>Revoke Token</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        </div>
+                          );
+                        })()}
 
                         {/* Action Buttons */}
                         <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[#EEE5DC] pt-4">
@@ -1215,9 +1370,23 @@ export default function LocationPage() {
 
                           <button
                             type="button"
-                            onClick={() =>
-                              alert(`Generated QR Code for Seat ${currentSeat.number}: ${currentSeat.orderUrl}`)
-                            }
+                            onClick={() => {
+                              const cleanIdent = (currentSeat.employee || "").trim().toLowerCase();
+                              const matchedEmployee = cleanIdent
+                                ? orgUsers.find(
+                                    (u) =>
+                                      u.email.toLowerCase() === cleanIdent ||
+                                      u.name.toLowerCase() === cleanIdent ||
+                                      u.userName.toLowerCase() === cleanIdent ||
+                                      u.id === cleanIdent
+                                  )
+                                : null;
+                              if (matchedEmployee) {
+                                alert(`Employee QR Code for ${matchedEmployee.name}:\n${currentSeat.orderUrl}`);
+                              } else {
+                                alert(`Generated Seat QR Code for Seat ${currentSeat.number}:\n${currentSeat.orderUrl}`);
+                              }
+                            }}
                             className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#754329] to-[#8C5835] py-2.5 text-xs font-bold text-white shadow-md hover:opacity-95"
                           >
                             <QrCode size={14} />
@@ -1481,8 +1650,15 @@ export default function LocationPage() {
                     type="button"
                     onClick={() => {
                       const locId = selectedLocation?.id || "1";
+                      const idealUrl = getEmployeeOrderUrl(
+                        currentSeat.employee,
+                        currentSeat.id,
+                        locId,
+                        currentSeat.number
+                      );
+                      const finalSeat = { ...currentSeat, orderUrl: idealUrl };
                       const updatedSeats = (seatsByLoc[locId] || []).map((s) =>
-                        s.number === currentSeat.number ? { ...currentSeat } : s
+                        s.number === currentSeat.number ? finalSeat : s
                       );
                       saveSeatsByLoc({
                         ...seatsByLoc,

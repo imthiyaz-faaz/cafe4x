@@ -15,6 +15,21 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 /**
+ * Generate cryptographically secure random alphanumeric token (base62)
+ * Compatible with Cloudflare Workers runtime and Node.js
+ */
+export function generateSecureQrToken(length: number = 24): string {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars[bytes[i] % chars.length];
+  }
+  return result;
+}
+
+/**
  * Verify password against stored hash or fallback to legacy plaintext
  */
 export async function verifyPassword(password: string, storedHashOrPlain: string): Promise<boolean> {

@@ -12,6 +12,9 @@ export interface UserItem {
   organization?: string;
   shortCode?: string;
   organizationId?: string;
+  qrToken?: string | null;
+  qrTokenCreatedAt?: string | null;
+  qrTokenStatus?: string;
   createdAt?: string;
 }
 
@@ -19,6 +22,22 @@ export interface GetUsersParams {
   type?: string;
   shortCode?: string;
   organization?: string;
+}
+
+export interface ValidatedQrTokenResponse {
+  success: boolean;
+  message?: string;
+  employee: {
+    id: string;
+    displayId?: string;
+    name: string;
+    email: string;
+  };
+  organization: {
+    id: string;
+    shortCode: string;
+    name: string;
+  };
 }
 
 export const userApi = {
@@ -53,6 +72,18 @@ export const userApi = {
 
   async deleteUser(id: string): Promise<void> {
     await api.delete<{ success: boolean }>(`/api/users/${id}`);
+  },
+
+  async validateQrToken(token: string): Promise<ValidatedQrTokenResponse> {
+    return await api.get<ValidatedQrTokenResponse>(`/api/users/qr-token/${token}`);
+  },
+
+  async regenerateQrToken(userId: string): Promise<{ success: boolean; qrToken: string; qrTokenStatus: string; user?: any }> {
+    return await api.post<{ success: boolean; qrToken: string; qrTokenStatus: string; user?: any }>(`/api/users/${userId}/qr-token/regenerate`, {});
+  },
+
+  async revokeQrToken(userId: string): Promise<{ success: boolean; message: string; qrTokenStatus: string }> {
+    return await api.post<{ success: boolean; message: string; qrTokenStatus: string }>(`/api/users/${userId}/qr-token/revoke`, {});
   },
 };
 

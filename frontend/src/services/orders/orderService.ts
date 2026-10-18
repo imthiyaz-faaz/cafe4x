@@ -15,6 +15,8 @@ export interface ProviderOrder {
   locationName: string;
   locationId?: string;
   employeeName: string;
+  employeeId?: string | null;
+  qrToken?: string | null;
   items: OrderItem[];
   subtotal?: number;
   adjustmentAmount?: number;
@@ -30,7 +32,6 @@ export interface ProviderOrder {
 export interface GetOrdersParams {
   location?: string;
   status?: string;
-  todayOnly?: boolean;
 }
 
 export const orderApi = {

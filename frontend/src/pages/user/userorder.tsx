@@ -7,11 +7,15 @@ import {
   Plus,
   Minus,
   ImageIcon,
+  AlertTriangle,
+  Lock,
+  UserCheck,
 } from "lucide-react";
 import Background from "../../components/background";
 import { orderApi } from "../../services/orders";
 import { itemsApi } from "../../services/items";
 import { locationApi } from "../../services/locations";
+import { userApi } from "../../services/userApi";
 
 export interface UserOrderItem {
   id: string;
@@ -26,12 +30,20 @@ export interface UserOrderItem {
 }
 
 export default function UserOrderPage() {
-  const { locationId, seatNumber, shortCode } = useParams<{
+  const { locationId, seatNumber, shortCode, qrToken } = useParams<{
     locationId?: string;
     seatNumber?: string;
     shortCode?: string;
+    qrToken?: string;
   }>();
   const [searchParams] = useSearchParams();
+
+  // Token validation state
+  const [tokenStatus, setTokenStatus] = useState<"checking" | "valid" | "invalid" | "none">(
+    qrToken ? "checking" : "none"
+  );
+  const [tokenErrorMessage, setTokenErrorMessage] = useState<string>("");
+  const [authenticatedEmployee, setAuthenticatedEmployee] = useState<any>(null);
 
   // Try finding location name and seat employee from backend, localStorage or parameters
   const [locationName, setLocationName] = useState<string>("Office");
@@ -51,8 +63,8 @@ export default function UserOrderPage() {
   const [placedOrder, setPlacedOrder] = useState<any>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
 
-  const activeSeatNumber = seatNumber || searchParams.get("seat") || "01";
-  const activeLocationId = locationId || searchParams.get("locationId") || "1";
+  const activeSeatNumber = seatNumber || searchParams.get("seat") || "";
+  const activeLocationId = locationId || searchParams.get("locationId") || "";
 
   // Helper to parse key-value preference string e.g. "Sugar : No,Low,Medium,High"
   const parsePref = (prefStr?: string) => {
@@ -76,6 +88,62 @@ export default function UserOrderPage() {
 
   // 1. Resolve organization shortCode
   const [effectiveShortCode, setEffectiveShortCode] = useState<string>(shortCode || "");
+
+  // Validate QR Token if present
+  useEffect(() => {
+    if (!qrToken) {
+      setTokenStatus("none");
+      return;
+    }
+
+    setTokenStatus("checking");
+    userApi
+      .validateQrToken(qrToken)
+      .then((res) => {
+        if (res && res.success && res.employee) {
+          setTokenStatus("valid");
+          setAuthenticatedEmployee(res.employee);
+          setEmployeeName(res.employee.name);
+          setEmployeeEmail(res.employee.email);
+          if (res.organization?.shortCode) {
+            setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+          }
+
+          // Check if this employee has an assigned seat in any location
+          try {
+            const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
+            for (const k of allKeys) {
+              const storedSeats = localStorage.getItem(k);
+              if (storedSeats) {
+                const parsed = JSON.parse(storedSeats);
+                for (const locKey of Object.keys(parsed)) {
+                  const locSeats = parsed[locKey] || [];
+                  const assignedSeat = locSeats.find(
+                    (s: any) =>
+                      s.employee &&
+                      (s.employee.toLowerCase() === res.employee.email.toLowerCase() ||
+                       s.employee.toLowerCase() === res.employee.name.toLowerCase())
+                  );
+                  if (assignedSeat) {
+                    setSeatId(assignedSeat.id || `Seat-${assignedSeat.number}`);
+                    break;
+                  }
+                }
+              }
+            }
+          } catch {}
+        } else {
+          setTokenStatus("invalid");
+          setTokenErrorMessage(res.message || "Invalid or revoked QR code.");
+        }
+      })
+      .catch((err) => {
+        setTokenStatus("invalid");
+        setTokenErrorMessage(
+          err.response?.data?.message || err.message || "Invalid, revoked or expired QR ordering token."
+        );
+      });
+  }, [qrToken]);
 
   useEffect(() => {
     if (shortCode) {
@@ -319,10 +387,11 @@ export default function UserOrderPage() {
     const orderIdNum = Math.floor(1000 + Math.random() * 9000);
     const orderData = {
       id: `#ORD-${orderIdNum}`,
-      seat: String(activeSeatNumber).padStart(2, "0"),
+      seat: activeSeatNumber ? String(activeSeatNumber).padStart(2, "0") : (seatId || ""),
       locationName: locationName || "Office",
-      locationId: activeLocationId,
-      employeeName: employeeName || employeeEmail || `Seat ${activeSeatNumber}`,
+      locationId: activeLocationId || undefined,
+      employeeName: employeeName || employeeEmail || (activeSeatNumber ? `Seat ${activeSeatNumber}` : "Employee"),
+      qrToken: qrToken || undefined,
       items: selectedItems.map((it) => ({
         name: it.preferenceChoice ? `${it.name} (${it.preferenceChoice})` : it.name,
         qty: it.qty,
@@ -351,8 +420,9 @@ export default function UserOrderPage() {
         id: orderData.id,
         seat: orderData.seat,
         locationName: orderData.locationName,
-        locationId: activeLocationId,
+        locationId: activeLocationId || undefined,
         employeeName: orderData.employeeName,
+        qrToken: qrToken || undefined,
         items: orderData.items,
         total: orderData.total,
         time: orderData.time,
@@ -419,6 +489,48 @@ export default function UserOrderPage() {
     }
   };
 
+  // If scanning via QR token and it's invalid / revoked
+  if (tokenStatus === "invalid") {
+    return (
+      <Background>
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl border border-[#EEE5DC] bg-white p-8 text-center shadow-2xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 shadow-sm">
+              <AlertTriangle size={32} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-[#342219]">Invalid or Revoked QR Link</h2>
+            <p className="mt-2 text-sm text-[#8A7667]">
+              {tokenErrorMessage || "This employee ordering link is no longer active or does not exist."}
+            </p>
+            <div className="mt-6 rounded-2xl border border-rose-100 bg-rose-50/70 p-4 text-xs text-rose-800">
+              <p className="font-semibold">Security Notice</p>
+              <p className="mt-1 text-[11px] text-rose-700">
+                For security reasons, old or altered QR links cannot be used. Please contact your Cafe4x administrator to obtain a fresh QR code.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Background>
+    );
+  }
+
+  // If token is being validated
+  if (tokenStatus === "checking") {
+    return (
+      <Background>
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl border border-[#EEE5DC] bg-white p-8 text-center shadow-xl">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F6ECE2] text-[#8C5835]">
+              <Lock size={28} className="animate-pulse" />
+            </div>
+            <h2 className="mt-4 text-lg font-bold text-[#342219]">Validating Employee QR...</h2>
+            <p className="mt-1 text-xs text-[#8A7667]">Verifying cryptographic security token</p>
+          </div>
+        </div>
+      </Background>
+    );
+  }
+
   return (
     <Background>
       {/* Clean, minimalist customer ordering header */}
@@ -432,11 +544,19 @@ export default function UserOrderPage() {
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-black tracking-tight text-[#342219]">Cafe4X</h1>
                 <span className="rounded-full bg-[#EFE8E1] px-2 py-0.5 text-[10px] font-bold text-[#70452D]">
-                  Customer Order
+                  {authenticatedEmployee ? "Employee Ordering" : "Customer Order"}
                 </span>
+                {authenticatedEmployee && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                    <UserCheck size={10} />
+                    Verified
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-[#8A7667]">
-                {locationName} &bull; Seat {String(activeSeatNumber).padStart(2, "0")} {seatId ? `(${seatId})` : ""}
+                {employeeName ? <span className="font-semibold text-[#342219]">{employeeName} &bull; </span> : null}
+                {locationName}
+                {activeSeatNumber ? ` &bull; Seat ${String(activeSeatNumber).padStart(2, "0")}` : (seatId ? ` &bull; ${seatId}` : "")}
               </p>
             </div>
           </div>

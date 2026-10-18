@@ -47,34 +47,6 @@ export const orderController = {
       const authUser = await getAuthUser(c);
       const location = c.req.query("location");
       const status = c.req.query("status");
-      const todayOnly = c.req.query("todayOnly") === "true";
-
-      // Resolve organization's configured timezone from working_hours
-      let orgTimezone = "Asia/Dubai";
-      try {
-        const whRow = (await db
-          .prepare(`SELECT timezone FROM working_hours WHERE organization_id = ?`)
-          .bind(org.organizationId)
-          .get()) as any;
-        if (whRow?.timezone) {
-          orgTimezone = whRow.timezone;
-        }
-      } catch {}
-
-      // Calculate today's date in organization's timezone (YYYY-MM-DD)
-      let todayDateStr = "";
-      try {
-        const now = new Date();
-        const formatter = new Intl.DateTimeFormat("en-CA", {
-          timeZone: orgTimezone,
-          year: "numeric",
-          month: "2-digit",
-          day: "2-digit",
-        });
-        todayDateStr = formatter.format(now); // "YYYY-MM-DD"
-      } catch {
-        todayDateStr = new Date().toISOString().slice(0, 10);
-      }
 
       let query = `
         SELECT 
@@ -119,20 +91,8 @@ export const orderController = {
       }
 
       if (status) {
-        if (status.includes(",")) {
-          const statuses = status.split(",").map((s) => s.trim());
-          const placeholders = statuses.map(() => "?").join(",");
-          query += ` AND o.status IN (${placeholders})`;
-          params.push(...statuses);
-        } else {
-          query += ` AND o.status = ?`;
-          params.push(status);
-        }
-      }
-
-      if (todayOnly && todayDateStr) {
-        query += ` AND (o.created_at LIKE ? OR o.created_at IS NULL)`;
-        params.push(`${todayDateStr}%`);
+        query += ` AND o.status = ?`;
+        params.push(status);
       }
 
       query += ` ORDER BY o.created_at DESC`;
@@ -306,10 +266,42 @@ export const orderController = {
       const { displayId } = await getNextId(db, "ORD", org.shortCode);
       const orderId = body.id || displayId;
 
-      const seat = String(body.seat || "01").padStart(2, "0");
+      let employeeId: string | null = null;
+      let employeeName = body.employeeName || `Seat ${body.seat || "01"} Guest`;
+      const qrToken = body.qrToken ? String(body.qrToken).trim() : null;
+
+      // If a qrToken was supplied, validate it securely server-side
+      if (qrToken) {
+        const tokenUser = (await db
+          .prepare(
+            `SELECT u.id, u.name, u.email, u.qr_token_status, uo.organization_id, o.short_code
+             FROM users u
+             JOIN user_organizations uo ON u.id = uo.user_id
+             JOIN organizations o ON uo.organization_id = o.id
+             WHERE u.qr_token = ?`
+          )
+          .bind(qrToken)
+          .get()) as any;
+
+        if (!tokenUser) {
+          return c.json({ success: false, message: "Invalid employee QR token" }, 403);
+        }
+        if (tokenUser.qr_token_status !== "active") {
+          return c.json({ success: false, message: "This employee QR token has been revoked" }, 403);
+        }
+
+        // Strict organization isolation check
+        if (tokenUser.organization_id !== org.organizationId) {
+          return c.json({ success: false, message: "Token does not belong to this organization" }, 403);
+        }
+
+        employeeId = String(tokenUser.id);
+        employeeName = tokenUser.name || tokenUser.email || employeeName;
+      }
+
+      const seat = body.seat ? String(body.seat).padStart(2, "0") : "";
       const locationName = body.locationName || "Office";
       const locationId = body.locationId || null;
-      const employeeName = body.employeeName || `Seat ${seat} Guest`;
       const items = Array.isArray(body.items) ? body.items : [];
       const total = Number(body.total) || 0;
       const time = body.time && body.time !== "Just now"
@@ -331,9 +323,9 @@ export const orderController = {
         .prepare(
           `INSERT INTO orders (
             id, display_id, organization_id, short_code, seat, location_id, location_name,
-            employee_name, subtotal, adjustment_amount, discount, total, time, status, notes, items_json,
+            employee_name, employee_id, qr_token, subtotal, adjustment_amount, discount, total, time, status, notes, items_json,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           orderId,
@@ -344,6 +336,8 @@ export const orderController = {
           locationId,
           locationName,
           employeeName,
+          employeeId,
+          qrToken,
           subtotal,
           adjustmentAmount,
           discount,

@@ -10,6 +10,8 @@ import {
   AlertTriangle,
   Lock,
   UserCheck,
+  X,
+  ChevronUp,
 } from "lucide-react";
 import Background from "../../components/background";
 import { orderApi } from "../../services/orders";
@@ -62,6 +64,10 @@ export default function UserOrderPage() {
   // Placed order tracking
   const [placedOrder, setPlacedOrder] = useState<any>(null);
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  // Validation errors for missing beverage preferences: { [itemId]: string } or string message
+  const [preferenceErrors, setPreferenceErrors] = useState<Record<string, string>>({});
+  const [orderValidationError, setOrderValidationError] = useState<string | null>(null);
+  const [isCartDrawerOpen, setIsCartDrawerOpen] = useState(false);
 
   const activeSeatNumber = seatNumber || searchParams.get("seat") || "";
   const activeLocationId = locationId || searchParams.get("locationId") || "";
@@ -196,7 +202,8 @@ export default function UserOrderPage() {
           const mapped: UserOrderItem[] = filtered
             .filter((it) => it.status !== "Out of Stock")
             .map((it) => {
-              const parsed = parsePref(it.preference || it.preferences);
+              const isBeverage = (it.type || it.category) === "Beverages";
+              const parsed = isBeverage ? parsePref(it.preference || it.preferences) : { key: "", options: [] };
               return {
                 id: it.id,
                 name: it.name,
@@ -204,19 +211,12 @@ export default function UserOrderPage() {
                 image: it.image || "",
                 price: Number(it.amount) || 0,
                 category: it.type || it.category || "Beverages",
-                preferenceKey: parsed.key,
-                preferenceOptions: parsed.options,
+                preferenceKey: isBeverage ? parsed.key : undefined,
+                preferenceOptions: isBeverage ? parsed.options : undefined,
               };
             });
 
           setMenuItems(mapped);
-          const defaultPrefs: Record<string, string> = {};
-          mapped.forEach((m) => {
-            if (m.preferenceOptions && m.preferenceOptions.length > 0) {
-              defaultPrefs[m.id] = m.preferenceOptions[0];
-            }
-          });
-          setItemPreferences((prev) => ({ ...defaultPrefs, ...prev }));
         }
         setIsLoadingMenu(false);
       })
@@ -231,7 +231,8 @@ export default function UserOrderPage() {
               const mapped: UserOrderItem[] = parsed
                 .filter((it: any) => it.status !== "Out of Stock")
                 .map((it: any) => {
-                  const p = parsePref(it.preference || it.preferences);
+                  const isBeverage = (it.type || it.category) === "Beverages";
+                  const p = isBeverage ? parsePref(it.preference || it.preferences) : { key: "", options: [] };
                   return {
                     id: it.id,
                     name: it.name,
@@ -239,8 +240,8 @@ export default function UserOrderPage() {
                     image: it.image || "",
                     price: Number(it.amount) || 0,
                     category: it.type || it.category || "Beverages",
-                    preferenceKey: p.key,
-                    preferenceOptions: p.options,
+                    preferenceKey: isBeverage ? p.key : undefined,
+                    preferenceOptions: isBeverage ? p.options : undefined,
                   };
                 });
               setMenuItems(mapped);
@@ -359,7 +360,7 @@ export default function UserOrderPage() {
     return currentDisplayMenu
       .filter((item) => (cartQuantities[item.id] || 0) > 0)
       .map((item) => {
-        const selectedPref = itemPreferences[item.id] || (item.preferenceOptions?.[0] || "");
+        const selectedPref = itemPreferences[item.id] || "";
         return {
           ...item,
           qty: cartQuantities[item.id],
@@ -379,9 +380,48 @@ export default function UserOrderPage() {
 
   const handlePlaceOrder = async () => {
     if (selectedItems.length === 0) {
-      alert("Please select at least 1 item to place an order.");
+      setOrderValidationError("Please select at least 1 item to place an order.");
+      setTimeout(() => setOrderValidationError(null), 5000);
       return;
     }
+
+    // Validation: Every ordered beverage MUST have an explicitly selected sugar preference
+    const missingErrors: Record<string, string> = {};
+    const missingNames: string[] = [];
+
+    for (const it of selectedItems) {
+      const isBeverage = (it.category || "Beverages") === "Beverages";
+      if (isBeverage && (!it.preferenceChoice || !it.preferenceChoice.trim())) {
+        missingErrors[it.id] = `Please select a sugar preference for ${it.name}.`;
+        missingNames.push(it.name);
+      }
+    }
+
+    if (missingNames.length > 0) {
+      setPreferenceErrors(missingErrors);
+      setOrderValidationError(
+        missingNames.length === 1
+          ? `Please select a sugar preference for ${missingNames[0]}.`
+          : `Please select a sugar preference for: ${missingNames.join(", ")}.`
+      );
+
+      // Automatically clear notification after 6 seconds
+      setTimeout(() => {
+        setOrderValidationError(null);
+      }, 6000);
+
+      // Scroll to the first item with error so the employee sees it immediately
+      const firstMissingId = Object.keys(missingErrors)[0];
+      const el = document.getElementById(`menu-item-${firstMissingId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+      return;
+    }
+
+    // Clear any leftover validation errors
+    setPreferenceErrors({});
+    setOrderValidationError(null);
 
     setIsSubmittingOrder(true);
     const orderIdNum = Math.floor(1000 + Math.random() * 9000);
@@ -392,11 +432,18 @@ export default function UserOrderPage() {
       locationId: activeLocationId || undefined,
       employeeName: employeeName || employeeEmail || (activeSeatNumber ? `Seat ${activeSeatNumber}` : "Employee"),
       qrToken: qrToken || undefined,
-      items: selectedItems.map((it) => ({
-        name: it.preferenceChoice ? `${it.name} (${it.preferenceChoice})` : it.name,
-        qty: it.qty,
-        price: it.price,
-      })),
+      items: selectedItems.map((it) => {
+        const isBeverage = (it.category || "Beverages") === "Beverages";
+        const hasPref = isBeverage && it.preferenceChoice && it.preferenceChoice.trim().length > 0;
+        return {
+          itemId: it.id,
+          name: hasPref ? `${it.name} (${it.preferenceChoice})` : it.name,
+          qty: it.qty,
+          price: it.price,
+          image: it.image || "",
+          preference: hasPref ? it.preferenceChoice : undefined,
+        };
+      }),
       total: grandTotal,
       time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       status: "Pending" as const,
@@ -428,8 +475,13 @@ export default function UserOrderPage() {
         time: orderData.time,
         createdAt: orderData.createdAt,
       });
-    } catch (err) {
+    } catch (err: any) {
       console.warn("Could not sync order to backend:", err);
+      if (err?.response?.data?.message) {
+        setOrderValidationError(err.response.data.message);
+        setIsSubmittingOrder(false);
+        return;
+      }
     }
 
     // 3. Sync to admin orders in localStorage
@@ -445,10 +497,7 @@ export default function UserOrderPage() {
           name: i.name,
           price: i.price,
           qty: i.qty,
-          image:
-            currentDisplayMenu.find((m) => m.name === i.name)?.image ||
-            currentDisplayMenu[0]?.image ||
-            "",
+          image: i.image || (currentDisplayMenu.find((m) => m.id === i.itemId)?.image) || "",
         })),
         itemSummary: orderData.items.map((i: any) => `${i.name} x${i.qty}`).join(", "),
         seat: `Seat ${orderData.seat}`,
@@ -574,7 +623,7 @@ export default function UserOrderPage() {
       </header>
 
       {/* Main Container - Focused purely on Menu & Ordering */}
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <main className="mx-auto max-w-6xl px-4 py-6 pb-36 sm:px-6">
         {/* Café Menu Section Header */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -586,19 +635,26 @@ export default function UserOrderPage() {
 
           {/* Floating / Header Order Action Indicator */}
           {totalItemCount > 0 && (
-            <div className="flex items-center gap-3 bg-[#FAF4ED] border border-[#E8DED4] px-4 py-2 rounded-2xl shadow-xs">
-              <div className="text-xs text-[#704225]">
-                <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">₹{grandTotal}</span>
+            <div className="flex flex-col sm:items-end gap-1.5">
+              <div className="flex items-center gap-3 bg-[#FAF4ED] border border-[#E8DED4] px-4 py-2 rounded-2xl shadow-xs">
+                <div className="text-xs text-[#704225]">
+                  <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">₹{grandTotal}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handlePlaceOrder}
+                  disabled={isSubmittingOrder}
+                  className="flex items-center gap-1.5 rounded-xl bg-[#704225] px-4 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#59341D] cursor-pointer disabled:opacity-50"
+                >
+                  <ShoppingBag size={13} />
+                  <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={handlePlaceOrder}
-                disabled={isSubmittingOrder}
-                className="flex items-center gap-1.5 rounded-xl bg-[#704225] px-4 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#59341D] cursor-pointer disabled:opacity-50"
-              >
-                <ShoppingBag size={13} />
-                <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
-              </button>
+              {orderValidationError && (
+                <div className="rounded-xl border border-[#DEC5B0] bg-[#FAF4ED] px-3 py-1 text-[11px] font-semibold text-[#704225] shadow-xs animate-in fade-in duration-150">
+                  {orderValidationError}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -624,14 +680,21 @@ export default function UserOrderPage() {
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {currentDisplayMenu.map((item) => {
               const count = cartQuantities[item.id] || 0;
-              const currentChoice =
-                itemPreferences[item.id] || item.preferenceOptions?.[0] || "";
+              const hasError = !!preferenceErrors[item.id];
+              const isBeverage = (item.category || "Beverages") === "Beverages";
+              const currentChoice = itemPreferences[item.id] || "";
 
               return (
                 <div
+                  id={`menu-item-${item.id}`}
                   key={item.id}
-                  className={`group flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${count > 0 ? "border-[#8C5835] ring-1 ring-[#8C5835]/30" : "border-[#EEE5DC]"
-                    }`}
+                  className={`group flex flex-col overflow-hidden rounded-2xl border bg-white shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-md ${
+                    hasError
+                      ? "border-[#B06A42] ring-2 ring-[#B06A42]/40"
+                      : count > 0
+                      ? "border-[#8C5835] ring-1 ring-[#8C5835]/30"
+                      : "border-[#EEE5DC]"
+                  }`}
                 >
                   {/* Item Image with Price Tag */}
                   <div className="relative h-48 w-full overflow-hidden bg-[#FAF6F1]">
@@ -664,30 +727,53 @@ export default function UserOrderPage() {
                       {item.description || "Freshly made refreshments."}
                     </p>
 
-                    {/* Available Customization Options (Preferences) */}
-                    {item.preferenceOptions && item.preferenceOptions.length > 0 && (
+                    {/* Available Customization Options (Preferences) - strictly for Beverages */}
+                    {isBeverage && item.preferenceOptions && item.preferenceOptions.length > 0 && (
                       <div className="mt-3 pt-2.5 border-t border-[#F5EFE8]">
                         <div className="flex items-center justify-between text-[11px] font-semibold text-[#8C5835] mb-1.5">
-                          <span>{item.preferenceKey || "Preference"}:</span>
-                          <span className="font-bold text-[#342219]">{currentChoice}</span>
+                          <span>
+                            {item.preferenceKey || "Sugar"}:{" "}
+                            <span className="text-[10px] text-[#A66E4E] font-normal">(Required)</span>
+                          </span>
+                          <span className={`font-bold ${currentChoice ? "text-[#342219]" : "text-[#B06A42] italic"}`}>
+                            {currentChoice || "Select preference"}
+                          </span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
-                          {item.preferenceOptions.map((opt) => (
-                            <button
-                              key={opt}
-                              type="button"
-                              onClick={() =>
-                                setItemPreferences((prev) => ({ ...prev, [item.id]: opt }))
-                              }
-                              className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${currentChoice === opt
-                                  ? "bg-[#704225] text-white shadow-2xs"
-                                  : "bg-stone-100 text-stone-700 hover:bg-stone-200"
+                          {item.preferenceOptions.map((opt) => {
+                            const isSelected = currentChoice === opt;
+                            return (
+                              <button
+                                key={opt}
+                                type="button"
+                                onClick={() => {
+                                  setItemPreferences((prev) => ({ ...prev, [item.id]: opt }));
+                                  setPreferenceErrors((prev) => {
+                                    if (!prev[item.id]) return prev;
+                                    const copy = { ...prev };
+                                    delete copy[item.id];
+                                    return copy;
+                                  });
+                                  setOrderValidationError(null);
+                                }}
+                                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition cursor-pointer ${
+                                  isSelected
+                                    ? "bg-[#704225] text-white shadow-2xs"
+                                    : "bg-stone-100 text-stone-700 hover:bg-stone-200"
                                 }`}
-                            >
-                              {opt}
-                            </button>
-                          ))}
+                              >
+                                {opt}
+                              </button>
+                            );
+                          })}
                         </div>
+
+                        {/* Subtle validation prompt when preference is missing for this beverage */}
+                        {hasError && (
+                          <div className="mt-2 rounded-lg border border-[#DEC5B0] bg-[#FAF4ED] px-2.5 py-1 text-[11px] font-medium text-[#704225] animate-in fade-in duration-200">
+                            {preferenceErrors[item.id]}
+                          </div>
+                        )}
                       </div>
                     )}
 
@@ -728,17 +814,125 @@ export default function UserOrderPage() {
           </div>
         )}
 
-        {/* Floating Bottom Bar: Order Now action if items are selected */}
+        {/* Floating Bottom Bar: Order Now action and expandable Order Summary */}
         {totalItemCount > 0 && (
-          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-xl">
+          <div className="fixed bottom-5 left-1/2 -translate-x-1/2 z-40 w-[92%] max-w-xl flex flex-col gap-2">
+            {orderValidationError && (
+              <div className="flex items-center justify-between rounded-xl border border-[#DEC5B0] bg-[#FAF4ED] px-4 py-2.5 text-xs font-semibold text-[#704225] shadow-lg animate-in slide-in-from-bottom-2 duration-200">
+                <span>{orderValidationError}</span>
+                <button
+                  type="button"
+                  onClick={() => setOrderValidationError(null)}
+                  className="text-stone-400 hover:text-stone-700 ml-2 cursor-pointer"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+
+            {/* Expandable Order Summary Panel */}
+            {isCartDrawerOpen && (
+              <div className="rounded-2xl border border-[#DEC5B0] bg-[#FAF8F5] p-4 shadow-2xl backdrop-blur-md animate-in slide-in-from-bottom-3 duration-200 text-[#342219]">
+                <div className="flex items-center justify-between border-b border-[#EEE5DC] pb-2.5 mb-3">
+                  <div className="flex items-center gap-2">
+                    <ShoppingBag size={16} className="text-[#8C5835]" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#754329]">
+                      Order Summary ({totalItemCount} items)
+                    </h4>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsCartDrawerOpen(false)}
+                    className="rounded-lg p-1 text-stone-500 hover:bg-[#EFE5DC] transition cursor-pointer"
+                    title="Close summary"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div className="max-h-56 overflow-y-auto divide-y divide-[#EFE5DC] pr-1 space-y-2">
+                  {selectedItems.map((it) => {
+                    const isBev = (it.category || "Beverages") === "Beverages";
+                    const hasMissingPref = isBev && !it.preferenceChoice;
+
+                    return (
+                      <div key={it.id} className="pt-2 first:pt-0 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {it.image && (
+                            <img
+                              src={it.image}
+                              alt={it.name}
+                              className="h-9 w-9 rounded-lg object-cover shrink-0 border border-[#E8DED4]"
+                            />
+                          )}
+                          <div className="truncate">
+                            <span className="font-bold text-[#342219] block truncate">{it.name}</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isBev ? (
+                                hasMissingPref ? (
+                                  <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-1.5 py-0.5 rounded">
+                                    Preference required
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-[#704225] bg-[#EFE8E1] px-1.5 py-0.5 rounded">
+                                    Sugar: {it.preferenceChoice}
+                                  </span>
+                                )
+                              ) : null}
+                              <span className="text-[10px] text-stone-500">₹{it.price} each</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Quantity adjuster inside summary */}
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1 rounded-lg border border-[#DEC5B0] bg-white p-0.5">
+                            <button
+                              type="button"
+                              onClick={() => updateQuantity(it.id, -1)}
+                              className="h-6 w-6 flex items-center justify-center rounded text-stone-600 hover:bg-[#FAF6F1] cursor-pointer"
+                            >
+                              <Minus size={11} />
+                            </button>
+                            <span className="w-5 text-center text-xs font-bold text-[#342219]">{it.qty}</span>
+                            <button
+                              type="button"
+                              onClick={() => updateQuantity(it.id, 1)}
+                              className="h-6 w-6 flex items-center justify-center rounded bg-[#70452D] text-white cursor-pointer"
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                          <span className="w-14 text-right font-bold text-[#342219]">₹{it.totalPrice}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 pt-2.5 border-t border-[#DEC5B0] flex items-center justify-between text-xs font-bold">
+                  <span className="text-[#8A7667]">Item Total</span>
+                  <span className="text-sm font-black text-[#754329]">₹{grandTotal}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Bottom Bar Main Action */}
             <div className="flex items-center justify-between rounded-2xl border border-[#DEC5B0] bg-[#342219] px-5 py-3.5 text-white shadow-2xl backdrop-blur-md">
-              <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-amber-200">
+              <div
+                onClick={() => setIsCartDrawerOpen((prev) => !prev)}
+                className="flex items-center gap-3 cursor-pointer group"
+                title="Click to view/hide order summary"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-amber-200 group-hover:bg-white/20 transition">
                   <ShoppingBag size={20} />
                 </div>
                 <div>
-                  <div className="text-xs text-stone-300">
+                  <div className="text-xs text-stone-300 flex items-center gap-1.5">
                     <span className="font-bold text-white">{totalItemCount} item{totalItemCount > 1 ? "s" : ""}</span> in cart
+                    <span className="text-[10px] text-amber-300 underline underline-offset-2">
+                      {isCartDrawerOpen ? "Hide summary" : "View summary"}
+                    </span>
                   </div>
                   <div className="text-base font-black text-amber-300">
                     Total: ₹{grandTotal}
@@ -746,14 +940,27 @@ export default function UserOrderPage() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handlePlaceOrder}
-                disabled={isSubmittingOrder}
-                className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#28A745] to-[#208337] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-95 cursor-pointer disabled:opacity-50"
-              >
-                <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCartDrawerOpen((prev) => !prev)}
+                  className="hidden sm:inline-flex items-center gap-1 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-xs font-bold text-white hover:bg-white/20 transition cursor-pointer"
+                >
+                  <span>Summary</span>
+                  <ChevronUp
+                    size={13}
+                    className={`transition-transform duration-200 ${isCartDrawerOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
+                <button
+                  type="button"
+                  onClick={handlePlaceOrder}
+                  disabled={isSubmittingOrder}
+                  className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#28A745] to-[#208337] px-6 py-2.5 text-sm font-bold text-white shadow-md transition hover:opacity-95 cursor-pointer disabled:opacity-50"
+                >
+                  <span>{isSubmittingOrder ? "Placing..." : "Order Now"}</span>
+                </button>
+              </div>
             </div>
           </div>
         )}

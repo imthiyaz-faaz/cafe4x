@@ -11,6 +11,7 @@ export interface OrderItem {
   qty: number;
   price: number;
   preference?: string;
+  image?: string;
 }
 
 export interface OrderModel {
@@ -105,7 +106,19 @@ export const orderController = {
           let items: OrderItem[] = [];
           try {
             const dbItems = (await db
-              .prepare(`SELECT id, item_id as itemId, name, qty, unit_price as price, preference FROM order_items WHERE order_id = ?`)
+              .prepare(`
+                SELECT 
+                  oi.id, 
+                  oi.item_id as itemId, 
+                  oi.name, 
+                  oi.qty, 
+                  oi.unit_price as price, 
+                  oi.preference,
+                  i.image as itemImage
+                FROM order_items oi
+                LEFT JOIN items i ON oi.item_id = i.id
+                WHERE oi.order_id = ?
+              `)
               .bind(r.id)
               .all()) as any[];
 
@@ -117,6 +130,7 @@ export const orderController = {
                 qty: di.qty,
                 price: di.price,
                 preference: di.preference || undefined,
+                image: di.itemImage || undefined,
               }));
             } else if (r.itemsJson) {
               items = JSON.parse(r.itemsJson);
@@ -194,7 +208,19 @@ export const orderController = {
       let items: OrderItem[] = [];
       try {
         const dbItems = (await db
-          .prepare(`SELECT id, item_id as itemId, name, qty, unit_price as price, preference FROM order_items WHERE order_id = ?`)
+          .prepare(`
+            SELECT 
+              oi.id, 
+              oi.item_id as itemId, 
+              oi.name, 
+              oi.qty, 
+              oi.unit_price as price, 
+              oi.preference,
+              i.image as itemImage
+            FROM order_items oi
+            LEFT JOIN items i ON oi.item_id = i.id
+            WHERE oi.order_id = ?
+          `)
           .bind(row.id)
           .all()) as any[];
 
@@ -206,6 +232,7 @@ export const orderController = {
             qty: di.qty,
             price: di.price,
             preference: di.preference || undefined,
+            image: di.itemImage || undefined,
           }));
         } else if (row.itemsJson) {
           items = JSON.parse(row.itemsJson);
@@ -303,6 +330,63 @@ export const orderController = {
       const locationName = body.locationName || "Office";
       const locationId = body.locationId || null;
       const items = Array.isArray(body.items) ? body.items : [];
+
+      if (items.length === 0) {
+        return c.json({ success: false, message: "Order must contain at least one item" }, 400);
+      }
+
+      // Backend validation: Verify every beverage item has an explicitly selected valid sugar preference
+      // Check each item's actual category/type directly from the database
+      for (const it of items) {
+        let dbItem: any = null;
+        if (it.itemId) {
+          dbItem = (await db
+            .prepare(`SELECT id, name, type, category, preference FROM items WHERE id = ? AND organization_id = ?`)
+            .bind(it.itemId, org.organizationId)
+            .get()) as any;
+        }
+        if (!dbItem && it.name) {
+          const rawName = String(it.name).trim();
+          const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
+          dbItem = (await db
+            .prepare(`SELECT id, name, type, category, preference FROM items WHERE organization_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(name) = LOWER(?)) LIMIT 1`)
+            .bind(org.organizationId, rawName, cleanName)
+            .get()) as any;
+        }
+
+        const isBeverage = dbItem
+          ? (dbItem.type === "Beverages" || dbItem.category === "Beverages")
+          : (it.category === "Beverages" || (it.name && /(tea|coffee|chai|drink|juice|latte|cappuccino)/i.test(it.name)));
+
+        if (isBeverage) {
+          // Extract preference from it.preference or from it.name if e.g. "Tea (Medium)"
+          let prefValue = it.preference ? String(it.preference).trim() : "";
+          if (!prefValue && it.name && it.name.includes("(") && it.name.includes(")")) {
+            const match = it.name.match(/\((.*?)\)/);
+            if (match && match[1]) {
+              prefValue = match[1].trim();
+            }
+          }
+
+          if (!prefValue) {
+            const itemName = dbItem?.name || it.name || "Beverage";
+            return c.json({
+              success: false,
+              message: `Please select a sugar preference for ${itemName}.`,
+            }, 400);
+          }
+
+          const validPrefs = ["no", "low", "medium", "high"];
+          if (!validPrefs.includes(prefValue.toLowerCase())) {
+            const itemName = dbItem?.name || it.name || "Beverage";
+            return c.json({
+              success: false,
+              message: `Invalid preference '${prefValue}' for ${itemName}. Must be No, Low, Medium, or High.`,
+            }, 400);
+          }
+        }
+      }
+
       const total = Number(body.total) || 0;
       const time = body.time && body.time !== "Just now"
         ? body.time
@@ -354,6 +438,29 @@ export const orderController = {
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         const oiId = `oi_${orderId}_${i + 1}`;
+        let resolvedItemId = it.itemId || null;
+
+        // If itemId was not provided in payload, attempt exact match from items in this organization
+        if (!resolvedItemId && it.name) {
+          try {
+            const rawName = String(it.name).trim();
+            const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
+            const foundItem = (await db
+              .prepare(
+                `SELECT id FROM items 
+                 WHERE organization_id = ? 
+                   AND (LOWER(name) = LOWER(?) OR LOWER(name) = LOWER(?)) 
+                 LIMIT 1`
+              )
+              .bind(org.organizationId, rawName, cleanName)
+              .get()) as any;
+
+            if (foundItem && foundItem.id) {
+              resolvedItemId = foundItem.id;
+            }
+          } catch {}
+        }
+
         try {
           await db
             .prepare(
@@ -364,7 +471,7 @@ export const orderController = {
               oiId,
               orderId,
               org.organizationId,
-              it.itemId || null,
+              resolvedItemId,
               it.name,
               it.qty || 1,
               it.price || 0,

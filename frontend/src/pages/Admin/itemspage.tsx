@@ -60,9 +60,17 @@ export default function Itemspage() {
       .then((serverItems) => {
         if (!isMounted) return;
         if (Array.isArray(serverItems)) {
-          setItems(serverItems);
+          // ISSUE 2 RULE: Ensure Snacks items never hold legacy sugar preferences
+          const cleaned = serverItems.map((it) => {
+            if (it.type === "Snacks" && (it.preference || it.preferences)) {
+              itemsApi.updateItem(it.id, { preference: "" }).catch(() => {});
+              return { ...it, preference: "", preferences: "" };
+            }
+            return it;
+          });
+          setItems(cleaned);
           try {
-            localStorage.setItem(storageKey, JSON.stringify(serverItems));
+            localStorage.setItem(storageKey, JSON.stringify(cleaned));
           } catch { }
         } else {
           setItems([]);
@@ -224,7 +232,8 @@ export default function Itemspage() {
       if (stored) currentOrgId = JSON.parse(stored).organizationId || "";
     } catch { }
 
-    const preferenceStr = buildPreferenceString(prefKey, prefOptions);
+    const isBeverage = formData.type === "Beverages";
+    const preferenceStr = isBeverage ? buildPreferenceString(prefKey, prefOptions) : "";
     const newItemId = Date.now().toString();
     const newItem: MenuItem = {
       id: newItemId,
@@ -255,7 +264,8 @@ export default function Itemspage() {
     e.preventDefault();
     if (!editingItem || !formData.name.trim()) return;
 
-    const preferenceStr = buildPreferenceString(prefKey, prefOptions);
+    const isBeverage = formData.type === "Beverages";
+    const preferenceStr = isBeverage ? buildPreferenceString(prefKey, prefOptions) : "";
     const updatedItem: MenuItem = {
       ...editingItem,
       name: formData.name.trim(),
@@ -435,8 +445,8 @@ export default function Itemspage() {
                             {item.description || "No description provided"}
                           </p>
 
-                          {/* Preferences (e.g., Sugar: No, Low, Med) */}
-                          {(item.preference || item.preferences) && (
+                          {/* Preferences (e.g., Sugar: No, Low, Med) - only for Beverages */}
+                          {item.type === "Beverages" && (item.preference || item.preferences) && (
                             <p className="mt-1 line-clamp-1 text-[11px] font-semibold text-[#8C5835]">
                               {item.preference || item.preferences}
                             </p>
@@ -580,89 +590,117 @@ export default function Itemspage() {
             </div>
           </FormRow>
 
-          {/* Preference (Key-Value matching Screenshot tags UI) */}
-          <div className="grid grid-cols-12 items-start gap-3 pt-1">
-            <div className="col-span-3 flex items-center justify-between pt-1">
-              <label className="font-bold text-[#342219]">Preference</label>
-              <button
-                type="button"
-                onClick={() => setIsAddingChoice(true)}
-                className="flex h-6 w-6 items-center justify-center rounded-full bg-[#FAF3EC] text-[#8C5835] border border-[#DECFBE] hover:bg-[#F3EBE3] transition shadow-2xs"
-                title="Add choice tag"
+          {/* Type */}
+          <FormRow label="Type">
+            <div className="relative">
+              <select
+                value={formData.type}
+                onChange={(e) => {
+                  const newType = e.target.value as MenuItem["type"];
+                  setFormData({
+                    ...formData,
+                    type: newType,
+                  });
+                  if (newType === "Snacks") {
+                    setIsAddingChoice(false);
+                  }
+                }}
+                className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
               >
-                <Plus size={14} />
-              </button>
+                <option value="Beverages">Beverages (Drinks)</option>
+                <option value="Snacks">Snacks (Food)</option>
+              </select>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
+                ▼
+              </span>
             </div>
-            <div className="col-span-9 space-y-2">
-              {/* Tags Flow matching Screenshot */}
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Preference Key Tag (e.g. Sugar) */}
-                <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF4ED] px-3 py-1.5 text-xs font-bold text-[#704225] border border-[#E8DED4] shadow-2xs">
-                  <input
-                    type="text"
-                    value={prefKey}
-                    onChange={(e) => setPrefKey(e.target.value)}
-                    placeholder="Key"
-                    className="w-16 bg-transparent outline-none font-bold text-[#704225]"
-                  />
-                </span>
+          </FormRow>
 
-                {/* Options Tags (e.g. No x, Low x, Medium x, High x) */}
-                {prefOptions.map((opt, idx) => (
-                  <span
-                    key={idx}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF8F5] px-2.5 py-1.5 text-xs font-semibold text-[#5A4538] border border-[#EEE5DC] shadow-2xs"
-                  >
-                    <span>{opt}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveOption(idx)}
-                      className="text-gray-400 hover:text-red-600 transition"
-                      title="Remove choice"
-                    >
-                      <X size={13} />
-                    </button>
-                  </span>
-                ))}
-
-                {/* Add Choice Input if active */}
-                {isAddingChoice && (
-                  <div className="inline-flex items-center gap-1 rounded-lg border border-[#8C5835] bg-white px-2 py-1 shadow-xs">
+          {/* Preference (Key-Value matching Screenshot tags UI) - ONLY FOR BEVERAGES */}
+          {formData.type === "Beverages" && (
+            <div className="grid grid-cols-12 items-start gap-3 pt-1">
+              <div className="col-span-3 flex items-center justify-between pt-1">
+                <label className="font-bold text-[#342219]">Sugar Preference</label>
+                <button
+                  type="button"
+                  onClick={() => setIsAddingChoice(true)}
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-[#FAF3EC] text-[#8C5835] border border-[#DECFBE] hover:bg-[#F3EBE3] transition shadow-2xs"
+                  title="Add choice tag"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+              <div className="col-span-9 space-y-2">
+                {/* Tags Flow matching Screenshot */}
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Preference Key Tag (e.g. Sugar) */}
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF4ED] px-3 py-1.5 text-xs font-bold text-[#704225] border border-[#E8DED4] shadow-2xs">
                     <input
                       type="text"
-                      autoFocus
-                      placeholder="Choice name..."
-                      value={newChoiceInput}
-                      onChange={(e) => setNewChoiceInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          handleAddChoice();
-                        } else if (e.key === "Escape") {
-                          setIsAddingChoice(false);
-                        }
-                      }}
-                      className="w-20 text-xs text-[#342219] outline-none"
+                      value={prefKey}
+                      onChange={(e) => setPrefKey(e.target.value)}
+                      placeholder="Key"
+                      className="w-16 bg-transparent outline-none font-bold text-[#704225]"
                     />
-                    <button
-                      type="button"
-                      onClick={handleAddChoice}
-                      className="rounded bg-[#8C5835] px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-[#774728]"
+                  </span>
+
+                  {/* Options Tags (e.g. No x, Low x, Medium x, High x) */}
+                  {prefOptions.map((opt, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF8F5] px-2.5 py-1.5 text-xs font-semibold text-[#5A4538] border border-[#EEE5DC] shadow-2xs"
                     >
-                      Add
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingChoice(false)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                )}
+                      <span>{opt}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveOption(idx)}
+                        className="text-gray-400 hover:text-red-600 transition"
+                        title="Remove choice"
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  ))}
+
+                  {/* Add Choice Input if active */}
+                  {isAddingChoice && (
+                    <div className="inline-flex items-center gap-1 rounded-lg border border-[#8C5835] bg-white px-2 py-1 shadow-xs">
+                      <input
+                        type="text"
+                        autoFocus
+                        placeholder="Choice name..."
+                        value={newChoiceInput}
+                        onChange={(e) => setNewChoiceInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            handleAddChoice();
+                          } else if (e.key === "Escape") {
+                            setIsAddingChoice(false);
+                          }
+                        }}
+                        className="w-20 text-xs text-[#342219] outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddChoice}
+                        className="rounded bg-[#8C5835] px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-[#774728]"
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingChoice(false)}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {/* Amount */}
           <FormRow label="Amount">
@@ -675,28 +713,6 @@ export default function Itemspage() {
               onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
               className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none focus:border-[#8C5835]"
             />
-          </FormRow>
-
-          {/* Type */}
-          <FormRow label="Type">
-            <div className="relative">
-              <select
-                value={formData.type}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    type: e.target.value as MenuItem["type"],
-                  })
-                }
-                className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
-              >
-                <option value="Beverages">Drinks</option>
-                <option value="Snacks">Food</option>
-              </select>
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
-                ▼
-              </span>
-            </div>
           </FormRow>
         </CreateFormModal>
 
@@ -838,85 +854,118 @@ export default function Itemspage() {
                   </div>
                 </div>
 
-                {/* Preference Key-Value Tags */}
-                <div className="grid grid-cols-12 items-start gap-3 pt-1">
-                  <div className="col-span-3 flex items-center justify-between pt-1">
-                    <label className="font-bold text-[#342219]">Preference</label>
-                    <button
-                      type="button"
-                      onClick={() => setIsAddingChoice(true)}
-                      className="flex h-6 w-6 items-center justify-center rounded-full bg-[#FAF3EC] text-[#8C5835] border border-[#DECFBE] hover:bg-[#F3EBE3] transition shadow-2xs"
-                      title="Add choice tag"
-                    >
-                      <Plus size={14} />
-                    </button>
-                  </div>
-                  <div className="col-span-9 space-y-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF4ED] px-3 py-1.5 text-xs font-bold text-[#704225] border border-[#E8DED4] shadow-2xs">
-                        <input
-                          type="text"
-                          value={prefKey}
-                          onChange={(e) => setPrefKey(e.target.value)}
-                          placeholder="Key"
-                          className="w-16 bg-transparent outline-none font-bold text-[#704225]"
-                        />
+                {/* Type */}
+                <div className="grid grid-cols-12 items-center gap-3">
+                  <label className="col-span-3 font-bold text-[#342219]">
+                    Type
+                  </label>
+                  <div className="col-span-9">
+                    <div className="relative">
+                      <select
+                        value={formData.type}
+                        onChange={(e) => {
+                          const newType = e.target.value as MenuItem["type"];
+                          setFormData({
+                            ...formData,
+                            type: newType,
+                          });
+                          if (newType === "Snacks") {
+                            setIsAddingChoice(false);
+                          }
+                        }}
+                        className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
+                      >
+                        <option value="Beverages">Beverages (Drinks)</option>
+                        <option value="Snacks">Snacks (Food)</option>
+                      </select>
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
+                        ▼
                       </span>
-
-                      {prefOptions.map((opt, idx) => (
-                        <span
-                          key={idx}
-                          className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF8F5] px-2.5 py-1.5 text-xs font-semibold text-[#5A4538] border border-[#EEE5DC] shadow-2xs"
-                        >
-                          <span>{opt}</span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveOption(idx)}
-                            className="text-gray-400 hover:text-red-600 transition"
-                            title="Remove choice"
-                          >
-                            <X size={13} />
-                          </button>
-                        </span>
-                      ))}
-
-                      {isAddingChoice && (
-                        <div className="inline-flex items-center gap-1 rounded-lg border border-[#8C5835] bg-white px-2 py-1 shadow-xs">
-                          <input
-                            type="text"
-                            autoFocus
-                            placeholder="Choice name..."
-                            value={newChoiceInput}
-                            onChange={(e) => setNewChoiceInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                handleAddChoice();
-                              } else if (e.key === "Escape") {
-                                setIsAddingChoice(false);
-                              }
-                            }}
-                            className="w-20 text-xs text-[#342219] outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleAddChoice}
-                            className="rounded bg-[#8C5835] px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-[#774728]"
-                          >
-                            Add
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setIsAddingChoice(false)}
-                            className="text-gray-400 hover:text-gray-600"
-                          >
-                            <X size={12} />
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
+
+                {/* Preference Key-Value Tags - ONLY FOR BEVERAGES */}
+                {formData.type === "Beverages" && (
+                  <div className="grid grid-cols-12 items-start gap-3 pt-1">
+                    <div className="col-span-3 flex items-center justify-between pt-1">
+                      <label className="font-bold text-[#342219]">Sugar Preference</label>
+                      <button
+                        type="button"
+                        onClick={() => setIsAddingChoice(true)}
+                        className="flex h-6 w-6 items-center justify-center rounded-full bg-[#FAF3EC] text-[#8C5835] border border-[#DECFBE] hover:bg-[#F3EBE3] transition shadow-2xs"
+                        title="Add choice tag"
+                      >
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                    <div className="col-span-9 space-y-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF4ED] px-3 py-1.5 text-xs font-bold text-[#704225] border border-[#E8DED4] shadow-2xs">
+                          <input
+                            type="text"
+                            value={prefKey}
+                            onChange={(e) => setPrefKey(e.target.value)}
+                            placeholder="Key"
+                            className="w-16 bg-transparent outline-none font-bold text-[#704225]"
+                          />
+                        </span>
+
+                        {prefOptions.map((opt, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-[#FAF8F5] px-2.5 py-1.5 text-xs font-semibold text-[#5A4538] border border-[#EEE5DC] shadow-2xs"
+                          >
+                            <span>{opt}</span>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveOption(idx)}
+                              className="text-gray-400 hover:text-red-600 transition"
+                              title="Remove choice"
+                            >
+                              <X size={13} />
+                            </button>
+                          </span>
+                        ))}
+
+                        {isAddingChoice && (
+                          <div className="inline-flex items-center gap-1 rounded-lg border border-[#8C5835] bg-white px-2 py-1 shadow-xs">
+                            <input
+                              type="text"
+                              autoFocus
+                              placeholder="Choice name..."
+                              value={newChoiceInput}
+                              onChange={(e) => setNewChoiceInput(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  e.preventDefault();
+                                  handleAddChoice();
+                                } else if (e.key === "Escape") {
+                                  setIsAddingChoice(false);
+                                }
+                              }}
+                              className="w-20 text-xs text-[#342219] outline-none"
+                            />
+                            <button
+                              type="button"
+                              onClick={handleAddChoice}
+                              className="rounded bg-[#8C5835] px-1.5 py-0.5 text-[10px] font-bold text-white hover:bg-[#774728]"
+                            >
+                              Add
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsAddingChoice(false)}
+                              className="text-gray-400 hover:text-gray-600"
+                            >
+                              <X size={12} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Amount */}
                 <div className="grid grid-cols-12 items-center gap-3">
@@ -933,33 +982,6 @@ export default function Itemspage() {
                       onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                       className="w-full rounded-md border border-gray-200 px-3.5 py-2 text-[#342219] outline-none focus:border-[#8C5835]"
                     />
-                  </div>
-                </div>
-
-                {/* Type */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-bold text-[#342219]">
-                    Type
-                  </label>
-                  <div className="col-span-9">
-                    <div className="relative">
-                      <select
-                        value={formData.type}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            type: e.target.value as MenuItem["type"],
-                          })
-                        }
-                        className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
-                      >
-                        <option value="Beverages">Drinks</option>
-                        <option value="Snacks">Food</option>
-                      </select>
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
-                        ▼
-                      </span>
-                    </div>
                   </div>
                 </div>
 

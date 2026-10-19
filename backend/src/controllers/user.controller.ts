@@ -178,7 +178,7 @@ export const userController = {
       const hashedPassword = await hashPassword(body.password.trim());
       const now = new Date().toISOString();
 
-      const generatedQrToken = generateSecureQrToken(24);
+      const generatedQrToken = generateSecureQrToken(16);
 
       if (!existingUser) {
         await db
@@ -426,7 +426,7 @@ export const userController = {
       }
 
       const targetUserId = link.userId;
-      const newToken = generateSecureQrToken(24);
+      const newToken = generateSecureQrToken(16);
       const now = new Date().toISOString();
 
       await db

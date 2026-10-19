@@ -1,9 +1,13 @@
 import { api } from "../apiClient";
 
 export interface OrderItem {
+  id?: string;
+  itemId?: string;
   name: string;
   qty: number;
   price: number;
+  image?: string;
+  preference?: string;
 }
 
 export type OrderStatus = "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";

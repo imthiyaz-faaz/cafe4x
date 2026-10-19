@@ -156,9 +156,11 @@ export const itemsController = {
       const description = body.description ? body.description.trim() : "";
       const image = body.image || "";
       const status = body.status || "Active";
-      const preference = body.preference || body.preferences || "";
-      const amount = Number(body.amount) || 0;
       const type = body.type || "Beverages";
+      // ISSUE 2 RULE: Only beverages can have preferences; snacks must never store sugar/beverage preferences
+      const rawPreference = body.preference || body.preferences || "";
+      const preference = type === "Snacks" ? "" : rawPreference;
+      const amount = Number(body.amount) || 0;
       const category = body.category || (type === "Snacks" ? "Food" : "Drinks");
       const now = new Date().toISOString();
 
@@ -236,10 +238,16 @@ export const itemsController = {
       const description = body.description !== undefined ? body.description.trim() : null;
       const image = body.image !== undefined ? body.image : null;
       const status = body.status !== undefined ? body.status : null;
-      const preference = body.preference !== undefined ? body.preference : (body.preferences !== undefined ? body.preferences : null);
       const amount = body.amount !== undefined ? Number(body.amount) : null;
       const type = body.type !== undefined ? body.type : null;
       const category = body.category !== undefined ? body.category : (type ? (type === "Snacks" ? "Food" : "Drinks") : null);
+
+      // ISSUE 2 RULE: If item is Snacks or being updated to Snacks, clear preferences
+      const resolvedType = type !== null ? type : (existing.type || "Beverages");
+      let preference = body.preference !== undefined ? body.preference : (body.preferences !== undefined ? body.preferences : null);
+      if (resolvedType === "Snacks") {
+        preference = "";
+      }
 
       await db
         .prepare(

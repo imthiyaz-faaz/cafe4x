@@ -37,6 +37,7 @@ import cancelledOrdersImg from "../../assets/images/cancelled_4k.png";
 import deliveredOrdersImg from "../../assets/images/delivered_4k.png";
 import allOrdersImg from "../../assets/images/all_orders_4k.png";
 import { orderApi } from "../../services/orders";
+import type { MenuItem } from "../../services/items";
 
 const OFFICE_IMG =
   "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80";
@@ -60,7 +61,15 @@ export interface ProviderOrder {
   locationId?: string;
   locationName: string;
   employeeName: string;
-  items: { name: string; qty: number; price: number; preference?: string }[];
+  items: {
+    id?: string;
+    itemId?: string;
+    name: string;
+    qty: number;
+    price: number;
+    image?: string;
+    preference?: string;
+  }[];
   subtotal?: number;
   adjustmentAmount?: number;
   discount?: number;
@@ -110,6 +119,7 @@ export default function ProviderPage() {
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
   const [expandedSummaryItems, setExpandedSummaryItems] = useState<Record<string, boolean>>({});
   const [itemImagesMap, setItemImagesMap] = useState<Record<string, string>>({});
+  const [itemsByIdMap, setItemsByIdMap] = useState<Record<string, MenuItem>>({});
 
   // Today's Pending Summary Modal & Bulk Actions
   const [isPendingSummaryModalOpen, setIsPendingSummaryModalOpen] = useState(false);
@@ -331,20 +341,28 @@ export default function ProviderPage() {
           console.warn("Could not fetch assigned locations for provider:", err);
         });
     });
+  }, [currentUser]);
 
+  useEffect(() => {
     // Also fetch items to retrieve item images for delivered summary
+    let shortCode = currentUser?.shortCode || "";
     import("../../services/items").then(({ itemsApi }) => {
       itemsApi
         .getItems(shortCode || undefined)
         .then((itemsList) => {
           if (Array.isArray(itemsList)) {
-            const map: Record<string, string> = {};
+            const nameMap: Record<string, string> = {};
+            const idMap: Record<string, MenuItem> = {};
             itemsList.forEach((it) => {
+              if (it.id) {
+                idMap[it.id] = it;
+              }
               if (it.name && it.image) {
-                map[it.name.toLowerCase().trim()] = it.image;
+                nameMap[it.name.toLowerCase().trim()] = it.image;
               }
             });
-            setItemImagesMap(map);
+            setItemImagesMap(nameMap);
+            setItemsByIdMap(idMap);
           }
         })
         .catch(() => { });
@@ -1248,10 +1266,28 @@ export default function ProviderPage() {
                                       key={idx}
                                       className="flex items-center justify-between rounded-xl border border-[#EEE5DC] bg-[#FAF8F5] p-3.5 shadow-2xs hover:border-[#D5C2B1] transition"
                                     >
-                                      <div className="flex items-center gap-3">
-                                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white border border-[#E8DED4] text-[#70452D] shadow-2xs">
-                                          <Coffee size={20} />
-                                        </div>
+                                        <div className="flex items-center gap-3">
+                                          {(() => {
+                                            const matchedItem = it.itemId ? itemsByIdMap[it.itemId] : undefined;
+                                            const cleanName = (it.name || "").replace(/\s*\(.*?\)\s*$/, "").trim();
+                                            const displayImg = matchedItem?.image || it.image || itemImagesMap[cleanName.toLowerCase()] || "";
+                                            return (
+                                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white border border-[#E8DED4] text-[#70452D] shadow-2xs overflow-hidden">
+                                                {displayImg ? (
+                                                  <img
+                                                    src={displayImg}
+                                                    alt={it.name}
+                                                    className="h-full w-full object-cover"
+                                                    onError={(e) => {
+                                                      (e.currentTarget as HTMLElement).style.display = "none";
+                                                    }}
+                                                  />
+                                                ) : (
+                                                  <Coffee size={20} />
+                                                )}
+                                              </div>
+                                            );
+                                          })()}
                                         <div>
                                           <h5 className="text-sm font-bold text-[#342219]">
                                             {it.name}

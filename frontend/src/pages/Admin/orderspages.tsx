@@ -13,17 +13,21 @@ import {
   Sparkles,
   Clock,
   ArrowRight,
+  Coffee,
 } from "lucide-react";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import { orderApi } from "../../services/orderApi";
+import { itemsApi, type MenuItem } from "../../services/itemsApi";
 
 export interface OrderItemDetail {
+  itemId?: string;
   name: string;
   price: number;
   qty: number;
   image: string;
+  preference?: string;
 }
 
 export interface OrderRecord {
@@ -85,21 +89,39 @@ export default function OrdersPage() {
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Maintain item lookup maps from menu items database
+  const [itemsById, setItemsById] = useState<Record<string, MenuItem>>({});
+  const [itemsByName, setItemsByName] = useState<Record<string, MenuItem>>({});
+
+  // Fetch menu items to get exact current images and IDs
+  useEffect(() => {
+    itemsApi
+      .getItems(currentShortCode || undefined)
+      .then((itemsList) => {
+        if (Array.isArray(itemsList)) {
+          const byId: Record<string, MenuItem> = {};
+          const byName: Record<string, MenuItem> = {};
+          itemsList.forEach((it) => {
+            if (it.id) {
+              byId[it.id] = it;
+            }
+            if (it.name) {
+              byName[it.name.trim().toLowerCase()] = it;
+            }
+          });
+          setItemsById(byId);
+          setItemsByName(byName);
+        }
+      })
+      .catch(() => {});
+  }, [currentShortCode]);
+
   // Fetch real employee orders from backend and sync with admin orders
   const fetchOrders = () => {
     orderApi
       .getOrders()
       .then((serverOrders) => {
         if (Array.isArray(serverOrders) && serverOrders.length > 0) {
-          const defaultImgs: Record<string, string> = {
-            tea: "https://images.unsplash.com/photo-1544787219-7f47ccb76574?auto=format&fit=crop&w=150&q=80",
-            coffee: "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=150&q=80",
-            "black tea": "https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=150&q=80",
-            "lemon tea": "https://images.unsplash.com/photo-1556679343-c7306c1976bc?auto=format&fit=crop&w=150&q=80",
-            "black coffee": "https://images.unsplash.com/photo-1509042239860-f550ce710b93?auto=format&fit=crop&w=150&q=80",
-            milk: "https://images.unsplash.com/photo-1550583724-b2692b85b150?auto=format&fit=crop&w=150&q=80",
-          };
-
           const mapped: OrderRecord[] = serverOrders.map((so) => {
             const initials = so.employeeName
               ? so.employeeName
@@ -110,14 +132,35 @@ export default function OrdersPage() {
                 .toUpperCase()
               : "EM";
 
-            const itemsMapped = (so.items || []).map((it) => ({
-              name: it.name,
-              price: it.price,
-              qty: it.qty,
-              image:
-                defaultImgs[it.name.toLowerCase()] ||
-                "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=150&q=80",
-            }));
+            const itemsMapped = (so.items || []).map((it) => {
+              const fullName = (it.name || "").trim();
+              const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
+              const fullKey = fullName.toLowerCase();
+
+              // 1. Prefer image assigned to exact item ID
+              let exactImage = "";
+              if (it.itemId && itemsById[it.itemId]?.image) {
+                exactImage = itemsById[it.itemId].image;
+              } else if (it.image) {
+                // 2. Direct snapshot image on order item
+                exactImage = it.image;
+              } else if (itemsByName[fullKey]?.image) {
+                // 3. Exact full name match in current item catalog
+                exactImage = itemsByName[fullKey].image;
+              } else if (itemsByName[baseName]?.image) {
+                // 4. Exact base name match in current item catalog
+                exactImage = itemsByName[baseName].image;
+              }
+
+              return {
+                itemId: it.itemId,
+                name: it.name,
+                price: it.price,
+                qty: it.qty,
+                image: exactImage,
+                preference: it.preference,
+              };
+            });
 
             const summary = itemsMapped.map((i) => `${i.name} x${i.qty}`).join(", ");
 
@@ -173,7 +216,7 @@ export default function OrdersPage() {
       window.removeEventListener("storage", handleStorage);
       clearInterval(interval);
     };
-  }, []);
+  }, [itemsById, itemsByName]);
 
   // Group Orders by Employee so Employee details show first
   const employeeGroups: EmployeeGroup[] = useMemo(() => {
@@ -587,29 +630,60 @@ export default function OrdersPage() {
 
                               {/* Order Items List */}
                               <div className="mt-3 space-y-2">
-                                {order.items.map((item, idx) => (
-                                  <div
-                                    key={idx}
-                                    className="flex items-center justify-between text-xs"
-                                  >
-                                    <div className="flex items-center gap-2.5">
-                                      <img
-                                        src={item.image}
-                                        alt={item.name}
-                                        className="h-8 w-8 rounded-lg object-cover border border-gray-100 shadow-2xs"
-                                      />
-                                      <div>
-                                        <p className="font-semibold text-gray-900">{item.name}</p>
-                                        <p className="text-[10px] text-gray-500">
-                                          ₹{item.price} × {item.qty}
-                                        </p>
+                                {order.items.map((item, idx) => {
+                                  const fullName = (item.name || "").trim();
+                                  const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
+                                  const fullKey = fullName.toLowerCase();
+                                  const resolvedImage =
+                                    item.image ||
+                                    (item.itemId && itemsById[item.itemId]?.image) ||
+                                    itemsByName[fullKey]?.image ||
+                                    itemsByName[baseName]?.image ||
+                                    "";
+
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center justify-between text-xs"
+                                    >
+                                      <div className="flex items-center gap-2.5">
+                                        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#E8DED4] bg-[#FAF8F5] overflow-hidden shadow-2xs">
+                                          {resolvedImage ? (
+                                            <img
+                                              src={resolvedImage}
+                                              alt={item.name}
+                                              className="h-full w-full object-cover"
+                                              onError={(e) => {
+                                                (e.currentTarget as HTMLElement).style.display = "none";
+                                                const parent = (e.currentTarget as HTMLElement).parentElement;
+                                                if (parent) {
+                                                  const placeholder = parent.querySelector(".order-neutral-placeholder");
+                                                  if (placeholder) (placeholder as HTMLElement).style.display = "flex";
+                                                }
+                                              }}
+                                            />
+                                          ) : null}
+                                          <div
+                                            className={`order-neutral-placeholder flex h-full w-full items-center justify-center text-[#8C5835] ${
+                                              resolvedImage ? "hidden" : "flex"
+                                            }`}
+                                          >
+                                            <Coffee size={16} />
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <p className="font-semibold text-gray-900">{item.name}</p>
+                                          <p className="text-[10px] text-gray-500">
+                                            ₹{item.price} × {item.qty}
+                                          </p>
+                                        </div>
                                       </div>
+                                      <span className="font-bold text-gray-800">
+                                        ₹{(item.price * item.qty).toFixed(2)}
+                                      </span>
                                     </div>
-                                    <span className="font-bold text-gray-800">
-                                      ₹{(item.price * item.qty).toFixed(2)}
-                                    </span>
-                                  </div>
-                                ))}
+                                  );
+                                })}
                               </div>
 
                               {/* Order Notes / Special Instructions */}

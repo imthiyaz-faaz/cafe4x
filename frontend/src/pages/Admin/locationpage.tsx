@@ -1156,6 +1156,13 @@ export default function LocationPage() {
                               )
                             : null;
 
+                          const effectiveOrderUrl = getEmployeeOrderUrl(
+                            currentSeat.employee,
+                            currentSeat.id,
+                            activeLocationId,
+                            currentSeat.number
+                          );
+
                           return (
                             <div className="mt-5 space-y-3.5 text-xs">
                               {/* Assigned Employee */}
@@ -1221,12 +1228,12 @@ export default function LocationPage() {
                                 </span>
                                 <div className="flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] p-2.5">
                                   <span className="truncate text-xs font-mono text-[#70523E]">
-                                    {currentSeat.orderUrl}
+                                    {effectiveOrderUrl}
                                   </span>
                                   <div className="flex items-center gap-1.5 ml-2">
                                     <button
                                       type="button"
-                                      onClick={() => handleCopy(currentSeat.orderUrl)}
+                                      onClick={() => handleCopy(effectiveOrderUrl)}
                                       className="flex items-center gap-1 rounded-lg bg-white px-2 py-1 text-xs font-semibold text-[#8C5835] shadow-xs hover:bg-[#FAF6F1] cursor-pointer"
                                       title="Copy URL"
                                     >
@@ -1234,7 +1241,7 @@ export default function LocationPage() {
                                       <span>{copiedUrl ? "Copied" : "Copy"}</span>
                                     </button>
                                     <a
-                                      href={currentSeat.orderUrl}
+                                      href={effectiveOrderUrl}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="flex items-center gap-1 rounded-lg bg-[#8C5835] px-2.5 py-1 text-xs font-semibold text-white shadow-xs hover:bg-[#774728] cursor-pointer"
@@ -1253,7 +1260,7 @@ export default function LocationPage() {
                                   <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-gray-200 bg-white p-1.5 shadow-sm">
                                     <img
                                       src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(
-                                        currentSeat.orderUrl
+                                        effectiveOrderUrl
                                       )}`}
                                       alt="Employee QR Code"
                                       className="h-full w-full object-contain"
@@ -1273,7 +1280,7 @@ export default function LocationPage() {
                                         onClick={() => {
                                           const link = document.createElement("a");
                                           link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(
-                                            currentSeat.orderUrl
+                                            effectiveOrderUrl
                                           )}`;
                                           link.target = "_blank";
                                           link.download = `${matchedEmployee ? matchedEmployee.name.replace(/\s+/g, "_") : `seat_${currentSeat.number}`}_qr.png`;

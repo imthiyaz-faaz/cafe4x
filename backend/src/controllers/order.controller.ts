@@ -23,6 +23,8 @@ export interface OrderModel {
   locationName: string;
   locationId?: string;
   employeeName: string;
+  employeeId?: string;
+  employeeEmail?: string;
   items: OrderItem[];
   subtotal?: number;
   adjustmentAmount?: number;
@@ -48,6 +50,9 @@ export const orderController = {
       const authUser = await getAuthUser(c);
       const location = c.req.query("location");
       const status = c.req.query("status");
+      const employee = c.req.query("employee");
+      const startDate = c.req.query("startDate");
+      const endDate = c.req.query("endDate");
 
       let query = `
         SELECT 
@@ -59,6 +64,8 @@ export const orderController = {
           o.location_id as locationId, 
           o.location_name as locationName,
           o.employee_name as employeeName, 
+          o.employee_id as employeeId,
+          u.email as employeeEmail,
           o.subtotal,
           o.adjustment_amount as adjustmentAmount,
           o.discount,
@@ -70,6 +77,7 @@ export const orderController = {
           o.created_at as createdAt, 
           o.updated_at as updatedAt
         FROM orders o
+        LEFT JOIN users u ON o.employee_id = u.id
       `;
       const params: any[] = [];
 
@@ -94,6 +102,21 @@ export const orderController = {
       if (status) {
         query += ` AND o.status = ?`;
         params.push(status);
+      }
+
+      if (employee) {
+        query += ` AND (o.employee_id = ? OR LOWER(o.employee_name) = LOWER(?) OR LOWER(u.email) = LOWER(?))`;
+        params.push(employee, employee, employee);
+      }
+
+      if (startDate) {
+        query += ` AND o.created_at >= ?`;
+        params.push(startDate);
+      }
+
+      if (endDate) {
+        query += ` AND o.created_at <= ?`;
+        params.push(endDate);
       }
 
       query += ` ORDER BY o.created_at DESC`;
@@ -162,6 +185,8 @@ export const orderController = {
             locationId: r.locationId || undefined,
             locationName: r.locationName,
             employeeName: r.employeeName,
+            employeeId: r.employeeId || undefined,
+            employeeEmail: r.employeeEmail || undefined,
             items,
             subtotal,
             adjustmentAmount,
@@ -182,7 +207,71 @@ export const orderController = {
     }
   },
 
-  // GET /api/orders/:id
+  /**
+   * GET /api/orders/employees
+   * Returns a list of employees who have placed orders within the authorized organization
+   * optionally filtered by startDate and endDate.
+   */
+  async getOrderEmployees(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 403);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const startDate = c.req.query("startDate");
+      const endDate = c.req.query("endDate");
+
+      let query = `
+        SELECT 
+          COALESCE(o.employee_id, '') as employeeId,
+          o.employee_name as employeeName,
+          u.email as employeeEmail,
+          o.location_name as locationName,
+          o.seat as seat,
+          COUNT(o.id) as orderCount,
+          SUM(o.total) as totalSpend,
+          MAX(o.created_at) as latestOrderDate
+        FROM orders o
+        LEFT JOIN users u ON o.employee_id = u.id
+        WHERE o.organization_id = ?
+      `;
+      const params: any[] = [org.organizationId];
+
+      if (startDate) {
+        query += ` AND o.created_at >= ?`;
+        params.push(startDate);
+      }
+      if (endDate) {
+        query += ` AND o.created_at <= ?`;
+        params.push(endDate);
+      }
+
+      query += `
+        GROUP BY COALESCE(o.employee_id, o.employee_name), o.employee_name
+        ORDER BY MAX(o.created_at) DESC
+      `;
+
+      const rows = (await db.prepare(query).bind(...params).all()) as any[];
+
+      const employees = (rows || []).map((r) => ({
+        employeeId: r.employeeId || null,
+        employeeName: r.employeeName,
+        employeeEmail: r.employeeEmail || null,
+        department: r.locationName || "Office Team",
+        locationName: r.locationName || "Office",
+        seat: r.seat ? `Seat ${r.seat}` : "",
+        orderCount: Number(r.orderCount) || 0,
+        totalSpend: Number(r.totalSpend) || 0,
+        latestOrderDate: r.latestOrderDate,
+      }));
+
+      return c.json({ success: true, employees });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
   async getOrderById(c: Context<AppEnv>) {
     try {
       const id = c.req.param("id");

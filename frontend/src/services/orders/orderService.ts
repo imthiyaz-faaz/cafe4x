@@ -37,12 +37,32 @@ export interface ProviderOrder {
 export interface GetOrdersParams {
   location?: string;
   status?: string;
+  employee?: string;
+  startDate?: string;
+  endDate?: string;
+}
+
+export interface EmployeeOrderSummary {
+  employeeId: string | null;
+  employeeName: string;
+  employeeEmail: string | null;
+  department: string;
+  locationName: string;
+  seat: string;
+  orderCount: number;
+  totalSpend: number;
+  latestOrderDate: string;
 }
 
 export const orderApi = {
   async getOrders(params?: GetOrdersParams): Promise<ProviderOrder[]> {
     const res = await api.get<{ success: boolean; orders: ProviderOrder[] }>("/api/orders", params);
     return res.orders || [];
+  },
+
+  async getOrderEmployees(params?: { startDate?: string; endDate?: string }): Promise<EmployeeOrderSummary[]> {
+    const res = await api.get<{ success: boolean; employees: EmployeeOrderSummary[] }>("/api/orders/employees", params);
+    return res.employees || [];
   },
 
   async getOrderById(id: string): Promise<ProviderOrder> {

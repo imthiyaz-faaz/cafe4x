@@ -517,14 +517,11 @@ export const locationController = {
         } catch { }
       }
 
-      // Determine order URL
-      let orderUrl = body.orderUrl || null;
+      // Determine order URL (always store clean relative path without protocol or domain)
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      if (matchedQrToken) {
-        orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
-      } else if (!orderUrl) {
-        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}`;
-      }
+      let orderUrl = matchedQrToken
+        ? `${orgPrefix}/employee/${matchedQrToken}`
+        : `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}`;
 
       const now = new Date().toISOString();
 
@@ -740,12 +737,9 @@ export const locationController = {
       }
 
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      let orderUrl = body.orderUrl || null;
-      if (matchedQrToken) {
-        orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
-      } else if (!orderUrl) {
-        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
-      }
+      let orderUrl = matchedQrToken
+        ? `${orgPrefix}/employee/${matchedQrToken}`
+        : `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
 
       const now = new Date().toISOString();
       try {

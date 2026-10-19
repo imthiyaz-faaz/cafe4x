@@ -1,6 +1,18 @@
 import { UniversalDb } from "../db";
 
 /**
+ * Hash a raw string using SHA-256 hex encoding.
+ * Compatible with Cloudflare Workers runtime and Node.js.
+ */
+export async function sha256Hex(raw: string): Promise<string> {
+  const enc = new TextEncoder();
+  const buf = await crypto.subtle.digest("SHA-256", enc.encode(raw));
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
  * Hash password securely using Web Crypto API (SHA-256 with salt)
  * Compatible with Cloudflare Workers runtime and Node.js
  */

@@ -17,31 +17,26 @@ export const organizationController = {
   // GET /api/organizations?userId=xxx
   async getOrganizations(c: Context<AppEnv>) {
     try {
-      const db = getUniversalDb(c.env?.DB);
       const authUser = await getAuthUser(c);
-      const userId = c.req.query("userId") || authUser?.id;
-
-      if (userId) {
-        const rows = (await db
-          .prepare(
-            `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, o.created_at as createdAt
-             FROM organizations o
-             JOIN user_organizations uo ON o.id = uo.organization_id
-             WHERE uo.user_id = ?
-             ORDER BY o.created_at DESC`
-          )
-          .bind(userId)
-          .all()) as any[];
-
-        return c.json({ success: true, organizations: rows || [] });
+      if (!authUser) {
+        return c.json({ success: false, message: "Unauthorized. Please log in to view organizations." }, 401);
       }
+
+      const db = getUniversalDb(c.env?.DB);
+      const userId = c.req.query("userId") || authUser.id;
+
+      // Ensure user can only query their own organizations unless they are Admin
+      const targetUserId = authUser.userType === "Admin" ? userId : authUser.id;
 
       const rows = (await db
         .prepare(
-          `SELECT id, display_id as displayId, name, short_code as shortCode, owner_user_id as ownerUserId, created_at as createdAt
-           FROM organizations
-           ORDER BY created_at DESC`
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, o.created_at as createdAt
+           FROM organizations o
+           JOIN user_organizations uo ON o.id = uo.organization_id
+           WHERE uo.user_id = ?
+           ORDER BY o.created_at DESC`
         )
+        .bind(targetUserId)
         .all()) as any[];
 
       return c.json({ success: true, organizations: rows || [] });
@@ -53,11 +48,15 @@ export const organizationController = {
   // POST /api/organizations
   async createOrganization(c: Context<AppEnv>) {
     try {
+      const authUser = await getAuthUser(c);
+      if (!authUser) {
+        return c.json({ success: false, message: "Unauthorized. Please log in to create an organization." }, 401);
+      }
+
       const body = await c.req.json();
       const name = (body.name || "").trim();
       const shortCode = (body.shortCode || "").trim().toUpperCase();
-      const authUser = await getAuthUser(c);
-      const userId = body.userId ? String(body.userId) : (authUser ? authUser.id : "");
+      const userId = body.userId ? String(body.userId) : authUser.id;
 
       if (!name || !shortCode) {
         return c.json({ success: false, message: "Organization name and shortCode are required" }, 400);

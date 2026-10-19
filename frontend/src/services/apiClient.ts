@@ -75,6 +75,14 @@ export async function apiRequest<T = any>(
   }
 
   if (!response.ok) {
+    if (response.status === 401 && !endpoint.includes("/api/auth/login") && !endpoint.includes("/api/auth/signup")) {
+      localStorage.removeItem("cafe4x_token");
+      localStorage.removeItem("cafe4x_currentUser");
+      localStorage.removeItem("cafe4x_userOrganizations");
+      localStorage.removeItem("cafe4x_organizations");
+      window.dispatchEvent(new Event("cafe4x_auth_expired"));
+    }
+
     const errorMsg =
       data.message ||
       data.error ||

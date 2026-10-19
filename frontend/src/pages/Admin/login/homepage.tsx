@@ -13,6 +13,9 @@ export default function Home() {
             <div className="pointer-events-none absolute -left-20 top-10 h-64 w-64 rounded-full bg-[#EAD5C0]/30 blur-3xl" />
             <div className="pointer-events-none absolute -bottom-20 right-0 h-72 w-72 rounded-full bg-[#D7B18D]/20 blur-3xl" />
 
+            {/* Empty first column on md+ screens to push content to the right */}
+            <div className="hidden md:block" aria-hidden="true" />
+
             {/* RIGHT: Welcome content */}
             <div className="relative z-10 mx-auto w-full max-w-lg px-2 md:px-0">
 

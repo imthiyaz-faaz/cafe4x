@@ -65,14 +65,24 @@ export const authApi = {
   async me(): Promise<MeResponse> {
     return api.get<MeResponse>("/api/auth/me");
   },
+
+  async logout(): Promise<void> {
+    try {
+      await api.post("/api/auth/logout", {});
+    } catch {
+      // Ignore network errors during logout
+    }
+  },
 };
 
 export const authService = {
   ...authApi,
-  logout(): void {
+  async logout(): Promise<void> {
+    await authApi.logout();
     localStorage.removeItem("cafe4x_token");
     localStorage.removeItem("cafe4x_currentUser");
     localStorage.removeItem("cafe4x_userOrganizations");
+    localStorage.removeItem("cafe4x_organizations");
   },
 };
 

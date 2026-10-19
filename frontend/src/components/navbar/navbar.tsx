@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useLocation, useParams, useNavigate } from "react-router-dom";
 import {
   Users,
   MapPin,
@@ -13,23 +13,20 @@ import {
   LayoutDashboard,
 } from "lucide-react";
 import logoImg from "../../assets/images/logo.png";
+import { useAuth } from "../common/AuthContext";
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
   const params = useParams();
+  const navigate = useNavigate();
   const shortCode = params.shortCode;
+  const { user: currentUser, logout } = useAuth();
 
-  const [currentUser, setCurrentUser] = useState<any>(null);
-
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem("cafe4x_currentUser");
-      if (stored) {
-        setCurrentUser(JSON.parse(stored));
-      }
-    } catch {}
-  }, []);
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login");
+  };
 
   const basePath = shortCode ? `/${shortCode}` : "";
 
@@ -120,17 +117,14 @@ export default function Navbar() {
             </div>
           </Link>
 
-          <Link
-            to="/login"
+          <button
+            type="button"
             title="Log out"
-            onClick={() => {
-              localStorage.removeItem("cafe4x_currentUser");
-              localStorage.removeItem("cafe4x_token");
-            }}
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#EFE7DE] bg-white text-[#9A8778] transition hover:border-[#DEC5B0] hover:bg-[#FAF6F1] hover:text-[#70452D]"
+            onClick={handleLogout}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#EFE7DE] bg-white text-[#9A8778] transition hover:border-[#DEC5B0] hover:bg-[#FAF6F1] hover:text-[#70452D] cursor-pointer"
           >
             <LogOut size={18} />
-          </Link>
+          </button>
         </div>
 
         {/* Mobile menu toggle button */}
@@ -185,13 +179,14 @@ export default function Navbar() {
                 <p className="text-[10px] text-[#9A8778]">{orgName}</p>
               </div>
             </div>
-            <Link
-              to="/login"
-              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1]"
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer"
             >
               <LogOut size={15} />
               Logout
-            </Link>
+            </button>
           </div>
         </div>
       )}

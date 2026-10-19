@@ -5,10 +5,11 @@ import { organizationApi, type Organization } from "../../../services/organizati
 import Background from "../../../components/background";
 import logoImg from "../../../assets/images/logo.png";
 import CreateFormModal, { FormRow } from "../../../components/common/CreateFormModal";
+import { useAuth } from "../../../components/common/AuthContext";
 
 export default function ChooseOrganizationPage() {
   const navigate = useNavigate();
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const { user: currentUser, switchOrganization } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -20,34 +21,22 @@ export default function ChooseOrganizationPage() {
   const [modalError, setModalError] = useState("");
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("cafe4x_currentUser");
-      if (stored) {
-        const user = JSON.parse(stored);
-        setCurrentUser(user);
+    if (!currentUser) return;
 
-        // Fetch organizations for this user
-        organizationApi
-          .getOrganizations(user.id)
-          .then((orgs: Organization[]) => {
-            if (orgs && orgs.length > 0) {
-              setOrganizations(orgs);
-            } else {
-              // Fallback to local storage organizations
-              loadLocalOrgs(user);
-            }
-          })
-          .catch(() => {
-            loadLocalOrgs(user);
-          })
-          .finally(() => setLoading(false));
-      } else {
-        navigate("/login");
-      }
-    } catch {
-      navigate("/login");
-    }
-  }, [navigate]);
+    organizationApi
+      .getOrganizations(currentUser.id)
+      .then((orgs: Organization[]) => {
+        if (orgs && orgs.length > 0) {
+          setOrganizations(orgs);
+        } else {
+          loadLocalOrgs(currentUser);
+        }
+      })
+      .catch(() => {
+        loadLocalOrgs(currentUser);
+      })
+      .finally(() => setLoading(false));
+  }, [currentUser]);
 
   const loadLocalOrgs = (user: any) => {
     try {
@@ -76,16 +65,12 @@ export default function ChooseOrganizationPage() {
   };
 
   const handleSelectOrg = (org: Organization) => {
-    // Update active organization on current user
-    if (currentUser) {
-      const updatedUser = {
-        ...currentUser,
-        organization: org.name,
-        shortCode: org.shortCode.toUpperCase(),
-        organizationId: org.id,
-      };
-      localStorage.setItem("cafe4x_currentUser", JSON.stringify(updatedUser));
-    }
+    // Update active organization in AuthContext and localStorage
+    switchOrganization({
+      id: org.id,
+      name: org.name,
+      shortCode: org.shortCode.toUpperCase(),
+    });
     navigate(`/${org.shortCode.toUpperCase()}/landing`);
   };
 

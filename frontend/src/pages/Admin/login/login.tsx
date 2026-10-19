@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Coffee,
@@ -11,15 +11,23 @@ import {
 } from "lucide-react";
 import Background from "../../../components/background";
 import { authApi } from "../../../services/auth";
+import { useAuth } from "../../../components/common/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login, logout } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // When visiting the Login page, ensure any prior or stale session is cleaned up
+  // so browser navigation or visiting /login cannot bypass entering credentials.
+  useEffect(() => {
+    logout();
+  }, [logout]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -42,15 +50,8 @@ export default function Login() {
         password: inputPass,
       });
 
-      if (res.success && res.user) {
-        if (res.token) {
-          localStorage.setItem("cafe4x_token", res.token);
-        }
-        localStorage.setItem("cafe4x_currentUser", JSON.stringify(res.user));
-
-        if (res.organizations && res.organizations.length > 0) {
-          localStorage.setItem("cafe4x_organizations", JSON.stringify(res.organizations));
-        }
+      if (res.success && res.user && res.token) {
+        login(res.token, res.user, res.organizations);
 
         if (res.user.userType === "Provider") {
           const userShortCode = res.user.shortCode ? res.user.shortCode.toUpperCase() : "";
@@ -63,44 +64,7 @@ export default function Login() {
         return;
       }
     } catch (apiErr: any) {
-      // If the backend returned an explicit error (401, 400, etc.), do not bypass password check
-      if (apiErr.message && !apiErr.message.includes("Failed to fetch") && !apiErr.message.includes("NetworkError")) {
-        setError(apiErr.message || "Invalid username/email or password.");
-        return;
-      }
-
-      // Offline / fallback only: check local storage users with password verification
-      let userList: any[] = [];
-      try {
-        const stored = localStorage.getItem("cafe4x_users");
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            userList = parsed;
-          }
-        }
-      } catch { }
-
-      const matchedUser = userList.find(
-        (u: any) =>
-          ((u.email && u.email.toLowerCase() === inputUser) ||
-            (u.userName && u.userName.toLowerCase() === inputUser)) &&
-          u.password === inputPass
-      );
-
-      if (matchedUser) {
-        const { password: _, ...userSafe } = matchedUser;
-        localStorage.setItem("cafe4x_currentUser", JSON.stringify(userSafe));
-        if (userSafe.userType === "Provider") {
-          const userShortCode = userSafe.shortCode ? userSafe.shortCode.toUpperCase() : "";
-          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider");
-          return;
-        }
-        navigate("/home");
-        return;
-      }
-
-      setError(apiErr.message || "Invalid credentials. Please verify your login details.");
+      setError(apiErr.message || "Invalid username/email or password.");
     } finally {
       setIsLoading(false);
     }
@@ -158,16 +122,6 @@ export default function Login() {
                   Your favourite coffee and refreshments, just a few clicks
                   away. Sign in and make your next coffee break effortless.
                 </p>
-
-                <div className="mt-8 flex flex-wrap gap-3">
-                  <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm text-white">
-                    ☕ Freshly Brewed
-                  </span>
-
-                  <span className="rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm text-white">
-                    ✓ Employee Access
-                  </span>
-                </div>
               </div>
 
               <p className="text-xs text-white/60">

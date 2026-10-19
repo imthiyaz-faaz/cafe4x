@@ -1,7 +1,8 @@
 import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
-import { getNextId, hashPassword, verifyPassword } from "../utils/id-generator";
+import { getNextId, hashPassword, verifyPassword, sha256Hex } from "../utils/id-generator";
+import { getAuthUser } from "../middleware/auth.middleware";
 
 export interface UserModel {
   id: string;
@@ -109,10 +110,25 @@ export const authController = {
         createdAt: row.createdAt,
       };
 
+      const token = `cafe4x_token_${row.id}_${Date.now()}`;
+      try {
+        const tokenHash = await sha256Hex(token);
+        const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        await db
+          .prepare(
+            `INSERT INTO user_sessions (id, token_hash, user_id, expires_at)
+             VALUES (?, ?, ?, ?)`
+          )
+          .run(sessionId, tokenHash, String(row.id), expiresAt);
+      } catch (sessErr) {
+        console.warn("Could not record session:", sessErr);
+      }
+
       return c.json({
         success: true,
         message: "Login successful",
-        token: `cafe4x_token_${row.id}_${Date.now()}`,
+        token,
         user: userSafe,
         organizations: userOrgs,
       }, 200);
@@ -213,11 +229,26 @@ export const authController = {
         createdAt: now,
       };
 
+      const token = `cafe4x_token_${newUserId}_${Date.now()}`;
+      try {
+        const tokenHash = await sha256Hex(token);
+        const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+        await db
+          .prepare(
+            `INSERT INTO user_sessions (id, token_hash, user_id, expires_at)
+             VALUES (?, ?, ?, ?)`
+          )
+          .run(sessionId, tokenHash, String(newUserId), expiresAt);
+      } catch (sessErr) {
+        console.warn("Could not record session:", sessErr);
+      }
+
       return c.json({
         success: true,
         message: "User registered successfully",
         user: userSafe,
-        token: `cafe4x_token_${newUserId}_${Date.now()}`,
+        token,
         organizations: [
           {
             id: actualOrgId,
@@ -235,14 +266,10 @@ export const authController = {
 
   // GET /api/auth/me (validates token/session)
   async me(c: Context<AppEnv>) {
-    const authHeader = c.req.header("Authorization") || "";
-    if (!authHeader.startsWith("Bearer ")) {
-      return c.json({ success: false, message: "Unauthorized" }, 401);
+    const authUser = await getAuthUser(c);
+    if (!authUser) {
+      return c.json({ success: false, message: "Unauthorized. Session is invalid or has expired." }, 401);
     }
-
-    const token = authHeader.replace("Bearer ", "").trim();
-    const parts = token.split("_");
-    const userId = parts[2];
 
     const db = getUniversalDb(c.env?.DB);
     const user = (await db
@@ -250,37 +277,62 @@ export const authController = {
         `SELECT id, display_id as displayId, name, user_name as userName, email, mobile_number as mobileNumber, user_type as userType, created_at as createdAt
          FROM users WHERE id = ?`
       )
-      .bind(userId)
+      .bind(authUser.id)
       .get()) as any;
 
-    if (user) {
-      const userOrgs = (await db
-        .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
-           FROM organizations o
-           JOIN user_organizations uo ON o.id = uo.organization_id
-           WHERE uo.user_id = ?
-           ORDER BY o.created_at DESC`
-        )
-        .bind(user.id)
-        .all()) as any[];
-
-      return c.json({
-        success: true,
-        user: {
-          id: String(user.id),
-          displayId: user.displayId || `USR-${user.id}`,
-          name: user.name,
-          userName: user.userName,
-          email: user.email,
-          mobileNumber: user.mobileNumber || "",
-          userType: user.userType,
-          createdAt: user.createdAt,
-        },
-        organizations: userOrgs,
-      });
+    if (!user) {
+      return c.json({ success: false, message: "User not found." }, 404);
     }
 
-    return c.json({ success: true, message: "Token valid" });
+    const userOrgs = (await db
+      .prepare(
+        `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
+         FROM organizations o
+         JOIN user_organizations uo ON o.id = uo.organization_id
+         WHERE uo.user_id = ?
+         ORDER BY o.created_at DESC`
+      )
+      .bind(user.id)
+      .all()) as any[];
+
+    const primaryOrg = userOrgs.length > 0 ? userOrgs[0] : null;
+
+    return c.json({
+      success: true,
+      user: {
+        id: String(user.id),
+        displayId: user.displayId || `USR-${user.id}`,
+        name: user.name,
+        userName: user.userName,
+        email: user.email,
+        mobileNumber: user.mobileNumber || "",
+        userType: user.userType,
+        organizationId: primaryOrg ? primaryOrg.id : undefined,
+        shortCode: primaryOrg ? primaryOrg.shortCode : undefined,
+        organization: primaryOrg ? primaryOrg.name : undefined,
+        createdAt: user.createdAt,
+      },
+      organizations: userOrgs,
+    });
+  },
+
+  // POST /api/auth/logout (revokes current session)
+  async logout(c: Context<AppEnv>) {
+    const authHeader = c.req.header("Authorization") || "";
+    if (authHeader.startsWith("Bearer ")) {
+      const rawToken = authHeader.replace("Bearer ", "").trim();
+      try {
+        const db = getUniversalDb(c.env?.DB);
+        const tokenHash = await sha256Hex(rawToken);
+        const nowIso = new Date().toISOString();
+        await db
+          .prepare(`UPDATE user_sessions SET revoked_at = ? WHERE token_hash = ?`)
+          .bind(nowIso, tokenHash)
+          .run();
+      } catch (err) {
+        console.warn("Error revoking session:", err);
+      }
+    }
+    return c.json({ success: true, message: "Logged out successfully" });
   },
 };

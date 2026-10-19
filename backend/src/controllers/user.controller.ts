@@ -26,7 +26,7 @@ export const userController = {
   // GET /api/users
   async getUsers(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Organization not found or access denied" }, 403);
       }

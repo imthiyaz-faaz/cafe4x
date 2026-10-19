@@ -12,32 +12,157 @@ import Home from './pages/Admin/login/homepage'
 import Login from './pages/Admin/login/login'
 import Signup from './pages/Admin/login/signup'
 import ChooseOrganizationPage from './pages/Admin/login/chooseorganization'
+import ProtectedRoute from './components/common/ProtectedRoute'
 
 export default function App() {
   return (
     <Routes>
+      {/* Public Guest Routes */}
       <Route path="/" element={<Home />} />
-      <Route path="/home" element={<ChooseOrganizationPage />} />
-      <Route path="/choose-organization" element={<ChooseOrganizationPage />} />
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
-      <Route path="/landing" element={<LandingPage />} />
-      <Route path="/users" element={<UsersPage />} />
-      <Route path="/location" element={<LocationPage />} />
-      <Route path="/items" element={<ItemsPage />} />
-      <Route path="/orders" element={<OrdersPage />} />
-      <Route path="/working-hours" element={<WorkingHoursPage />} />
-      <Route path="/provider" element={<ProviderPage />} />
-      <Route path="/FTS/Provider" element={<ProviderPage />} />
+
+      {/* Authenticated Organization Selection */}
+      <Route
+        path="/home"
+        element={
+          <ProtectedRoute>
+            <ChooseOrganizationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/choose-organization"
+        element={
+          <ProtectedRoute>
+            <ChooseOrganizationPage />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Authenticated Global/Default Admin & Provider Routes */}
+      <Route
+        path="/landing"
+        element={
+          <ProtectedRoute>
+            <LandingPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <UsersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/location"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <LocationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/items"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <ItemsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/orders"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+            <OrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/working-hours"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <WorkingHoursPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/provider"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+            <ProviderPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/FTS/Provider"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+            <ProviderPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Organization-specific routes with :shortCode prefix */}
-      <Route path="/:shortCode/landing" element={<LandingPage />} />
-      <Route path="/:shortCode/users" element={<UsersPage />} />
-      <Route path="/:shortCode/location" element={<LocationPage />} />
-      <Route path="/:shortCode/items" element={<ItemsPage />} />
-      <Route path="/:shortCode/orders" element={<OrdersPage />} />
-      <Route path="/:shortCode/working-hours" element={<WorkingHoursPage />} />
-      <Route path="/:shortCode/provider" element={<ProviderPage />} />
+      <Route
+        path="/:shortCode/landing"
+        element={
+          <ProtectedRoute requireOrgMatch>
+            <LandingPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/users"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <UsersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/location"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <LocationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/items"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <ItemsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/orders"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+            <OrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/working-hours"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <WorkingHoursPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/provider"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+            <ProviderPage />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Order Entry routes — validate permanent employee or seat QR, create temporary session, redirect */}
       <Route path="/order/:locationId/:seatNumber" element={<QrEntryPage />} />

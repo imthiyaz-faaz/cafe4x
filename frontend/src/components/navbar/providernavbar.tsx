@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   MapPin,
   UserCircle,
@@ -9,6 +9,7 @@ import {
   Package,
 } from "lucide-react";
 import logoImg from "../../assets/images/logo.png";
+import { useAuth } from "../common/AuthContext";
 
 interface ProviderNavbarProps {
   activeTab?: "provider" | "pendingOrders";
@@ -22,15 +23,13 @@ export default function ProviderNavbar({
   pendingOrdersCount = 0,
 }: ProviderNavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const navigate = useNavigate();
+  const { user: currentUser, logout } = useAuth();
 
-  // Retrieve logged-in provider's name / info if available
-  const currentUser = useMemo(() => {
-    try {
-      const stored = localStorage.getItem("cafe4x_currentUser");
-      if (stored) return JSON.parse(stored);
-    } catch {}
-    return { name: "Cafe Provider", email: "provider@cafe4x.com" };
-  }, []);
+  const handleLogout = async () => {
+    await logout();
+    navigate("/login");
+  };
 
   const navItems = [
     {
@@ -119,13 +118,14 @@ export default function ProviderNavbar({
             </div>
           </div>
 
-          <Link
-            to="/login"
+          <button
+            type="button"
             title="Log out"
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#EFE7DE] bg-white text-[#9A8778] transition hover:border-[#DEC5B0] hover:bg-[#FAF6F1] hover:text-[#70452D]"
+            onClick={handleLogout}
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#EFE7DE] bg-white text-[#9A8778] transition hover:border-[#DEC5B0] hover:bg-[#FAF6F1] hover:text-[#70452D] cursor-pointer"
           >
             <LogOut size={18} />
-          </Link>
+          </button>
         </div>
 
         {/* Mobile menu toggle button */}
@@ -192,13 +192,14 @@ export default function ProviderNavbar({
                 <p className="text-[10px] text-[#9A8778]">Provider Access</p>
               </div>
             </div>
-            <Link
-              to="/login"
-              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1]"
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer"
             >
               <LogOut size={15} />
               Logout
-            </Link>
+            </button>
           </div>
         </div>
       )}

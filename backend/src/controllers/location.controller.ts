@@ -436,7 +436,7 @@ export const locationController = {
   // POST /api/locations/:id/seats (Create or Update Seat with Optional Employee Assignment)
   async saveSeat(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
       }
@@ -581,7 +581,7 @@ export const locationController = {
   // POST /api/locations/:id/seats/:seatId/unassign (Remove employee from seat WITHOUT deleting seat)
   async unassignSeat(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
       }
@@ -649,7 +649,7 @@ export const locationController = {
   // POST /api/locations/:id/seats/:seatId/assign (Assign employee to existing seat)
   async assignSeat(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
       }
@@ -786,7 +786,7 @@ export const locationController = {
   // DELETE /api/locations/:id/seats/:seatId (Delete seat record)
   async deleteSeat(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
       }

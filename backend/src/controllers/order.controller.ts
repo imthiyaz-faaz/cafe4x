@@ -41,7 +41,7 @@ export const orderController = {
   // GET /api/orders
   async getOrders(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Organization not found or access denied" }, 403);
       }
@@ -214,7 +214,7 @@ export const orderController = {
    */
   async getOrderEmployees(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Organization not found" }, 403);
       }
@@ -835,7 +835,7 @@ export const orderController = {
   // POST /api/orders/bulk-status (Bulk update order statuses: Delivered or Canceled)
   async bulkUpdateStatus(c: Context<AppEnv>) {
     try {
-      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      const org = await resolveAuthorizedOrg(c);
       if (!org) {
         return c.json({ success: false, message: "Organization not found" }, 403);
       }

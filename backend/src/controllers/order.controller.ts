@@ -296,9 +296,73 @@ export const orderController = {
       let employeeId: string | null = null;
       let employeeName = body.employeeName || `Seat ${body.seat || "01"} Guest`;
       const qrToken = body.qrToken ? String(body.qrToken).trim() : null;
+      // tempSessionToken is the new two-tier token; qrToken is legacy permanent token
+      const tempSessionToken = body.tempSessionToken ? String(body.tempSessionToken).trim() : null;
 
-      // If a qrToken was supplied, validate it securely server-side
-      if (qrToken) {
+      // ── 1. New two-tier system: validate temporary session token ──────────
+      if (tempSessionToken) {
+        const enc = new TextEncoder();
+        const buf = await crypto.subtle.digest("SHA-256", enc.encode(tempSessionToken));
+        const tempHash = Array.from(new Uint8Array(buf))
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("");
+        const nowIso = new Date().toISOString();
+
+        const sessionRow = (await db
+          .prepare(
+            `SELECT
+               s.id as sessionId,
+               s.status as sessionStatus,
+               s.expires_at as expiresAt,
+               u.id as userId,
+               u.name as userName,
+               u.email as userEmail,
+               u.qr_token_status as qrTokenStatus,
+               u.perm_token_status as permTokenStatus,
+               uo.organization_id as orgId,
+               o.short_code as orgShortCode
+             FROM ordering_sessions s
+             JOIN users u ON s.employee_id = u.id
+             JOIN user_organizations uo ON u.id = uo.user_id
+             JOIN organizations o ON uo.organization_id = o.id
+             WHERE s.temp_token_hash = ?
+               AND s.organization_id = ?`
+          )
+          .bind(tempHash, org.organizationId)
+          .get()) as any;
+
+        if (!sessionRow) {
+          return c.json({ success: false, message: "Invalid ordering session token" }, 403);
+        }
+        if (sessionRow.sessionStatus === "revoked") {
+          return c.json({ success: false, message: "This ordering session has been revoked" }, 403);
+        }
+        if (sessionRow.expiresAt < nowIso) {
+          // Mark as expired
+          await db
+            .prepare(`UPDATE ordering_sessions SET status = 'expired' WHERE id = ?`)
+            .bind(sessionRow.sessionId)
+            .run();
+          return c.json({ success: false, message: "Ordering session has expired. Please scan your QR code again." }, 410);
+        }
+
+        // Check permanent credential is still active
+        const legacyRevoked = sessionRow.qrTokenStatus && sessionRow.qrTokenStatus !== "active";
+        const newRevoked = sessionRow.permTokenStatus && sessionRow.permTokenStatus !== "active";
+        if (legacyRevoked || newRevoked) {
+          return c.json({ success: false, message: "Employee QR credential has been revoked" }, 403);
+        }
+
+        // Org isolation
+        if (String(sessionRow.orgId) !== org.organizationId) {
+          return c.json({ success: false, message: "Session does not belong to this organization" }, 403);
+        }
+
+        employeeId = String(sessionRow.userId);
+        employeeName = sessionRow.userName || sessionRow.userEmail || employeeName;
+
+      // ── 2. Legacy: validate permanent qr_token (backward compat) ─────────
+      } else if (qrToken) {
         const tokenUser = (await db
           .prepare(
             `SELECT u.id, u.name, u.email, u.qr_token_status, uo.organization_id, o.short_code

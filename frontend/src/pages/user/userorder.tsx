@@ -12,12 +12,16 @@ import {
   UserCheck,
   X,
   ChevronUp,
+  Clock,
+  QrCode,
 } from "lucide-react";
 import Background from "../../components/background";
 import { orderApi } from "../../services/orders";
 import { itemsApi } from "../../services/items";
 import { locationApi } from "../../services/locations";
 import { userApi } from "../../services/userApi";
+import { qrApi } from "../../services/qrApi";
+
 
 export interface UserOrderItem {
   id: string;
@@ -41,11 +45,16 @@ export default function UserOrderPage() {
   const [searchParams] = useSearchParams();
 
   // Token validation state
-  const [tokenStatus, setTokenStatus] = useState<"checking" | "valid" | "invalid" | "none">(
+  // "checking" = validating, "valid" = session active, "invalid" = bad/revoked, "expired" = expired, "none" = no token
+  const [tokenStatus, setTokenStatus] = useState<"checking" | "valid" | "invalid" | "expired" | "none">(
     qrToken ? "checking" : "none"
   );
   const [tokenErrorMessage, setTokenErrorMessage] = useState<string>("");
   const [authenticatedEmployee, setAuthenticatedEmployee] = useState<any>(null);
+  // Active session expiry time (ISO string) — used for countdown display
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<string | null>(null);
+  // Permanent QR entry URL so employee can re-scan after expiry
+  const [permanentQrHref, setPermanentQrHref] = useState<string>("");
 
   // Try finding location name and seat employee from backend, localStorage or parameters
   const [locationName, setLocationName] = useState<string>("Office");
@@ -96,6 +105,8 @@ export default function UserOrderPage() {
   const [effectiveShortCode, setEffectiveShortCode] = useState<string>(shortCode || "");
 
   // Validate QR Token if present
+  // New flow: use /api/qr/validate/:tempToken (two-tier sessions)
+  // Legacy fallback: use /api/users/qr-token/:token (permanent tokens)
   useEffect(() => {
     if (!qrToken) {
       setTokenStatus("none");
@@ -103,53 +114,89 @@ export default function UserOrderPage() {
     }
 
     setTokenStatus("checking");
-    userApi
-      .validateQrToken(qrToken)
+
+    // Try new two-tier session validation first
+    qrApi
+      .validateSession(qrToken)
       .then((res) => {
         if (res && res.success && res.employee) {
+          // ── New two-tier session valid ──────────────────────────────────
           setTokenStatus("valid");
           setAuthenticatedEmployee(res.employee);
           setEmployeeName(res.employee.name);
           setEmployeeEmail(res.employee.email);
+          if (res.expiresAt) {
+            setSessionExpiresAt(res.expiresAt);
+          }
           if (res.organization?.shortCode) {
             setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+            // Build the permanent QR entry URL so we can show it on expiry
+            setPermanentQrHref(""); // permanent token not exposed to frontend
           }
-
-          // Check if this employee has an assigned seat in any location
-          try {
-            const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
-            for (const k of allKeys) {
-              const storedSeats = localStorage.getItem(k);
-              if (storedSeats) {
-                const parsed = JSON.parse(storedSeats);
-                for (const locKey of Object.keys(parsed)) {
-                  const locSeats = parsed[locKey] || [];
-                  const assignedSeat = locSeats.find(
-                    (s: any) =>
-                      s.employee &&
-                      (s.employee.toLowerCase() === res.employee.email.toLowerCase() ||
-                       s.employee.toLowerCase() === res.employee.name.toLowerCase())
-                  );
-                  if (assignedSeat) {
-                    setSeatId(assignedSeat.id || `Seat-${assignedSeat.number}`);
-                    break;
-                  }
-                }
-              }
-            }
-          } catch {}
-        } else {
+        } else if (res && res.expired) {
+          // ── Session expired ───────────────────────────────────────────
+          setTokenStatus("expired");
+          setTokenErrorMessage(
+            res.message || "Your ordering session has expired. Please scan your QR code again."
+          );
+        } else if (res && (res.revoked || !res.success)) {
+          // ── Session revoked or invalid ────────────────────────────────
           setTokenStatus("invalid");
-          setTokenErrorMessage(res.message || "Invalid or revoked QR code.");
+          setTokenErrorMessage(res.message || "This session is no longer valid.");
         }
       })
-      .catch((err) => {
-        setTokenStatus("invalid");
-        setTokenErrorMessage(
-          err.response?.data?.message || err.message || "Invalid, revoked or expired QR ordering token."
-        );
+      .catch(() => {
+        // If /api/qr/validate returns 404 (token not found in sessions table),
+        // fall back to legacy permanent token validation for backward compat
+        userApi
+          .validateQrToken(qrToken)
+          .then((res) => {
+            if (res && res.success && res.employee) {
+              setTokenStatus("valid");
+              setAuthenticatedEmployee(res.employee);
+              setEmployeeName(res.employee.name);
+              setEmployeeEmail(res.employee.email);
+              if (res.organization?.shortCode) {
+                setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+              }
+
+              // Legacy: check localStorage for seat assignment
+              try {
+                const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
+                for (const k of allKeys) {
+                  const storedSeats = localStorage.getItem(k);
+                  if (storedSeats) {
+                    const parsed = JSON.parse(storedSeats);
+                    for (const locKey of Object.keys(parsed)) {
+                      const locSeats = parsed[locKey] || [];
+                      const assignedSeat = locSeats.find(
+                        (s: any) =>
+                          s.employee &&
+                          (s.employee.toLowerCase() === res.employee.email.toLowerCase() ||
+                           s.employee.toLowerCase() === res.employee.name.toLowerCase())
+                      );
+                      if (assignedSeat) {
+                        setSeatId(assignedSeat.id || `Seat-${assignedSeat.number}`);
+                        break;
+                      }
+                    }
+                  }
+                }
+              } catch {}
+            } else {
+              setTokenStatus("invalid");
+              setTokenErrorMessage(res.message || "Invalid or revoked QR code.");
+            }
+          })
+          .catch((err) => {
+            setTokenStatus("invalid");
+            setTokenErrorMessage(
+              err.response?.data?.message || err.message || "Invalid, revoked or expired QR ordering token."
+            );
+          });
       });
   }, [qrToken]);
+
 
   useEffect(() => {
     if (shortCode) {
@@ -432,6 +479,7 @@ export default function UserOrderPage() {
       locationId: activeLocationId || undefined,
       employeeName: employeeName || employeeEmail || (activeSeatNumber ? `Seat ${activeSeatNumber}` : "Employee"),
       qrToken: qrToken || undefined,
+      tempSessionToken: qrToken || undefined,
       items: selectedItems.map((it) => {
         const isBeverage = (it.category || "Beverages") === "Beverages";
         const hasPref = isBeverage && it.preferenceChoice && it.preferenceChoice.trim().length > 0;
@@ -470,6 +518,7 @@ export default function UserOrderPage() {
         locationId: activeLocationId || undefined,
         employeeName: orderData.employeeName,
         qrToken: qrToken || undefined,
+        tempSessionToken: qrToken || undefined,
         items: orderData.items,
         total: orderData.total,
         time: orderData.time,
@@ -563,6 +612,46 @@ export default function UserOrderPage() {
     );
   }
 
+  // Session expired — show friendly message with instructions to re-scan
+  if (tokenStatus === "expired") {
+    return (
+      <Background>
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl border border-[#EEE5DC] bg-white p-8 text-center shadow-2xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-600 shadow-sm">
+              <Clock size={32} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-[#342219]">Session Expired</h2>
+            <p className="mt-2 text-sm text-[#8A7667]">
+              {tokenErrorMessage || "Your 30-minute ordering session has expired."}
+            </p>
+
+            <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-xs text-amber-900">
+              <p className="font-semibold flex items-center justify-center gap-1.5">
+                <QrCode size={13} />
+                To start a new session
+              </p>
+              <p className="mt-1 text-[11px] text-amber-800">
+                Scan your personal QR code again. Each scan creates a fresh 30-minute ordering window.
+                Your permanent QR code remains unchanged.
+              </p>
+            </div>
+
+            {permanentQrHref && (
+              <a
+                href={permanentQrHref}
+                className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-[#704225] px-5 py-2.5 text-sm font-bold text-white shadow-md transition hover:bg-[#5C3620]"
+              >
+                <QrCode size={15} />
+                Open My Entry Link
+              </a>
+            )}
+          </div>
+        </div>
+      </Background>
+    );
+  }
+
   // If token is being validated
   if (tokenStatus === "checking") {
     return (
@@ -572,8 +661,8 @@ export default function UserOrderPage() {
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-[#F6ECE2] text-[#8C5835]">
               <Lock size={28} className="animate-pulse" />
             </div>
-            <h2 className="mt-4 text-lg font-bold text-[#342219]">Validating Employee QR...</h2>
-            <p className="mt-1 text-xs text-[#8A7667]">Verifying cryptographic security token</p>
+            <h2 className="mt-4 text-lg font-bold text-[#342219]">Validating Session…</h2>
+            <p className="mt-1 text-xs text-[#8A7667]">Verifying your secure ordering session</p>
           </div>
         </div>
       </Background>
@@ -599,6 +688,11 @@ export default function UserOrderPage() {
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                     <UserCheck size={10} />
                     Verified
+                  </span>
+                )}
+                {sessionExpiresAt && (
+                  <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-medium text-amber-800">
+                    Expires {new Date(sessionExpiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 )}
               </div>

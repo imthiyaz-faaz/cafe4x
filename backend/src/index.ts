@@ -10,6 +10,7 @@ import organizationRoutes from './routes/organization.routes'
 import providerRoutes from './routes/provider.routes'
 import userRoutes from './routes/user.routes'
 import workingHoursRoutes from './routes/working-hours.routes'
+import qrRoutes from './routes/qr.routes'
 
 const app = new Hono<AppEnv>()
 
@@ -23,6 +24,7 @@ app.route('/api/locations', locationRoutes)
 app.route('/api/orders', orderRoutes)
 app.route('/api/provider', providerRoutes)
 app.route('/api/working-hours', workingHoursRoutes)
+app.route('/api/qr', qrRoutes)
 
 app.get('/', (c) => {
   return c.text('Hello Cafe4x Backend!')

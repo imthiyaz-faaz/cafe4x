@@ -404,14 +404,28 @@ export const locationController = {
       const locId = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
-      const rows = (await db
-        .prepare(
-          `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
-                  number, employee, order_url as orderUrl
-           FROM seats WHERE location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
-        )
-        .bind(locId)
-        .all()) as any[];
+      let rows: any[] = [];
+      try {
+        rows = (await db
+          .prepare(
+            `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
+                    number, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId,
+                    order_url as orderUrl
+             FROM seats WHERE location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
+          )
+          .bind(locId)
+          .all()) as any[];
+      } catch {
+        // Fallback if employee_name/employee_email columns not yet migrated
+        rows = (await db
+          .prepare(
+            `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
+                    number, employee, order_url as orderUrl
+             FROM seats WHERE location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
+          )
+          .bind(locId)
+          .all()) as any[];
+      }
 
       return c.json({ success: true, seats: rows || [] });
     } catch (err: any) {
@@ -419,7 +433,7 @@ export const locationController = {
     }
   },
 
-  // POST /api/locations/:id/seats
+  // POST /api/locations/:id/seats (Create or Update Seat with Optional Employee Assignment)
   async saveSeat(c: Context<AppEnv>) {
     try {
       const org = await resolveAuthorizedOrg(c, { allowPublic: true });
@@ -429,28 +443,374 @@ export const locationController = {
 
       const locId = c.req.param("id");
       const body = await c.req.json();
-      const number = String(body.number || body.seatNo || "01").padStart(2, "0");
+      const rawNumber = String(body.number || body.seatNo || "").trim();
+      if (!rawNumber) {
+        return c.json({ success: false, message: "Seat number is required" }, 400);
+      }
+      const number = rawNumber.padStart(2, "0");
       const displayId = `SEAT-${org.shortCode}-${number}`;
-      const seatId = body.id || displayId;
-      const employee = body.employee || body.email || null;
-      const orderUrl = body.orderUrl || null;
-      const now = new Date().toISOString();
+      const seatId = body.id || `${org.shortCode}-${number}`;
+
+      // Employee assignment fields
+      const employeeName = body.employeeName ? String(body.employeeName).trim() : null;
+      const employeeEmail = body.employeeEmail ? String(body.employeeEmail).trim().toLowerCase() : null;
+      let employee = body.employee ? String(body.employee).trim() : null;
+      if (!employee && employeeEmail) {
+        employee = employeeEmail;
+      }
+
+      // Email validation if email provided
+      if (employeeEmail) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(employeeEmail)) {
+          return c.json({ success: false, message: "Please enter a valid employee email address." }, 400);
+        }
+      }
 
       const db = getUniversalDb(c.env?.DB);
-      await db
-        .prepare(
-          `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, order_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(location_id, number) DO UPDATE SET
-             id = excluded.id,
-             display_id = excluded.display_id,
-             employee = excluded.employee,
-             order_url = excluded.order_url,
-             updated_at = excluded.updated_at`
-        )
-        .run(seatId, displayId, locId, org.organizationId, number, employee, orderUrl, now, now);
 
-      return c.json({ success: true, seat: { id: seatId, displayId, locationId: locId, organizationId: org.organizationId, number, employee, orderUrl } });
+      // Check if another seat in this location already has this employee
+      if (employeeEmail) {
+        try {
+          const duplicateAssignment = (await db
+            .prepare(
+              `SELECT id, number, employee, employee_email as employeeEmail 
+               FROM seats 
+               WHERE location_id = ? 
+                 AND (LOWER(employee) = ? OR LOWER(employee_email) = ?) 
+                 AND number != ?`
+            )
+            .bind(locId, employeeEmail, employeeEmail, number)
+            .get()) as any;
+
+          if (duplicateAssignment) {
+            return c.json({
+              success: false,
+              message: `Employee ${employeeEmail} is already assigned to seat ${duplicateAssignment.id || duplicateAssignment.number}.`,
+            }, 409);
+          }
+        } catch { }
+      }
+
+      // Check if employee exists in users table and has an active qr_token
+      let matchedQrToken: string | null = null;
+      let matchedUserId: string | null = null;
+      if (employeeEmail || employee) {
+        const cleanIdent = (employeeEmail || employee || "").toLowerCase();
+        try {
+          const userRow = (await db
+            .prepare(
+              `SELECT u.id, u.name, u.email, u.qr_token as qrToken
+               FROM users u
+               JOIN user_organizations uo ON u.id = uo.user_id
+               WHERE uo.organization_id = ?
+                 AND (LOWER(u.email) = ? OR LOWER(u.name) = ?)
+               LIMIT 1`
+            )
+            .bind(org.organizationId, cleanIdent, cleanIdent)
+            .get()) as any;
+
+          if (userRow) {
+            matchedUserId = userRow.id;
+            matchedQrToken = userRow.qrToken;
+          }
+        } catch { }
+      }
+
+      // Determine order URL
+      let orderUrl = body.orderUrl || null;
+      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
+      if (matchedQrToken) {
+        orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
+      } else if (!orderUrl) {
+        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}?seatId=${seatId}`;
+      }
+
+      const now = new Date().toISOString();
+
+      // Upsert seat record
+      try {
+        await db
+          .prepare(
+            `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, employee_name, employee_email, employee_id, order_url, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(location_id, number) DO UPDATE SET
+               id = excluded.id,
+               display_id = excluded.display_id,
+               employee = excluded.employee,
+               employee_name = excluded.employee_name,
+               employee_email = excluded.employee_email,
+               employee_id = excluded.employee_id,
+               order_url = excluded.order_url,
+               updated_at = excluded.updated_at`
+          )
+          .run(seatId, displayId, locId, org.organizationId, number, employee, employeeName, employeeEmail, matchedUserId, orderUrl, now, now);
+      } catch {
+        // Fallback for base schema
+        await db
+          .prepare(
+            `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, order_url, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(location_id, number) DO UPDATE SET
+               id = excluded.id,
+               display_id = excluded.display_id,
+               employee = excluded.employee,
+               order_url = excluded.order_url,
+               updated_at = excluded.updated_at`
+          )
+          .run(seatId, displayId, locId, org.organizationId, number, employee, orderUrl, now, now);
+      }
+
+      return c.json({
+        success: true,
+        seat: {
+          id: seatId,
+          displayId,
+          locationId: locId,
+          organizationId: org.organizationId,
+          number,
+          employee,
+          employeeName,
+          employeeEmail,
+          employeeId: matchedUserId,
+          orderUrl,
+        },
+      });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // POST /api/locations/:id/seats/:seatId/unassign (Remove employee from seat WITHOUT deleting seat)
+  async unassignSeat(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
+      }
+
+      const locId = c.req.param("id");
+      const seatParam = c.req.param("seatId");
+      const db = getUniversalDb(c.env?.DB);
+
+      // Find the seat first
+      const seat = (await db
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
+        .bind(locId, seatParam, seatParam, seatParam)
+        .get()) as any;
+
+      if (!seat) {
+        return c.json({ success: false, message: "Seat not found in this location" }, 404);
+      }
+
+      const now = new Date().toISOString();
+      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
+      const defaultOrderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}?seatId=${seat.id}`;
+
+      // Update seat assignment to NULL - keep seat, location, org, and number intact
+      try {
+        await db
+          .prepare(
+            `UPDATE seats 
+             SET employee = NULL, 
+                 employee_name = NULL, 
+                 employee_email = NULL, 
+                 employee_id = NULL,
+                 order_url = ?, 
+                 updated_at = ? 
+             WHERE id = ?`
+          )
+          .bind(defaultOrderUrl, now, seat.id)
+          .run();
+      } catch {
+        await db
+          .prepare(`UPDATE seats SET employee = NULL, order_url = ?, updated_at = ? WHERE id = ?`)
+          .bind(defaultOrderUrl, now, seat.id)
+          .run();
+      }
+
+      return c.json({
+        success: true,
+        message: "Employee assignment removed successfully. Seat remains available.",
+        seat: {
+          id: seat.id,
+          displayId: seat.displayId,
+          number: seat.number,
+          locationId: locId,
+          employee: null,
+          employeeName: null,
+          employeeEmail: null,
+          employeeId: null,
+          orderUrl: defaultOrderUrl,
+        },
+      });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // POST /api/locations/:id/seats/:seatId/assign (Assign employee to existing seat)
+  async assignSeat(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
+      }
+
+      const locId = c.req.param("id");
+      const seatParam = c.req.param("seatId");
+      const body = await c.req.json();
+
+      const employeeName = body.employeeName ? String(body.employeeName).trim() : null;
+      const employeeEmail = body.employeeEmail ? String(body.employeeEmail).trim().toLowerCase() : null;
+      let employee = body.employee ? String(body.employee).trim() : null;
+      if (!employee && employeeEmail) {
+        employee = employeeEmail;
+      }
+
+      if (!employee && !employeeEmail && !employeeName) {
+        return c.json({ success: false, message: "Employee details are required for assignment" }, 400);
+      }
+
+      if (employeeEmail) {
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(employeeEmail)) {
+          return c.json({ success: false, message: "Please provide a valid employee email address." }, 400);
+        }
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify seat exists
+      const seat = (await db
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
+        .bind(locId, seatParam, seatParam, seatParam)
+        .get()) as any;
+
+      if (!seat) {
+        return c.json({ success: false, message: "Seat not found in this location" }, 404);
+      }
+
+      // Check if employee is already assigned to a different seat in this location
+      if (employeeEmail) {
+        try {
+          const duplicate = (await db
+            .prepare(
+              `SELECT id, number, employee, employee_email as employeeEmail 
+               FROM seats 
+               WHERE location_id = ? 
+                 AND (LOWER(employee) = ? OR LOWER(employee_email) = ?) 
+                 AND id != ?`
+            )
+            .bind(locId, employeeEmail, employeeEmail, seat.id)
+            .get()) as any;
+
+          if (duplicate) {
+            return c.json({
+              success: false,
+              message: `Employee ${employeeEmail} is already assigned to seat ${duplicate.id || duplicate.number}.`,
+            }, 409);
+          }
+        } catch { }
+      }
+
+      // Check if employee exists in users table and has an active qr_token
+      let matchedQrToken: string | null = null;
+      let matchedUserId: string | null = null;
+      if (employeeEmail || employee) {
+        const cleanIdent = (employeeEmail || employee || "").toLowerCase();
+        try {
+          const userRow = (await db
+            .prepare(
+              `SELECT u.id, u.name, u.email, u.qr_token as qrToken
+               FROM users u
+               JOIN user_organizations uo ON u.id = uo.user_id
+               WHERE uo.organization_id = ?
+                 AND (LOWER(u.email) = ? OR LOWER(u.name) = ?)
+               LIMIT 1`
+            )
+            .bind(org.organizationId, cleanIdent, cleanIdent)
+            .get()) as any;
+
+          if (userRow) {
+            matchedUserId = userRow.id;
+            matchedQrToken = userRow.qrToken;
+          }
+        } catch { }
+      }
+
+      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
+      let orderUrl = body.orderUrl || null;
+      if (matchedQrToken) {
+        orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
+      } else if (!orderUrl) {
+        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}?seatId=${seat.id}`;
+      }
+
+      const now = new Date().toISOString();
+      try {
+        await db
+          .prepare(
+            `UPDATE seats 
+             SET employee = ?, 
+                 employee_name = ?, 
+                 employee_email = ?, 
+                 employee_id = ?, 
+                 order_url = ?, 
+                 updated_at = ? 
+             WHERE id = ?`
+          )
+          .bind(employee, employeeName, employeeEmail, matchedUserId, orderUrl, now, seat.id)
+          .run();
+      } catch {
+        await db
+          .prepare(`UPDATE seats SET employee = ?, order_url = ?, updated_at = ? WHERE id = ?`)
+          .bind(employee, orderUrl, now, seat.id)
+          .run();
+      }
+
+      return c.json({
+        success: true,
+        message: "Employee assigned to seat successfully.",
+        seat: {
+          id: seat.id,
+          displayId: seat.displayId,
+          number: seat.number,
+          locationId: locId,
+          employee,
+          employeeName,
+          employeeEmail,
+          employeeId: matchedUserId,
+          orderUrl,
+        },
+      });
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // DELETE /api/locations/:id/seats/:seatId (Delete seat record)
+  async deleteSeat(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization" }, 403);
+      }
+
+      const locId = c.req.param("id");
+      const seatParam = c.req.param("seatId");
+      const db = getUniversalDb(c.env?.DB);
+
+      const res = await db
+        .prepare(`DELETE FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
+        .bind(locId, seatParam, seatParam, seatParam)
+        .run();
+
+      if (res.changes === 0) {
+        return c.json({ success: false, message: "Seat not found" }, 404);
+      }
+
+      return c.json({ success: true, message: "Seat deleted successfully" });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }

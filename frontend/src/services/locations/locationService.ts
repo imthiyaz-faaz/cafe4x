@@ -23,6 +23,9 @@ export interface SeatItem {
   organizationId?: string;
   number: string;
   employee?: string;
+  employeeName?: string;
+  employeeEmail?: string;
+  employeeId?: string;
   orderUrl?: string;
 }
 
@@ -100,6 +103,31 @@ export const locationApi = {
   async saveSeat(locationId: string, seat: Partial<SeatItem>): Promise<SeatItem> {
     const res = await api.post<{ success: boolean; seat: SeatItem }>(`/api/locations/${locationId}/seats`, seat);
     return res.seat;
+  },
+
+  async unassignSeat(locationId: string, seatId: string): Promise<SeatItem> {
+    const res = await api.post<{ success: boolean; message: string; seat: SeatItem }>(
+      `/api/locations/${locationId}/seats/${encodeURIComponent(seatId)}/unassign`
+    );
+    return res.seat;
+  },
+
+  async assignSeat(
+    locationId: string,
+    seatId: string,
+    payload: { employeeName?: string; employeeEmail?: string; employee?: string; orderUrl?: string }
+  ): Promise<SeatItem> {
+    const res = await api.post<{ success: boolean; message: string; seat: SeatItem }>(
+      `/api/locations/${locationId}/seats/${encodeURIComponent(seatId)}/assign`,
+      payload
+    );
+    return res.seat;
+  },
+
+  async deleteSeat(locationId: string, seatId: string): Promise<void> {
+    await api.delete<{ success: boolean; message: string }>(
+      `/api/locations/${locationId}/seats/${encodeURIComponent(seatId)}`
+    );
   },
 };
 

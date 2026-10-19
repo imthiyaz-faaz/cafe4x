@@ -7,6 +7,7 @@ import OrdersPage from './pages/Admin/orderspages'
 import WorkingHoursPage from './pages/Admin/workinghourspage'
 import ProviderPage from './pages/provider/providerpage'
 import UserOrderPage from './pages/user/userorder'
+import QrEntryPage from './pages/user/QrEntryPage'
 import Home from './pages/Admin/login/homepage'
 import Login from './pages/Admin/login/login'
 import Signup from './pages/Admin/login/signup'
@@ -42,6 +43,12 @@ export default function App() {
       <Route path="/emporder" element={<UserOrderPage />} />
       <Route path="/order/:locationId/:seatNumber" element={<UserOrderPage />} />
       <Route path="/:shortCode/order/:locationId/:seatNumber" element={<UserOrderPage />} />
+
+      {/* NEW: Permanent QR entry routes — validate permanent token, create temp session, redirect */}
+      <Route path="/:shortCode/employee/:permanentToken" element={<QrEntryPage />} />
+      <Route path="/employee/:permanentToken" element={<QrEntryPage />} />
+
+      {/* Temporary ordering session routes — served after session is created */}
       <Route path="/:shortCode/qrorder/:qrToken" element={<UserOrderPage />} />
       <Route path="/qrorder/:qrToken" element={<UserOrderPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />

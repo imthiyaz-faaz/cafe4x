@@ -15,7 +15,6 @@ import {
   ChevronsRight,
   X,
   Armchair,
-  QrCode,
   Copy,
   Check,
   User,
@@ -27,6 +26,7 @@ import {
   Key,
   RefreshCw,
   Ban,
+  UserMinus,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
@@ -38,7 +38,13 @@ import CreateFormModal, { FormRow } from "../../components/common/CreateFormModa
 interface SeatItem {
   number: string;
   id: string;
+  displayId?: string;
+  locationId?: string;
+  organizationId?: string;
   employee?: string;
+  employeeName?: string;
+  employeeEmail?: string;
+  employeeId?: string;
   orderUrl: string;
 }
 
@@ -210,7 +216,7 @@ export default function LocationPage() {
           u.id === cleanIdent
       );
       if (matched?.qrToken) {
-        return `${window.location.origin}${orgPrefix}/qrorder/${matched.qrToken}`;
+        return `${window.location.origin}${orgPrefix}/employee/${matched.qrToken}`;
       }
     }
     // Fallback if employee has not yet been assigned
@@ -218,46 +224,70 @@ export default function LocationPage() {
     return `${window.location.origin}${orgPrefix}/order/${locId || "1"}/${parseInt(seatNo || "1", 10) || 1}?seatId=${fallbackSeatId}`;
   };
 
-  // Automatically generate seats with shortCode-based sequential seatId (e.g. FTS-01, FTS-02...)
+  // Load seats from backend on selectedLocation change, falling back to local storage
   useEffect(() => {
     if (!selectedLocation) return;
     const locId = String(selectedLocation.id);
-    const existing = seatsByLoc[locId];
     const code = currentShortCode || "FTS";
 
-    if (!existing || existing.length === 0) {
-      const totalSeats = Number(selectedLocation.totalSeats) || 12;
-      const generated: SeatItem[] = Array.from({ length: totalSeats }, (_, i) => {
-        const num = String(i + 1).padStart(2, "0");
-        const seatId = `${code}-${num}`;
-        return {
-          number: num,
-          id: seatId,
-          orderUrl: getEmployeeOrderUrl(undefined, seatId, locId, num),
-        };
-      });
-      const nextSeats = { ...seatsByLoc, [locId]: generated };
-      saveSeatsByLoc(nextSeats);
-    } else {
-      // Check if any existing seat has outdated Seat ID or order URL
-      let needsUpdate = false;
-      const updated = existing.map((s, i) => {
-        const num = s.number || String(i + 1).padStart(2, "0");
-        const expectedPrefix = `${code}-`;
-        const seatId = (s.id && s.id.startsWith(expectedPrefix)) ? s.id : `${code}-${num}`;
-        const idealUrl = getEmployeeOrderUrl(s.employee, seatId, locId, num);
-
-        if (s.id !== seatId || (s.employee && !s.orderUrl?.includes("/qrorder/") && idealUrl.includes("/qrorder/"))) {
-          needsUpdate = true;
-          return { ...s, id: seatId, orderUrl: idealUrl };
+    // 1. Fetch from backend
+    locationApi
+      .getSeats(locId)
+      .then((backendSeats) => {
+        if (Array.isArray(backendSeats) && backendSeats.length > 0) {
+          const mapped: SeatItem[] = backendSeats.map((s) => ({
+            id: s.id || `${code}-${s.number}`,
+            displayId: s.displayId,
+            number: s.number,
+            locationId: locId,
+            employee: s.employee || s.employeeEmail || undefined,
+            employeeName: s.employeeName,
+            employeeEmail: s.employeeEmail,
+            employeeId: s.employeeId,
+            orderUrl: s.orderUrl || getEmployeeOrderUrl(s.employee || s.employeeEmail, s.id, locId, s.number),
+          }));
+          setSeatsByLoc((prev) => ({ ...prev, [locId]: mapped }));
+          try {
+            localStorage.setItem(seatsStorageKey, JSON.stringify({ ...seatsByLoc, [locId]: mapped }));
+            localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify({ ...seatsByLoc, [locId]: mapped }));
+          } catch { }
+          return;
         }
-        return s;
+
+        // If backend has no seats, generate default seats
+        const existing = seatsByLoc[locId];
+        if (!existing || existing.length === 0) {
+          const totalSeats = Number(selectedLocation.totalSeats) || 12;
+          const generated: SeatItem[] = Array.from({ length: totalSeats }, (_, i) => {
+            const num = String(i + 1).padStart(2, "0");
+            const seatId = `${code}-${num}`;
+            return {
+              number: num,
+              id: seatId,
+              orderUrl: getEmployeeOrderUrl(undefined, seatId, locId, num),
+            };
+          });
+          saveSeatsByLoc({ ...seatsByLoc, [locId]: generated });
+        }
+      })
+      .catch(() => {
+        // Fallback: generate default if local is empty
+        const existing = seatsByLoc[locId];
+        if (!existing || existing.length === 0) {
+          const totalSeats = Number(selectedLocation.totalSeats) || 12;
+          const generated: SeatItem[] = Array.from({ length: totalSeats }, (_, i) => {
+            const num = String(i + 1).padStart(2, "0");
+            const seatId = `${code}-${num}`;
+            return {
+              number: num,
+              id: seatId,
+              orderUrl: getEmployeeOrderUrl(undefined, seatId, locId, num),
+            };
+          });
+          saveSeatsByLoc({ ...seatsByLoc, [locId]: generated });
+        }
       });
-      if (needsUpdate) {
-        saveSeatsByLoc({ ...seatsByLoc, [locId]: updated });
-      }
-    }
-  }, [selectedLocation, seatsByLoc, currentShortCode, orgUsers]);
+  }, [selectedLocation?.id, currentShortCode]);
 
   const [selectedSeatNumber, setSelectedSeatNumber] = useState<string | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
@@ -266,14 +296,30 @@ export default function LocationPage() {
   const [isCreateSeatOpen, setIsCreateSeatOpen] = useState(false);
   const [newSeatForm, setNewSeatForm] = useState({
     location: "738",
-    email: "",
     seatId: "",
     seatNo: "",
+    assignNow: true,
+    employeeName: "",
+    employeeEmail: "",
     orderUrl: "",
   });
+  const [createSeatError, setCreateSeatError] = useState<string | null>(null);
+  const [isCreatingSeat, setIsCreatingSeat] = useState(false);
 
-  // Edit Seat Modal
+  // Edit / Assign Seat Modal
   const [isEditSeatOpen, setIsEditSeatOpen] = useState(false);
+  const [editSeatForm, setEditSeatForm] = useState({
+    employeeName: "",
+    employeeEmail: "",
+    orderUrl: "",
+  });
+  const [editSeatError, setEditSeatError] = useState<string | null>(null);
+  const [isSavingSeat, setIsSavingSeat] = useState(false);
+
+  // Unassign Seat Confirmation Modal State
+  const [isUnassignConfirmOpen, setIsUnassignConfirmOpen] = useState(false);
+  const [isUnassigning, setIsUnassigning] = useState(false);
+  const [seatActionMessage, setSeatActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Filter Locations
   const filteredLocations = useMemo(() => {
@@ -407,49 +453,276 @@ export default function LocationPage() {
   };
 
   // Create New Seat in Seating Page
-  const handleCreateSeatSubmit = (e: React.FormEvent) => {
+  const handleCreateSeatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newSeatForm.seatNo.trim()) return;
-    const padded = newSeatForm.seatNo.padStart(2, "0");
+    setCreateSeatError(null);
+
+    const rawSeatNo = newSeatForm.seatNo.trim();
+    if (!rawSeatNo) {
+      setCreateSeatError("Seat number is required.");
+      return;
+    }
+    const padded = rawSeatNo.padStart(2, "0");
     const locId = selectedLocation?.id || "1";
     const code = currentShortCode || "FTS";
     const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-
     const finalSeatId = newSeatForm.seatId.trim() || `${code}-${padded}`;
 
-    const customOrderUrl = newSeatForm.orderUrl.trim()
-      ? newSeatForm.orderUrl.trim()
-      : `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(padded, 10) || 1}?seatId=${finalSeatId}`;
-
-    const created: SeatItem = {
-      number: padded,
-      id: finalSeatId,
-      employee: newSeatForm.email.trim() || undefined,
-      orderUrl: customOrderUrl,
-    };
-
     const currentLocSeats = seatsByLoc[locId] || [];
-    const nextSeatsByLoc = {
-      ...seatsByLoc,
-      [locId]: [...currentLocSeats, created],
-    };
-    saveSeatsByLoc(nextSeatsByLoc);
 
-    // Update location totalSeats counter
-    const updated = locations.map((l) =>
-      l.id === locId ? { ...l, totalSeats: (seatsByLoc[locId]?.length || 0) + 1 } : l
+    // Duplicate seat number / ID check
+    const seatExists = currentLocSeats.some(
+      (s) => s.number === padded || s.id.toLowerCase() === finalSeatId.toLowerCase()
     );
-    saveLocations(updated);
+    if (seatExists) {
+      setCreateSeatError(`Seat identifier ${finalSeatId} (Seat ${padded}) already exists in this location.`);
+      return;
+    }
 
-    setSelectedSeatNumber(padded);
-    setIsCreateSeatOpen(false);
-    setNewSeatForm({
-      location: locId,
-      email: "",
-      seatId: "",
-      seatNo: "",
-      orderUrl: "",
-    });
+    // Validate employee details if assigning an employee
+    const trimmedName = newSeatForm.employeeName.trim();
+    const trimmedEmail = newSeatForm.employeeEmail.trim().toLowerCase();
+
+    if (newSeatForm.assignNow) {
+      if (!trimmedName) {
+        setCreateSeatError("Employee Name is required when assigning an employee.");
+        return;
+      }
+      if (!trimmedEmail) {
+        setCreateSeatError("Employee Email is required when assigning an employee.");
+        return;
+      }
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(trimmedEmail)) {
+        setCreateSeatError("Please enter a valid employee email address (e.g. employee@example.com).");
+        return;
+      }
+
+      // Check if employee is already assigned to another seat in this location
+      const alreadyAssigned = currentLocSeats.find(
+        (s) =>
+          s.employee &&
+          (s.employee.toLowerCase() === trimmedEmail ||
+           s.employeeEmail?.toLowerCase() === trimmedEmail ||
+           s.employeeName?.toLowerCase() === trimmedName.toLowerCase())
+      );
+      if (alreadyAssigned) {
+        setCreateSeatError(`Employee is already assigned to seat ${alreadyAssigned.id || alreadyAssigned.number}.`);
+        return;
+      }
+    }
+
+    setIsCreatingSeat(true);
+
+    try {
+      const idealUrl = newSeatForm.assignNow
+        ? getEmployeeOrderUrl(trimmedEmail || trimmedName, finalSeatId, locId, padded)
+        : `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(padded, 10) || 1}?seatId=${finalSeatId}`;
+
+      const createdSeat: SeatItem = {
+        number: padded,
+        id: finalSeatId,
+        employee: newSeatForm.assignNow ? trimmedEmail : undefined,
+        employeeName: newSeatForm.assignNow ? trimmedName : undefined,
+        employeeEmail: newSeatForm.assignNow ? trimmedEmail : undefined,
+        orderUrl: idealUrl,
+      };
+
+      // 1. Sync to backend API
+      try {
+        await locationApi.saveSeat(locId, {
+          id: finalSeatId,
+          number: padded,
+          employee: createdSeat.employee,
+          employeeName: createdSeat.employeeName,
+          employeeEmail: createdSeat.employeeEmail,
+          orderUrl: idealUrl,
+        });
+      } catch (err: any) {
+        console.warn("Could not save seat to backend (falling back to local state):", err);
+      }
+
+      // 2. Update local state
+      const nextSeatsByLoc = {
+        ...seatsByLoc,
+        [locId]: [...currentLocSeats, createdSeat],
+      };
+      saveSeatsByLoc(nextSeatsByLoc);
+
+      // 3. Update location totalSeats counter
+      const updated = locations.map((l) =>
+        l.id === locId ? { ...l, totalSeats: (seatsByLoc[locId]?.length || 0) + 1 } : l
+      );
+      saveLocations(updated);
+
+      setSelectedSeatNumber(padded);
+      setIsCreateSeatOpen(false);
+      setNewSeatForm({
+        location: locId,
+        seatId: "",
+        seatNo: "",
+        assignNow: true,
+        employeeName: "",
+        employeeEmail: "",
+        orderUrl: "",
+      });
+      setSeatActionMessage({
+        type: "success",
+        text: `Seat ${finalSeatId} created successfully${newSeatForm.assignNow ? ` and assigned to ${trimmedName}` : " as Available"}.`,
+      });
+      setTimeout(() => setSeatActionMessage(null), 4000);
+    } catch (err: any) {
+      setCreateSeatError(err.message || "Failed to create seat.");
+    } finally {
+      setIsCreatingSeat(false);
+    }
+  };
+
+  // Remove / Unassign Employee from Selected Seat
+  const handleUnassignEmployee = async () => {
+    if (!currentSeat || !selectedLocation) return;
+    setIsUnassigning(true);
+    const locId = selectedLocation.id;
+    const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+    const defaultUrl = `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(currentSeat.number, 10) || 1}?seatId=${currentSeat.id}`;
+
+    try {
+      // 1. Sync to backend
+      try {
+        await locationApi.unassignSeat(locId, currentSeat.id);
+      } catch (err: any) {
+        console.warn("Backend unassignSeat error (updating local state):", err);
+      }
+
+      // 2. Update local state — keep seat, seat identifier, and position; clear employee assignment
+      const updatedSeats = (seatsByLoc[locId] || []).map((s) => {
+        if (s.number === currentSeat.number) {
+          return {
+            ...s,
+            employee: undefined,
+            employeeName: undefined,
+            employeeEmail: undefined,
+            employeeId: undefined,
+            orderUrl: defaultUrl,
+          };
+        }
+        return s;
+      });
+
+      saveSeatsByLoc({
+        ...seatsByLoc,
+        [locId]: updatedSeats,
+      });
+
+      setIsUnassignConfirmOpen(false);
+      setSeatActionMessage({
+        type: "success",
+        text: `Employee removed from ${currentSeat.id}. Seat is now Available for new assignments.`,
+      });
+      setTimeout(() => setSeatActionMessage(null), 4000);
+    } catch (err: any) {
+      setSeatActionMessage({
+        type: "error",
+        text: err.message || "Failed to unassign employee.",
+      });
+      setTimeout(() => setSeatActionMessage(null), 4000);
+    } finally {
+      setIsUnassigning(false);
+    }
+  };
+
+  // Assign or Change Employee on an Existing Seat
+  const handleSaveSeatAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSeat || !selectedLocation) return;
+    setEditSeatError(null);
+
+    const locId = selectedLocation.id;
+    const trimmedName = editSeatForm.employeeName.trim();
+    const trimmedEmail = editSeatForm.employeeEmail.trim().toLowerCase();
+
+    // If both name & email are empty, this acts as clearing the assignment
+    if (!trimmedName && !trimmedEmail) {
+      await handleUnassignEmployee();
+      setIsEditSeatOpen(false);
+      return;
+    }
+
+    if (!trimmedName) {
+      setEditSeatError("Employee Name is required.");
+      return;
+    }
+    if (!trimmedEmail) {
+      setEditSeatError("Employee Email is required.");
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setEditSeatError("Please enter a valid employee email address.");
+      return;
+    }
+
+    // Check if employee is already assigned to a different seat
+    const currentLocSeats = seatsByLoc[locId] || [];
+    const duplicate = currentLocSeats.find(
+      (s) =>
+        s.number !== currentSeat.number &&
+        s.employee &&
+        (s.employee.toLowerCase() === trimmedEmail ||
+         s.employeeEmail?.toLowerCase() === trimmedEmail ||
+         s.employeeName?.toLowerCase() === trimmedName.toLowerCase())
+    );
+    if (duplicate) {
+      setEditSeatError(`Employee is already assigned to seat ${duplicate.id || duplicate.number}.`);
+      return;
+    }
+
+    setIsSavingSeat(true);
+    try {
+      const idealUrl = getEmployeeOrderUrl(trimmedEmail || trimmedName, currentSeat.id, locId, currentSeat.number);
+
+      // 1. Sync to backend
+      try {
+        await locationApi.assignSeat(locId, currentSeat.id, {
+          employeeName: trimmedName,
+          employeeEmail: trimmedEmail,
+          employee: trimmedEmail,
+          orderUrl: idealUrl,
+        });
+      } catch (err: any) {
+        console.warn("Backend assignSeat error (updating local state):", err);
+      }
+
+      // 2. Update local state
+      const updatedSeats = currentLocSeats.map((s) => {
+        if (s.number === currentSeat.number) {
+          return {
+            ...s,
+            employee: trimmedEmail,
+            employeeName: trimmedName,
+            employeeEmail: trimmedEmail,
+            orderUrl: idealUrl,
+          };
+        }
+        return s;
+      });
+
+      saveSeatsByLoc({
+        ...seatsByLoc,
+        [locId]: updatedSeats,
+      });
+
+      setIsEditSeatOpen(false);
+      setSeatActionMessage({
+        type: "success",
+        text: `Seat ${currentSeat.id} successfully assigned to ${trimmedName}.`,
+      });
+      setTimeout(() => setSeatActionMessage(null), 4000);
+    } catch (err: any) {
+      setEditSeatError(err.message || "Failed to update seat assignment.");
+    } finally {
+      setIsSavingSeat(false);
+    }
   };
 
 
@@ -774,11 +1047,14 @@ export default function LocationPage() {
                         const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                         setNewSeatForm({
                           location: selectedLocation.name || locId,
-                          email: "",
                           seatId: nextInfo.seatId,
                           seatNo: nextInfo.number,
+                          assignNow: true,
+                          employeeName: "",
+                          employeeEmail: "",
                           orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
                         });
+                        setCreateSeatError(null);
                         setIsCreateSeatOpen(true);
                       }}
                       className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-[#6F3F24] via-[#854E2D] to-[#9A5F38] px-5 py-2.5 text-xs font-bold text-white shadow-md shadow-[#754329]/25 transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#754329]/35 active:translate-y-0"
@@ -788,6 +1064,29 @@ export default function LocationPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Status Message Notification Banner */}
+                {seatActionMessage && (
+                  <div
+                    className={`rounded-2xl p-4 text-xs font-semibold flex items-center justify-between shadow-sm animate-in fade-in duration-200 ${
+                      seatActionMessage.type === "success"
+                        ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                        : "bg-rose-50 text-rose-800 border border-rose-200"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-2 w-2 rounded-full bg-current" />
+                      <span>{seatActionMessage.text}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSeatActionMessage(null)}
+                      className="text-gray-400 hover:text-gray-700"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
 
                 {/* Main Dynamic Grid: Full width (12 cols) if no seat clicked, 8/4 cols when seat is clicked */}
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
@@ -1094,11 +1393,14 @@ export default function LocationPage() {
                           const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                           setNewSeatForm({
                             location: selectedLocation.name || locId,
-                            email: "",
                             seatId: nextInfo.seatId,
                             seatNo: nextInfo.number,
+                            assignNow: true,
+                            employeeName: "",
+                            employeeEmail: "",
                             orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
                           });
+                          setCreateSeatError(null);
                           setIsCreateSeatOpen(true);
                         }}
                         className="inline-flex items-center gap-1.5 text-xs font-bold text-[#8C5835] transition hover:text-[#6F3F24] hover:underline"
@@ -1167,7 +1469,7 @@ export default function LocationPage() {
                             <div className="mt-5 space-y-3.5 text-xs">
                               {/* Assigned Employee */}
                               {matchedEmployee ? (
-                                <div className="flex flex-col gap-1.5 rounded-xl border border-[#EEE5DC] p-3">
+                                <div className="flex flex-col gap-1.5 rounded-2xl border border-[#EEE5DC] bg-white p-3.5 shadow-2xs">
                                   <div className="flex items-center justify-between">
                                     <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
                                     <span
@@ -1177,12 +1479,12 @@ export default function LocationPage() {
                                           : "bg-emerald-100 text-emerald-700 border border-emerald-200"
                                       }`}
                                     >
-                                      {matchedEmployee.qrTokenStatus === "revoked" ? "Token Revoked" : "Token Active"}
+                                      {matchedEmployee.qrTokenStatus === "revoked" ? "Token Revoked" : "Occupied"}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-                                      <User size={14} />
+                                  <div className="flex items-center gap-2.5 mt-1">
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D] font-bold text-xs">
+                                      {matchedEmployee.name.slice(0, 2).toUpperCase()}
                                     </div>
                                     <div className="flex flex-col min-w-0">
                                       <span className="font-bold text-xs text-[#342219] truncate">
@@ -1194,29 +1496,51 @@ export default function LocationPage() {
                                     </div>
                                   </div>
                                 </div>
-                              ) : currentSeat.employee ? (
-                                <div className="flex flex-col gap-1 rounded-xl border border-[#EEE5DC] p-3">
-                                  <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                                  <div className="flex items-center gap-2">
-                                    <div className="flex h-6 w-6 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-                                      <User size={13} />
-                                    </div>
-                                    <span className="font-bold text-xs text-[#342219] truncate">
-                                      {currentSeat.employee}
+                              ) : (currentSeat.employee || currentSeat.employeeEmail || currentSeat.employeeName) ? (
+                                <div className="flex flex-col gap-1.5 rounded-2xl border border-[#EEE5DC] bg-white p-3.5 shadow-2xs">
+                                  <div className="flex items-center justify-between">
+                                    <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
+                                    <span className="rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">
+                                      Occupied
                                     </span>
+                                  </div>
+                                  <div className="flex items-center gap-2.5 mt-1">
+                                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D] font-bold text-xs">
+                                      <User size={15} />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-bold text-xs text-[#342219] truncate">
+                                        {currentSeat.employeeName || currentSeat.employee}
+                                      </span>
+                                      {currentSeat.employeeEmail && (
+                                        <span className="text-[11px] text-[#8A7667] truncate">
+                                          {currentSeat.employeeEmail}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                 </div>
                               ) : (
-                                <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
-                                  <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                                  <span className="text-xs text-[#8A7667] italic">Unassigned (Free seat)</span>
+                                <div className="flex items-center justify-between rounded-2xl border border-dashed border-[#D5C2B1] bg-[#FAF8F5] p-3.5">
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[#EEE5DC] text-[#8C5835]">
+                                      <Armchair size={14} />
+                                    </div>
+                                    <div>
+                                      <span className="font-bold text-xs text-[#593A28]">Available Seat</span>
+                                      <p className="text-[10px] text-[#8A7667]">No employee currently assigned</p>
+                                    </div>
+                                  </div>
+                                  <span className="rounded-full bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-0.5 text-[10px] font-bold">
+                                    Available
+                                  </span>
                                 </div>
                               )}
 
                               {/* Seat ID */}
-                              <div className="flex items-center justify-between rounded-xl border border-[#EEE5DC] p-3">
+                              <div className="flex items-center justify-between rounded-2xl border border-[#EEE5DC] bg-white p-3 shadow-2xs">
                                 <span className="font-semibold text-[#8A7667]">Seat Identifier</span>
-                                <span className="font-mono font-bold text-[#342219]">
+                                <span className="font-mono font-bold text-sm text-[#342219]">
                                   {currentSeat.id}
                                 </span>
                               </div>
@@ -1364,41 +1688,63 @@ export default function LocationPage() {
                           );
                         })()}
 
-                        {/* Action Buttons */}
-                        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-[#EEE5DC] pt-4">
-                          <button
-                            type="button"
-                            onClick={() => setIsEditSeatOpen(true)}
-                            className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#D5C2B1] bg-white py-2.5 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1]"
-                          >
-                            <Edit size={14} />
-                            <span>Edit Seat</span>
-                          </button>
+                        {/* Action Buttons: Context-aware for Assigned vs Available Seats */}
+                        <div className="mt-5 border-t border-[#EEE5DC] pt-4">
+                          {Boolean(currentSeat.employee || currentSeat.employeeEmail || currentSeat.employeeName) ? (
+                            <div className="grid grid-cols-2 gap-2.5">
+                              {/* Change Employee */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cleanIdent = (currentSeat.employee || currentSeat.employeeEmail || "").trim().toLowerCase();
+                                  const matched = cleanIdent
+                                    ? orgUsers.find((u) => u.email.toLowerCase() === cleanIdent || u.name.toLowerCase() === cleanIdent)
+                                    : null;
+                                  setEditSeatForm({
+                                    employeeName: currentSeat.employeeName || matched?.name || "",
+                                    employeeEmail: currentSeat.employeeEmail || currentSeat.employee || matched?.email || "",
+                                    orderUrl: currentSeat.orderUrl || "",
+                                  });
+                                  setEditSeatError(null);
+                                  setIsEditSeatOpen(true);
+                                }}
+                                className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#D5C2B1] bg-white py-2.5 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs"
+                              >
+                                <UserPlus size={14} className="text-[#8C5835]" />
+                                <span>Change Employee</span>
+                              </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const cleanIdent = (currentSeat.employee || "").trim().toLowerCase();
-                              const matchedEmployee = cleanIdent
-                                ? orgUsers.find(
-                                    (u) =>
-                                      u.email.toLowerCase() === cleanIdent ||
-                                      u.name.toLowerCase() === cleanIdent ||
-                                      u.userName.toLowerCase() === cleanIdent ||
-                                      u.id === cleanIdent
-                                  )
-                                : null;
-                              if (matchedEmployee) {
-                                alert(`Employee QR Code for ${matchedEmployee.name}:\n${currentSeat.orderUrl}`);
-                              } else {
-                                alert(`Generated Seat QR Code for Seat ${currentSeat.number}:\n${currentSeat.orderUrl}`);
-                              }
-                            }}
-                            className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#754329] to-[#8C5835] py-2.5 text-xs font-bold text-white shadow-md hover:opacity-95"
-                          >
-                            <QrCode size={14} />
-                            <span>Generate QR</span>
-                          </button>
+                              {/* Remove Employee */}
+                              <button
+                                type="button"
+                                onClick={() => setIsUnassignConfirmOpen(true)}
+                                className="flex items-center justify-center gap-1.5 rounded-2xl border border-rose-200 bg-rose-50 py-2.5 text-xs font-bold text-rose-800 transition hover:bg-rose-100 shadow-2xs"
+                              >
+                                <UserMinus size={14} className="text-rose-600" />
+                                <span>Remove Employee</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col gap-2">
+                              {/* Assign Employee for Available seat */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditSeatForm({
+                                    employeeName: "",
+                                    employeeEmail: "",
+                                    orderUrl: "",
+                                  });
+                                  setEditSeatError(null);
+                                  setIsEditSeatOpen(true);
+                                }}
+                                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-[#754329] to-[#8C5835] py-2.5 text-xs font-bold text-white shadow-md hover:opacity-95"
+                              >
+                                <UserPlus size={15} />
+                                <span>Assign Employee</span>
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -1509,41 +1855,37 @@ export default function LocationPage() {
            ======================================================== */}
         <CreateFormModal
           isOpen={isCreateSeatOpen}
-          onClose={() => setIsCreateSeatOpen(false)}
-          title="Location-Seat Create"
+          onClose={() => {
+            setIsCreateSeatOpen(false);
+            setCreateSeatError(null);
+          }}
+          title="Create Seat"
           onSubmit={handleCreateSeatSubmit}
         >
+          {createSeatError && (
+            <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
+              {createSeatError}
+            </div>
+          )}
+
           {/* Location */}
           <FormRow label="Location">
             <input
               type="text"
               readOnly
-              value={newSeatForm.location || "738"}
+              value={selectedLocation?.name || newSeatForm.location || "Office"}
               className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 outline-none cursor-not-allowed"
             />
           </FormRow>
 
-          {/* Email */}
-          <FormRow label="Email">
-            <input
-              type="email"
-              placeholder="Email"
-              value={newSeatForm.email}
-              onChange={(e) =>
-                setNewSeatForm({ ...newSeatForm, email: e.target.value })
-              }
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-            />
-          </FormRow>
-
           {/* SeatId (Read-only, auto-generated sequentially e.g. FTS-01, FTS-02) */}
-          <FormRow label="SeatId" required>
+          <FormRow label="Seat Identifier" required>
             <div className="relative">
               <input
                 required
                 readOnly
                 type="text"
-                placeholder="SeatId"
+                placeholder="Seat Identifier"
                 value={newSeatForm.seatId}
                 className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 font-mono font-bold outline-none cursor-not-allowed"
                 title="Automatically generated using organization shortcode and sequential seat number"
@@ -1555,18 +1897,18 @@ export default function LocationPage() {
           </FormRow>
 
           {/* SeatNo * */}
-          <FormRow label="SeatNo" required>
+          <FormRow label="Seat Number" required>
             <input
               required
               type="text"
-              placeholder="SeatNo"
+              placeholder="e.g. 13"
               value={newSeatForm.seatNo}
               onChange={(e) => {
-                const val = e.target.value;
+                const val = e.target.value.replace(/\D/g, "");
                 const locId = selectedLocation?.id || "1";
                 const code = currentShortCode || "FTS";
                 const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-                const generatedId = `${code}-${val.padStart(2, "0")}`;
+                const generatedId = `${code}-${val ? val.padStart(2, "0") : ""}`;
 
                 setNewSeatForm({
                   ...newSeatForm,
@@ -1575,37 +1917,86 @@ export default function LocationPage() {
                   orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(val, 10) || 1}?seatId=${generatedId}`,
                 });
               }}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 font-bold"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-bold"
             />
           </FormRow>
 
-          {/* OrderUrl * */}
-          <FormRow label="OrderUrl" required>
-            <input
-              required
-              type="text"
-              placeholder="OrderUrl"
-              value={newSeatForm.orderUrl}
-              onChange={(e) =>
-                setNewSeatForm({ ...newSeatForm, orderUrl: e.target.value })
-              }
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20 font-mono text-xs"
-            />
-          </FormRow>
+          {/* Assign Employee Checkbox */}
+          <div className="my-3 rounded-xl border border-[#EEE5DC] bg-[#FAF8F5] p-3.5">
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={newSeatForm.assignNow}
+                onChange={(e) => setNewSeatForm({ ...newSeatForm, assignNow: e.target.checked })}
+                className="h-4 w-4 rounded text-[#8C5835] focus:ring-[#8C5835] border-gray-300 cursor-pointer"
+              />
+              <span className="text-xs font-bold text-[#342219]">Assign an employee now</span>
+            </label>
+            <p className="mt-1 ml-6.5 text-[11px] text-[#8A7667]">
+              {newSeatForm.assignNow
+                ? "This seat will be marked Occupied and associated with this employee."
+                : "Leave unchecked to create an unassigned Available seat that can be assigned later."}
+            </p>
+          </div>
+
+          {/* Employee Fields - Shown when assignNow is checked */}
+          {newSeatForm.assignNow && (
+            <div className="space-y-3 rounded-2xl border border-[#E8DED4] bg-white p-3.5">
+              <FormRow label="Employee Name" required>
+                <input
+                  required={newSeatForm.assignNow}
+                  type="text"
+                  placeholder="e.g. Mohamed Imthiyaz"
+                  value={newSeatForm.employeeName}
+                  onChange={(e) =>
+                    setNewSeatForm({ ...newSeatForm, employeeName: e.target.value })
+                  }
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-medium"
+                />
+              </FormRow>
+
+              <FormRow label="Employee Email" required>
+                <input
+                  required={newSeatForm.assignNow}
+                  type="email"
+                  placeholder="e.g. imthiyaz@example.com"
+                  value={newSeatForm.employeeEmail}
+                  onChange={(e) =>
+                    setNewSeatForm({ ...newSeatForm, employeeEmail: e.target.value })
+                  }
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-medium"
+                />
+              </FormRow>
+            </div>
+          )}
+
+          {isCreatingSeat && (
+            <div className="mt-2 text-center text-xs font-medium text-[#8C5835] animate-pulse">
+              Creating seat and registering assignment…
+            </div>
+          )}
         </CreateFormModal>
 
-
-
         {/* ========================================================
-            MODAL: EDIT SEAT
+            MODAL: ASSIGN / CHANGE EMPLOYEE
            ======================================================== */}
         {isEditSeatOpen && currentSeat && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
             <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-[#EEE5DC] bg-white p-6 shadow-2xl">
               <div className="flex items-center justify-between border-b border-[#EEE5DC] pb-3">
-                <h3 className="text-lg font-bold text-[#342219]">
-                  Edit Seat {currentSeat.number}
-                </h3>
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F6ECE2] text-[#8C5835]">
+                    <UserPlus size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#342219]">
+                      {currentSeat.employee || currentSeat.employeeEmail ? "Change Employee" : "Assign Employee"}
+                    </h3>
+                    <p className="text-xs text-[#8A7667]">
+                      Seat {currentSeat.number} &bull; <span className="font-mono">{currentSeat.id}</span>
+                    </p>
+                  </div>
+                </div>
                 <button
                   type="button"
                   onClick={() => setIsEditSeatOpen(false)}
@@ -1615,69 +2006,129 @@ export default function LocationPage() {
                 </button>
               </div>
 
-              <div className="mt-4 space-y-4 text-xs">
-                <div>
-                  <label className="mb-1 block font-semibold text-[#45352B]">
-                    Assigned Employee Email
-                  </label>
-                  <input
-                    type="email"
-                    defaultValue={currentSeat.employee || ""}
-                    placeholder="e.g. employee@office.com"
-                    onChange={(e) => {
-                      currentSeat.employee = e.target.value;
-                    }}
-                    className="w-full rounded-xl border border-[#E8DED4] p-2.5 text-sm text-[#342219] outline-none"
-                  />
+              {editSeatError && (
+                <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-xs font-semibold text-rose-700">
+                  {editSeatError}
                 </div>
+              )}
 
+              <form onSubmit={handleSaveSeatAssignment} className="mt-4 space-y-3.5 text-xs">
                 <div>
                   <label className="mb-1 block font-semibold text-[#45352B]">
-                    Order URL
+                    Employee Name <span className="text-rose-500">*</span>
                   </label>
                   <input
                     type="text"
-                    defaultValue={currentSeat.orderUrl}
-                    onChange={(e) => {
-                      currentSeat.orderUrl = e.target.value;
-                    }}
-                    className="w-full rounded-xl border border-[#E8DED4] p-2.5 text-sm text-[#342219] outline-none"
+                    required
+                    placeholder="e.g. Mohamed Imthiyaz"
+                    value={editSeatForm.employeeName}
+                    onChange={(e) => setEditSeatForm({ ...editSeatForm, employeeName: e.target.value })}
+                    className="w-full rounded-xl border border-[#E8DED4] p-2.5 text-sm text-[#342219] outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-medium"
                   />
                 </div>
 
-                <div className="flex justify-end gap-3 pt-3">
+                <div>
+                  <label className="mb-1 block font-semibold text-[#45352B]">
+                    Employee Email <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="e.g. imthiyaz@example.com"
+                    value={editSeatForm.employeeEmail}
+                    onChange={(e) => setEditSeatForm({ ...editSeatForm, employeeEmail: e.target.value })}
+                    className="w-full rounded-xl border border-[#E8DED4] p-2.5 text-sm text-[#342219] outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-medium"
+                  />
+                </div>
+
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-[11px] text-amber-900">
+                  <p className="font-semibold">Assignment details:</p>
+                  <p className="mt-0.5 text-[#7C5A3E]">
+                    Seat identifier <strong className="font-mono">{currentSeat.id}</strong> will remain unchanged.
+                    Order links and QR badges will route orders under this employee identity.
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2.5 pt-2">
                   <button
                     type="button"
+                    disabled={isSavingSeat}
                     onClick={() => setIsEditSeatOpen(false)}
-                    className="rounded-xl border border-gray-200 px-4 py-2 font-semibold text-gray-600 hover:bg-gray-50"
+                    className="rounded-xl border border-gray-200 px-4 py-2 font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
-                    type="button"
-                    onClick={() => {
-                      const locId = selectedLocation?.id || "1";
-                      const idealUrl = getEmployeeOrderUrl(
-                        currentSeat.employee,
-                        currentSeat.id,
-                        locId,
-                        currentSeat.number
-                      );
-                      const finalSeat = { ...currentSeat, orderUrl: idealUrl };
-                      const updatedSeats = (seatsByLoc[locId] || []).map((s) =>
-                        s.number === currentSeat.number ? finalSeat : s
-                      );
-                      saveSeatsByLoc({
-                        ...seatsByLoc,
-                        [locId]: updatedSeats,
-                      });
-                      setIsEditSeatOpen(false);
-                    }}
-                    className="rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 font-semibold text-white shadow-md hover:opacity-95"
+                    type="submit"
+                    disabled={isSavingSeat}
+                    className="flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 font-bold text-white shadow-md hover:opacity-95 disabled:opacity-50"
                   >
-                    Save Changes
+                    {isSavingSeat ? "Saving…" : "Save Assignment"}
                   </button>
                 </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            MODAL: CONFIRM REMOVE / UNASSIGN EMPLOYEE
+           ======================================================== */}
+        {isUnassignConfirmOpen && currentSeat && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-[#EEE5DC] bg-white p-6 shadow-2xl animate-in fade-in duration-200">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-rose-100 text-rose-600 mx-auto mb-3.5">
+                <UserMinus size={24} />
+              </div>
+
+              <h3 className="text-center text-lg font-bold text-[#342219]">
+                Remove Employee from Seat {currentSeat.number}?
+              </h3>
+
+              <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50/70 p-3.5 text-xs text-gray-700 space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-[#8A7667]">Seat Identifier:</span>
+                  <strong className="font-mono text-[#342219]">{currentSeat.id}</strong>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-[#8A7667]">Assigned Employee:</span>
+                  <strong className="text-[#342219]">{currentSeat.employeeName || currentSeat.employee || "Assigned"}</strong>
+                </div>
+                {currentSeat.employeeEmail && (
+                  <div className="flex justify-between">
+                    <span className="text-[#8A7667]">Email:</span>
+                    <span className="font-mono text-gray-600">{currentSeat.employeeEmail}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-3.5 rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900 space-y-1">
+                <p className="font-semibold text-amber-950">What will happen:</p>
+                <ul className="list-disc list-inside space-y-0.5 text-[#735133]">
+                  <li>The employee assignment will be cleared.</li>
+                  <li>Seat <strong className="font-mono">{currentSeat.id}</strong> will remain in the seating plan as <strong>Available</strong>.</li>
+                  <li>The seat and location records are NOT deleted.</li>
+                  <li>Another employee can be assigned to this seat at any time.</li>
+                </ul>
+              </div>
+
+              <div className="mt-5 flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  disabled={isUnassigning}
+                  onClick={() => setIsUnassignConfirmOpen(false)}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={isUnassigning}
+                  onClick={handleUnassignEmployee}
+                  className="flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2 text-xs font-bold text-white shadow-md hover:bg-rose-700 disabled:opacity-50"
+                >
+                  {isUnassigning ? "Removing…" : "Yes, Remove Employee"}
+                </button>
               </div>
             </div>
           </div>

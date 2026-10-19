@@ -14,5 +14,8 @@ locationRoutes.delete("/:id", locationController.deleteLocation);
 // Persistent seating plan endpoints
 locationRoutes.get("/:id/seats", locationController.getSeats);
 locationRoutes.post("/:id/seats", locationController.saveSeat);
+locationRoutes.post("/:id/seats/:seatId/unassign", locationController.unassignSeat);
+locationRoutes.post("/:id/seats/:seatId/assign", locationController.assignSeat);
+locationRoutes.delete("/:id/seats/:seatId", locationController.deleteSeat);
 
 export default locationRoutes;

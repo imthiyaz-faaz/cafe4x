@@ -21,6 +21,7 @@ export interface ProviderOrder {
   employeeName: string;
   employeeId?: string | null;
   qrToken?: string | null;
+  tempSessionToken?: string | null;
   items: OrderItem[];
   subtotal?: number;
   adjustmentAmount?: number;

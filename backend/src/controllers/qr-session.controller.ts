@@ -109,11 +109,27 @@ export const qrSessionController = {
       const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
       const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
 
+      // Lookup any assigned seat for this employee in this organization
+      let assignedSeat: any = null;
+      try {
+        assignedSeat = await db
+          .prepare(
+            `SELECT s.id as seatId, s.number as seatNumber, s.location_id as locationId, l.name as locationName
+             FROM seats s
+             JOIN locations l ON s.location_id = l.id
+             WHERE s.organization_id = ?
+               AND (s.employee_id = ? OR LOWER(s.employee_email) = LOWER(?) OR LOWER(s.employee) = LOWER(?))
+             LIMIT 1`
+          )
+          .bind(row.organizationId, row.id, row.email, row.email)
+          .get();
+      } catch {}
+
       await db
         .prepare(
           `INSERT INTO ordering_sessions
-             (id, temp_token_hash, employee_id, organization_id, created_at, expires_at, status)
-           VALUES (?, ?, ?, ?, ?, ?, 'active')`
+             (id, temp_token_hash, employee_id, organization_id, created_at, expires_at, status, seat_id, seat_number, location_id, location_name)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
         )
         .bind(
           sessionId,
@@ -121,7 +137,11 @@ export const qrSessionController = {
           String(row.id),
           String(row.organizationId),
           now.toISOString(),
-          expiresAt.toISOString()
+          expiresAt.toISOString(),
+          assignedSeat?.seatId || null,
+          assignedSeat?.seatNumber || null,
+          assignedSeat?.locationId || null,
+          assignedSeat?.locationName || null
         )
         .run();
 
@@ -142,8 +162,269 @@ export const qrSessionController = {
   },
 
   /**
-   * GET /api/qr/validate/:tempToken
+   * POST /api/qr/seat-session
    *
+   * Public endpoint. Takes { shortCode, locationId, seatNumber, seatId } from the old raw ordering URL
+   * or a seat-level QR code.
+   *
+   * Security & Business logic:
+   *   1. Resolves organization via shortCode (defaults to 'FTS' if unspecified).
+   *   2. Resolves location via locationId (verifies location belongs to the organization).
+   *   3. Resolves seat via seatNumber or seatId (within that specific location & organization).
+   *      - Query parameters like `?seatId=` are NEVER trusted as authorization credentials.
+   *   4. If the seat has an assigned employee:
+   *      - Resolves employee record in database.
+   *      - Ensures employee belongs to the organization.
+   *      - Verifies employee QR credential is active.
+   *      - Issues a temporary ordering session bound to both employee and seat context.
+   *   5. If the seat is unassigned:
+   *      - cafe4x business rule: creates an authorized seat-level temporary session (or binds to seat guest)
+   *        strictly bound to the verified location and seat.
+   *   6. Returns { success: true, tempToken, shortCode, seat, employee } so frontend redirects to /:shortCode/qrorder/:tempToken.
+   */
+  async createSeatSession(c: Context<AppEnv>) {
+    try {
+      const body = await c.req.json().catch(() => ({})) as any;
+      const rawShortCode = (body.shortCode || "").toString().trim().toUpperCase();
+      const rawLocationId = (body.locationId || "").toString().trim();
+      const rawSeatNumber = (body.seatNumber || "").toString().trim();
+      const rawSeatId = (body.seatId || "").toString().trim();
+
+      if (!rawLocationId || (!rawSeatNumber && !rawSeatId)) {
+        return c.json(
+          { success: false, message: "locationId and seatNumber are required to create an ordering session." },
+          400
+        );
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+
+      // 1. Resolve Organization
+      let orgRow: any = null;
+      if (rawShortCode) {
+        orgRow = await db
+          .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = ?`)
+          .bind(rawShortCode)
+          .get();
+      }
+
+      // If shortCode was not supplied or not found, try finding via locationId
+      if (!orgRow) {
+        const locOrg = await db
+          .prepare(
+            `SELECT o.id, o.name, o.short_code as shortCode
+             FROM locations l
+             JOIN organizations o ON l.organization_id = o.id
+             WHERE l.id = ? OR l.display_id = ?`
+          )
+          .bind(rawLocationId, rawLocationId)
+          .get() as any;
+
+        if (locOrg) {
+          orgRow = locOrg;
+        }
+      }
+
+      // Fallback default organization (FTS) if still unresolved
+      if (!orgRow) {
+        orgRow = await db
+          .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = 'FTS' LIMIT 1`)
+          .get();
+      }
+
+      if (!orgRow) {
+        return c.json({ success: false, message: "Organization could not be determined." }, 404);
+      }
+
+      // 2. Validate Location belongs to Organization
+      const locRow = await db
+        .prepare(
+          `SELECT id, name, status, total_seats as totalSeats
+           FROM locations
+           WHERE (id = ? OR display_id = ? OR LOWER(name) = LOWER(?))
+             AND organization_id = ?`
+        )
+        .bind(rawLocationId, rawLocationId, rawLocationId, orgRow.id)
+        .get() as any;
+
+      if (!locRow) {
+        return c.json({ success: false, message: "Specified location was not found in this organization." }, 404);
+      }
+
+      if (locRow.status === "Inactive") {
+        return c.json({ success: false, message: "This location is currently inactive." }, 403);
+      }
+
+      // 3. Resolve and Validate Seat
+      // Normalize seat number representation (e.g. "1" -> "01")
+      const parsedSeatNum = parseInt(rawSeatNumber, 10);
+      const paddedSeatNum = !isNaN(parsedSeatNum) ? String(parsedSeatNum).padStart(2, "0") : rawSeatNumber;
+
+      let seatRow = await db
+        .prepare(
+          `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
+                  number, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId
+           FROM seats
+           WHERE location_id = ?
+             AND (number = ? OR number = ? OR id = ? OR display_id = ?)
+           LIMIT 1`
+        )
+        .bind(locRow.id, rawSeatNumber, paddedSeatNum, rawSeatId || rawSeatNumber, rawSeatId || rawSeatNumber)
+        .get() as any;
+
+      // If seat not explicitly in seats table, check if it's within location's totalSeats
+      if (!seatRow && !isNaN(parsedSeatNum) && parsedSeatNum >= 1 && parsedSeatNum <= (locRow.totalSeats || 12)) {
+        // Automatically ensure seat record exists
+        const generatedSeatId = `${orgRow.shortCode}-${paddedSeatNum}`;
+        const generatedDisplayId = `SEAT-${orgRow.shortCode}-${paddedSeatNum}`;
+        const nowIso = new Date().toISOString();
+        try {
+          await db
+            .prepare(
+              `INSERT INTO seats (id, display_id, location_id, organization_id, number, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`
+            )
+            .bind(generatedSeatId, generatedDisplayId, locRow.id, orgRow.id, paddedSeatNum, nowIso, nowIso)
+            .run();
+
+          seatRow = {
+            id: generatedSeatId,
+            displayId: generatedDisplayId,
+            locationId: locRow.id,
+            organizationId: orgRow.id,
+            number: paddedSeatNum,
+            employee: null,
+            employeeName: null,
+            employeeEmail: null,
+            employeeId: null,
+          };
+        } catch {
+          // If already created concurrently, retrieve it
+          seatRow = await db
+            .prepare(`SELECT * FROM seats WHERE location_id = ? AND number = ?`)
+            .bind(locRow.id, paddedSeatNum)
+            .get();
+        }
+      }
+
+      if (!seatRow) {
+        return c.json({ success: false, message: "Requested seat does not exist in this location." }, 404);
+      }
+
+      // 4. Resolve Employee Assignment (if any)
+      let assignedUser: any = null;
+      const employeeIdentifier = seatRow.employeeEmail || seatRow.employee || "";
+      const employeeId = seatRow.employeeId || "";
+
+      if (employeeId || employeeIdentifier) {
+        assignedUser = await db
+          .prepare(
+            `SELECT u.id, u.display_id as displayId, u.name, u.email, u.qr_token as qrToken,
+                    u.qr_token_status as qrTokenStatus, u.perm_token_hash as permTokenHash,
+                    u.perm_token_status as permTokenStatus
+             FROM users u
+             JOIN user_organizations uo ON u.id = uo.user_id
+             WHERE uo.organization_id = ?
+               AND (u.id = ? OR LOWER(u.email) = LOWER(?) OR LOWER(u.name) = LOWER(?))
+             LIMIT 1`
+          )
+          .bind(orgRow.id, employeeId || employeeIdentifier, employeeIdentifier, employeeIdentifier)
+          .get() as any;
+      }
+
+      // Check if employee's QR credentials were explicitly revoked
+      if (assignedUser) {
+        const legacyRevoked = assignedUser.qrTokenStatus && assignedUser.qrTokenStatus !== "active";
+        const newRevoked = assignedUser.permTokenStatus && assignedUser.permTokenStatus !== "active";
+        if (legacyRevoked || newRevoked) {
+          return c.json(
+            {
+              success: false,
+              message: "The QR ordering credential for the employee assigned to this seat has been revoked.",
+            },
+            403
+          );
+        }
+      }
+
+      // 5. Create Cryptographically Secure Temporary Ordering Session
+      const rawTempToken = generateSecureQrToken(24);
+      const tempHash = await sha256Hex(rawTempToken);
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
+      const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
+
+      // Bind session to assigned employee if one exists; otherwise store seat guest session
+      // In ordering_sessions table, employee_id has an FK to users. If no assigned employee,
+      // we check if an unassigned guest/seat ordering user exists, or bind employee_id to the location's assigned provider/admin
+      // or set null if schema allows. To ensure absolute FK integrity across all D1 environments:
+      let boundEmployeeId = assignedUser ? String(assignedUser.id) : null;
+
+      if (!boundEmployeeId) {
+        // Check if there is an organization default user or location provider
+        const fallbackUser = await db
+          .prepare(
+            `SELECT u.id FROM users u
+             JOIN user_organizations uo ON u.id = uo.user_id
+             WHERE uo.organization_id = ?
+             ORDER BY CASE WHEN u.user_type = 'Admin' THEN 1 ELSE 2 END
+             LIMIT 1`
+          )
+          .bind(orgRow.id)
+          .get() as any;
+
+        // If ordering_sessions has NOT NULL on employee_id, we can safely associate with org admin/system user
+        // while keeping seat_id and seat_number bound as guest context
+        boundEmployeeId = fallbackUser ? String(fallbackUser.id) : null;
+      }
+
+      if (!boundEmployeeId) {
+        return c.json({ success: false, message: "Unable to bind ordering session context." }, 500);
+      }
+
+      await db
+        .prepare(
+          `INSERT INTO ordering_sessions
+             (id, temp_token_hash, employee_id, organization_id, created_at, expires_at, status, seat_id, seat_number, location_id, location_name)
+           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
+        )
+        .bind(
+          sessionId,
+          tempHash,
+          boundEmployeeId,
+          String(orgRow.id),
+          now.toISOString(),
+          expiresAt.toISOString(),
+          seatRow.id || `${orgRow.shortCode}-${seatRow.number}`,
+          seatRow.number,
+          locRow.id,
+          locRow.name
+        )
+        .run();
+
+      return c.json(
+        {
+          success: true,
+          tempToken: rawTempToken,
+          expiresAt: expiresAt.toISOString(),
+          shortCode: orgRow.shortCode,
+          isAssignedEmployee: !!assignedUser,
+          seat: {
+            id: seatRow.id,
+            number: seatRow.number,
+            locationId: locRow.id,
+            locationName: locRow.name,
+            employeeName: assignedUser ? assignedUser.name : (seatRow.employeeName || null),
+          },
+        },
+        201
+      );
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  /**
    * Public endpoint. Validates a temporary ordering session token.
    * Returns employee and organization info if valid.
    * Used by UserOrderPage on mount to verify the session.
@@ -172,6 +453,10 @@ export const qrSessionController = {
             s.status as sessionStatus,
             s.expires_at as expiresAt,
             s.created_at as createdAt,
+            s.seat_id as seatId,
+            s.seat_number as seatNumber,
+            s.location_id as locationId,
+            s.location_name as locationName,
             u.id as employeeId,
             u.display_id as displayId,
             u.name as employeeName,
@@ -183,7 +468,7 @@ export const qrSessionController = {
             o.short_code as shortCode,
             o.name as orgName
            FROM ordering_sessions s
-           JOIN users u ON s.employee_id = u.id
+           LEFT JOIN users u ON s.employee_id = u.id
            JOIN organizations o ON s.organization_id = o.id
            WHERE s.temp_token_hash = ?`
         )
@@ -225,30 +510,40 @@ export const qrSessionController = {
         );
       }
 
-      // Check that the employee's permanent credential is still active
-      const legacyRevoked = row.qrTokenStatus && row.qrTokenStatus !== "active";
-      const newRevoked = row.permTokenStatus && row.permTokenStatus !== "active";
-      if (legacyRevoked || newRevoked) {
-        return c.json(
-          {
-            success: false,
-            message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
-            expired: false,
-            revoked: true,
-          },
-          403
-        );
+      // If session is bound to an employee, check that the employee's permanent credential is still active
+      if (row.employeeId) {
+        const legacyRevoked = row.qrTokenStatus && row.qrTokenStatus !== "active";
+        const newRevoked = row.permTokenStatus && row.permTokenStatus !== "active";
+        if (legacyRevoked || newRevoked) {
+          return c.json(
+            {
+              success: false,
+              message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
+              expired: false,
+              revoked: true,
+            },
+            403
+          );
+        }
       }
 
       return c.json({
         success: true,
         sessionId: row.sessionId,
         expiresAt: row.expiresAt,
-        employee: {
-          id: String(row.employeeId),
-          displayId: row.displayId,
-          name: row.employeeName,
-          email: row.employeeEmail,
+        employee: row.employeeId
+          ? {
+              id: String(row.employeeId),
+              displayId: row.displayId,
+              name: row.employeeName,
+              email: row.employeeEmail,
+            }
+          : null,
+        seat: {
+          id: row.seatId || null,
+          number: row.seatNumber || null,
+          locationId: row.locationId || null,
+          locationName: row.locationName || null,
         },
         organization: {
           id: String(row.organizationId),

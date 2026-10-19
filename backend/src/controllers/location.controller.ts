@@ -523,7 +523,7 @@ export const locationController = {
       if (matchedQrToken) {
         orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
       } else if (!orderUrl) {
-        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}?seatId=${seatId}`;
+        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}`;
       }
 
       const now = new Date().toISOString();
@@ -605,7 +605,7 @@ export const locationController = {
 
       const now = new Date().toISOString();
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      const defaultOrderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}?seatId=${seat.id}`;
+      const defaultOrderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
 
       // Update seat assignment to NULL - keep seat, location, org, and number intact
       try {
@@ -744,7 +744,7 @@ export const locationController = {
       if (matchedQrToken) {
         orderUrl = `${orgPrefix}/employee/${matchedQrToken}`;
       } else if (!orderUrl) {
-        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}?seatId=${seat.id}`;
+        orderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
       }
 
       const now = new Date().toISOString();

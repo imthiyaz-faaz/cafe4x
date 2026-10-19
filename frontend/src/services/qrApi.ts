@@ -5,6 +5,14 @@ export interface QrSessionResponse {
   tempToken?: string;
   expiresAt?: string;
   shortCode?: string;
+  isAssignedEmployee?: boolean;
+  seat?: {
+    id: string;
+    number: string;
+    locationId: string;
+    locationName: string;
+    employeeName?: string | null;
+  };
   message?: string;
 }
 
@@ -20,6 +28,12 @@ export interface QrValidateResponse {
     displayId?: string;
     name: string;
     email: string;
+  } | null;
+  seat?: {
+    id?: string | null;
+    number?: string | null;
+    locationId?: string | null;
+    locationName?: string | null;
   };
   organization?: {
     id: string;
@@ -42,6 +56,8 @@ export interface QrProvisionResponse {
  * Security notes:
  *  - createSession: sends permanentToken to backend, gets back a tempToken.
  *    The permanentToken is passed once from the URL; it is NOT stored in localStorage.
+ *  - createSeatSession: sends locationId and seatNumber to backend, gets back a tempToken.
+ *    Resolves assigned employee or creates seat-level session.
  *  - validateSession: sends tempToken (from URL) to backend for server-side validation.
  *  - provisionPermanentToken / revokePermanentToken: admin-only, requires auth headers.
  */
@@ -51,8 +67,21 @@ export const qrApi = {
    * Called by QrEntryPage when the employee scans their permanent QR link.
    */
   async createSession(permanentToken: string): Promise<QrSessionResponse> {
-    // Use bare fetch to avoid attaching user credentials, since this is a public endpoint
     const res = await api.post<QrSessionResponse>("/api/qr/session", { permanentToken });
+    return res;
+  },
+
+  /**
+   * Create a temporary ordering session from locationId and seatNumber.
+   * Called when opening /order/:locationId/:seatNumber.
+   */
+  async createSeatSession(params: {
+    shortCode?: string;
+    locationId: string;
+    seatNumber: string;
+    seatId?: string;
+  }): Promise<QrSessionResponse> {
+    const res = await api.post<QrSessionResponse>("/api/qr/seat-session", params);
     return res;
   },
 

@@ -294,12 +294,26 @@ export const orderController = {
       const orderId = body.id || displayId;
 
       let employeeId: string | null = null;
-      let employeeName = body.employeeName || `Seat ${body.seat || "01"} Guest`;
+      let employeeName = body.employeeName || "Guest";
+      let validatedSeatNumber = body.seat ? String(body.seat).padStart(2, "0") : "";
+      let validatedLocationId = body.locationId || null;
+      let validatedLocationName = body.locationName || "Office";
+
       const qrToken = body.qrToken ? String(body.qrToken).trim() : null;
-      // tempSessionToken is the new two-tier token; qrToken is legacy permanent token
       const tempSessionToken = body.tempSessionToken ? String(body.tempSessionToken).trim() : null;
 
-      // ── 1. New two-tier system: validate temporary session token ──────────
+      // Every order must be backed by a verified temporary session (or legacy permanent token)
+      if (!tempSessionToken && !qrToken) {
+        return c.json(
+          {
+            success: false,
+            message: "An active ordering session is required. Please scan your QR code to place an order.",
+          },
+          401
+        );
+      }
+
+      // ── 1. Validate temporary session token ──────────────────────────────
       if (tempSessionToken) {
         const enc = new TextEncoder();
         const buf = await crypto.subtle.digest("SHA-256", enc.encode(tempSessionToken));
@@ -314,17 +328,20 @@ export const orderController = {
                s.id as sessionId,
                s.status as sessionStatus,
                s.expires_at as expiresAt,
+               s.seat_id as seatId,
+               s.seat_number as seatNumber,
+               s.location_id as locationId,
+               s.location_name as locationName,
                u.id as userId,
                u.name as userName,
                u.email as userEmail,
                u.qr_token_status as qrTokenStatus,
                u.perm_token_status as permTokenStatus,
-               uo.organization_id as orgId,
+               s.organization_id as orgId,
                o.short_code as orgShortCode
              FROM ordering_sessions s
-             JOIN users u ON s.employee_id = u.id
-             JOIN user_organizations uo ON u.id = uo.user_id
-             JOIN organizations o ON uo.organization_id = o.id
+             LEFT JOIN users u ON s.employee_id = u.id
+             JOIN organizations o ON s.organization_id = o.id
              WHERE s.temp_token_hash = ?
                AND s.organization_id = ?`
           )
@@ -332,13 +349,12 @@ export const orderController = {
           .get()) as any;
 
         if (!sessionRow) {
-          return c.json({ success: false, message: "Invalid ordering session token" }, 403);
+          return c.json({ success: false, message: "Invalid or expired ordering session token" }, 403);
         }
         if (sessionRow.sessionStatus === "revoked") {
           return c.json({ success: false, message: "This ordering session has been revoked" }, 403);
         }
         if (sessionRow.expiresAt < nowIso) {
-          // Mark as expired
           await db
             .prepare(`UPDATE ordering_sessions SET status = 'expired' WHERE id = ?`)
             .bind(sessionRow.sessionId)
@@ -346,20 +362,28 @@ export const orderController = {
           return c.json({ success: false, message: "Ordering session has expired. Please scan your QR code again." }, 410);
         }
 
-        // Check permanent credential is still active
-        const legacyRevoked = sessionRow.qrTokenStatus && sessionRow.qrTokenStatus !== "active";
-        const newRevoked = sessionRow.permTokenStatus && sessionRow.permTokenStatus !== "active";
-        if (legacyRevoked || newRevoked) {
-          return c.json({ success: false, message: "Employee QR credential has been revoked" }, 403);
+        // Check if employee permanent credential is still active (if session has employee)
+        if (sessionRow.userId) {
+          const legacyRevoked = sessionRow.qrTokenStatus && sessionRow.qrTokenStatus !== "active";
+          const newRevoked = sessionRow.permTokenStatus && sessionRow.permTokenStatus !== "active";
+          if (legacyRevoked || newRevoked) {
+            return c.json({ success: false, message: "Employee QR credential has been revoked" }, 403);
+          }
         }
 
-        // Org isolation
-        if (String(sessionRow.orgId) !== org.organizationId) {
-          return c.json({ success: false, message: "Session does not belong to this organization" }, 403);
-        }
+        // Bind verified identity and seat context directly from the session
+        employeeId = sessionRow.userId ? String(sessionRow.userId) : null;
+        employeeName = sessionRow.userName || sessionRow.userEmail || (sessionRow.seatNumber ? `Seat ${sessionRow.seatNumber} Guest` : employeeName);
 
-        employeeId = String(sessionRow.userId);
-        employeeName = sessionRow.userName || sessionRow.userEmail || employeeName;
+        if (sessionRow.seatNumber) {
+          validatedSeatNumber = String(sessionRow.seatNumber).padStart(2, "0");
+        }
+        if (sessionRow.locationId) {
+          validatedLocationId = sessionRow.locationId;
+        }
+        if (sessionRow.locationName) {
+          validatedLocationName = sessionRow.locationName;
+        }
 
       // ── 2. Legacy: validate permanent qr_token (backward compat) ─────────
       } else if (qrToken) {
@@ -381,7 +405,6 @@ export const orderController = {
           return c.json({ success: false, message: "This employee QR token has been revoked" }, 403);
         }
 
-        // Strict organization isolation check
         if (tokenUser.organization_id !== org.organizationId) {
           return c.json({ success: false, message: "Token does not belong to this organization" }, 403);
         }
@@ -390,22 +413,23 @@ export const orderController = {
         employeeName = tokenUser.name || tokenUser.email || employeeName;
       }
 
-      const seat = body.seat ? String(body.seat).padStart(2, "0") : "";
-      const locationName = body.locationName || "Office";
-      const locationId = body.locationId || null;
+      const seat = validatedSeatNumber;
+      const locationName = validatedLocationName;
+      const locationId = validatedLocationId;
       const items = Array.isArray(body.items) ? body.items : [];
 
       if (items.length === 0) {
         return c.json({ success: false, message: "Order must contain at least one item" }, 400);
       }
 
-      // Backend validation: Verify every beverage item has an explicitly selected valid sugar preference
-      // Check each item's actual category/type directly from the database
+      // Backend validation: Verify menu items against DB records and calculate authoritative subtotal
+      let calculatedSubtotal = 0;
+
       for (const it of items) {
         let dbItem: any = null;
         if (it.itemId) {
           dbItem = (await db
-            .prepare(`SELECT id, name, type, category, preference FROM items WHERE id = ? AND organization_id = ?`)
+            .prepare(`SELECT id, name, type, category, preference, amount, status FROM items WHERE id = ? AND organization_id = ?`)
             .bind(it.itemId, org.organizationId)
             .get()) as any;
         }
@@ -413,9 +437,13 @@ export const orderController = {
           const rawName = String(it.name).trim();
           const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
           dbItem = (await db
-            .prepare(`SELECT id, name, type, category, preference FROM items WHERE organization_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(name) = LOWER(?)) LIMIT 1`)
+            .prepare(`SELECT id, name, type, category, preference, amount, status FROM items WHERE organization_id = ? AND (LOWER(name) = LOWER(?) OR LOWER(name) = LOWER(?)) LIMIT 1`)
             .bind(org.organizationId, rawName, cleanName)
             .get()) as any;
+        }
+
+        if (dbItem && dbItem.status === "Out of Stock") {
+          return c.json({ success: false, message: `Item '${dbItem.name}' is currently out of stock.` }, 400);
         }
 
         const isBeverage = dbItem
@@ -423,7 +451,6 @@ export const orderController = {
           : (it.category === "Beverages" || (it.name && /(tea|coffee|chai|drink|juice|latte|cappuccino)/i.test(it.name)));
 
         if (isBeverage) {
-          // Extract preference from it.preference or from it.name if e.g. "Tea (Medium)"
           let prefValue = it.preference ? String(it.preference).trim() : "";
           if (!prefValue && it.name && it.name.includes("(") && it.name.includes(")")) {
             const match = it.name.match(/\((.*?)\)/);
@@ -449,9 +476,18 @@ export const orderController = {
             }, 400);
           }
         }
+
+        // Authoritative item price from database if available
+        const itemQty = Math.max(1, parseInt(it.qty, 10) || 1);
+        const itemPrice = dbItem?.amount !== undefined && dbItem?.amount !== null
+          ? Number(dbItem.amount)
+          : (Number(it.price) || 0);
+
+        it.price = itemPrice;
+        it.qty = itemQty;
       }
 
-      const total = Number(body.total) || 0;
+      const rawClientTotal = Number(body.total) || 0;
       const time = body.time && body.time !== "Just now"
         ? body.time
         : now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: true });
@@ -460,9 +496,9 @@ export const orderController = {
       const itemsJson = JSON.stringify(items);
       const isoNow = now.toISOString();
 
-      const subtotal = body.subtotal !== undefined
-        ? Number(body.subtotal)
-        : (items.length > 0 ? items.reduce((sum: number, it: any) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : total);
+      const subtotal = calculatedSubtotal > 0
+        ? calculatedSubtotal
+        : (body.subtotal !== undefined ? Number(body.subtotal) : rawClientTotal);
       const adjustmentAmount = Number(body.adjustmentAmount) || 0;
       const discount = Number(body.discount) || 0;
       const calculatedTotal = Math.max(0, subtotal + adjustmentAmount - discount);

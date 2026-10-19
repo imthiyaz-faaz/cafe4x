@@ -203,8 +203,8 @@ export default function LocationPage() {
     } catch { }
   };
 
-  // Helper to resolve an employee's secure QR order URL or fallback
-  const getEmployeeOrderUrl = (employeeIdentifier?: string, seatId?: string, locId?: string, seatNo?: string) => {
+  // Helper to resolve an employee's secure permanent QR order URL or seat permanent QR URL
+  const getEmployeeOrderUrl = (employeeIdentifier?: string, _seatId?: string, locId?: string, seatNo?: string) => {
     const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
     if (employeeIdentifier && orgUsers.length > 0) {
       const cleanIdent = employeeIdentifier.trim().toLowerCase();
@@ -219,9 +219,10 @@ export default function LocationPage() {
         return `${window.location.origin}${orgPrefix}/employee/${matched.qrToken}`;
       }
     }
-    // Fallback if employee has not yet been assigned
-    const fallbackSeatId = seatId || `${currentShortCode || "FTS"}-${seatNo || "01"}`;
-    return `${window.location.origin}${orgPrefix}/order/${locId || "1"}/${parseInt(seatNo || "1", 10) || 1}?seatId=${fallbackSeatId}`;
+    // Permanent entry URL for this seat (routes through secure session creation)
+    const effectiveLocId = locId || (selectedLocation ? String(selectedLocation.id) : "1");
+    const effectiveSeatNo = parseInt(seatNo || "1", 10) || 1;
+    return `${window.location.origin}${orgPrefix}/order/${effectiveLocId}/${effectiveSeatNo}`;
   };
 
   // Load seats from backend on selectedLocation change, falling back to local storage

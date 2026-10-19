@@ -115,23 +115,31 @@ export default function UserOrderPage() {
 
     setTokenStatus("checking");
 
-    // Try new two-tier session validation first
+    // Try two-tier session validation
     qrApi
       .validateSession(qrToken)
       .then((res) => {
-        if (res && res.success && res.employee) {
-          // ── New two-tier session valid ──────────────────────────────────
+        if (res && res.success) {
+          // ── Session valid ──────────────────────────────────
           setTokenStatus("valid");
-          setAuthenticatedEmployee(res.employee);
-          setEmployeeName(res.employee.name);
-          setEmployeeEmail(res.employee.email);
+          if (res.employee) {
+            setAuthenticatedEmployee(res.employee);
+            setEmployeeName(res.employee.name);
+            setEmployeeEmail(res.employee.email);
+          }
+          if (res.seat) {
+            if (res.seat.id) setSeatId(res.seat.id);
+            if (res.seat.locationName) setLocationName(res.seat.locationName);
+            if (res.seat.locationId && res.seat.number) {
+              const code = res.organization?.shortCode || "FTS";
+              setPermanentQrHref(`/${code}/order/${res.seat.locationId}/${parseInt(res.seat.number, 10) || 1}`);
+            }
+          }
           if (res.expiresAt) {
             setSessionExpiresAt(res.expiresAt);
           }
           if (res.organization?.shortCode) {
             setEffectiveShortCode(res.organization.shortCode.toUpperCase());
-            // Build the permanent QR entry URL so we can show it on expiry
-            setPermanentQrHref(""); // permanent token not exposed to frontend
           }
         } else if (res && res.expired) {
           // ── Session expired ───────────────────────────────────────────
@@ -697,9 +705,8 @@ export default function UserOrderPage() {
                 )}
               </div>
               <p className="text-[11px] text-[#8A7667]">
-                {employeeName ? <span className="font-semibold text-[#342219]">{employeeName} &bull; </span> : null}
                 {locationName}
-                {activeSeatNumber ? ` &bull; Seat ${String(activeSeatNumber).padStart(2, "0")}` : (seatId ? ` &bull; ${seatId}` : "")}
+                {activeSeatNumber ? ` • Seat ${String(activeSeatNumber).padStart(2, "0")}` : (seatId ? ` • ${seatId}` : "")}
               </p>
             </div>
           </div>

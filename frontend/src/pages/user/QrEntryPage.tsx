@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import { Lock, QrCode, AlertTriangle, RefreshCw } from "lucide-react";
 import Background from "../../components/background";
 import { qrApi } from "../../services/qrApi";
@@ -7,25 +7,30 @@ import { qrApi } from "../../services/qrApi";
 /**
  * QrEntryPage
  *
- * Handles the permanent employee QR entry route:
- *   /:shortCode/employee/:permanentToken
+ * Secure entry point for all ordering links:
+ *   1. Permanent employee QR route:
+ *      /:shortCode/employee/:permanentToken
+ *      /employee/:permanentToken
+ *
+ *   2. Seat ordering route:
+ *      /:shortCode/order/:locationId/:seatNumber
+ *      /order/:locationId/:seatNumber
  *
  * Flow:
- *   1. Extract permanentToken from URL params (never stored in localStorage)
- *   2. POST /api/qr/session with permanentToken → receive tempToken
- *   3. Immediately redirect to /:shortCode/qrorder/:tempToken
- *   4. If the permanent token is revoked/invalid, show an appropriate error
- *
- * Security:
- *   - permanentToken is read from URL once and immediately sent to backend
- *   - tempToken is placed in the URL for the redirect, never persisted
- *   - No identity info is trusted from the frontend; all resolved server-side
+ *   - Verifies the requested context against trusted database records.
+ *   - Never trusts editable query parameters (e.g. ?seatId=) as identity proofs.
+ *   - Creates an authenticated temporary session (expires in 30 min).
+ *   - Redirects to /:shortCode/qrorder/:tempToken.
+ *   - If revoked, expired, or invalid, blocks entry and displays a clear security explanation.
  */
 export default function QrEntryPage() {
-  const { shortCode, permanentToken } = useParams<{
+  const { shortCode, permanentToken, locationId, seatNumber } = useParams<{
     shortCode?: string;
     permanentToken?: string;
+    locationId?: string;
+    seatNumber?: string;
   }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
   type Status = "creating" | "redirecting" | "invalid" | "revoked" | "error";
@@ -34,18 +39,30 @@ export default function QrEntryPage() {
   const [isRetrying, setIsRetrying] = useState(false);
 
   const createSessionAndRedirect = async () => {
-    if (!permanentToken) {
-      setStatus("invalid");
-      setErrorMessage("No QR token found in this link.");
-      return;
-    }
-
     try {
-      const res = await qrApi.createSession(permanentToken);
+      let res: any = null;
+
+      if (permanentToken) {
+        // Flow 1: Permanent employee QR credential
+        res = await qrApi.createSession(permanentToken);
+      } else if (locationId && seatNumber) {
+        // Flow 2: Seat ordering route
+        // We pass locationId, seatNumber, and optional seatId query param as hint
+        const querySeatId = searchParams.get("seatId") || undefined;
+        res = await qrApi.createSeatSession({
+          shortCode: shortCode || undefined,
+          locationId,
+          seatNumber,
+          seatId: querySeatId,
+        });
+      } else {
+        setStatus("invalid");
+        setErrorMessage("Invalid ordering link format.");
+        return;
+      }
 
       if (!res.success || !res.tempToken) {
-        // Determine if revoked vs just invalid
-        const msg = res.message || "This QR link could not be validated.";
+        const msg = res.message || "This ordering link could not be validated.";
         if (msg.toLowerCase().includes("revoked")) {
           setStatus("revoked");
         } else {
@@ -58,17 +75,15 @@ export default function QrEntryPage() {
       setStatus("redirecting");
 
       // Determine the correct shortCode for the redirect URL
-      const effectiveShortCode = shortCode || res.shortCode;
-      const targetPath = effectiveShortCode
-        ? `/${effectiveShortCode}/qrorder/${res.tempToken}`
-        : `/qrorder/${res.tempToken}`;
+      const effectiveShortCode = shortCode || res.shortCode || "FTS";
+      const targetPath = `/${effectiveShortCode}/qrorder/${res.tempToken}`;
 
-      // Small delay for UX, then redirect
+      // Small delay for smooth UX transition, then redirect
       setTimeout(() => {
         navigate(targetPath, { replace: true });
-      }, 300);
+      }, 350);
     } catch (err: any) {
-      const msg = err.message || "Failed to validate QR link.";
+      const msg = err.response?.data?.message || err.message || "Failed to validate ordering link.";
       if (msg.toLowerCase().includes("revoked")) {
         setStatus("revoked");
       } else if (msg.toLowerCase().includes("not found") || msg.toLowerCase().includes("invalid")) {
@@ -83,7 +98,7 @@ export default function QrEntryPage() {
   useEffect(() => {
     createSessionAndRedirect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permanentToken, shortCode]);
+  }, [permanentToken, locationId, seatNumber, shortCode]);
 
   // ── Render: Creating session ──────────────────────────────────────────────
   if (status === "creating" || status === "redirecting") {

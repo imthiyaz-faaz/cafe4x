@@ -39,12 +39,9 @@ export default function App() {
       <Route path="/:shortCode/working-hours" element={<WorkingHoursPage />} />
       <Route path="/:shortCode/provider" element={<ProviderPage />} />
 
-      {/* Employee / Guest Order QR routes */}
-      <Route path="/emporder" element={<UserOrderPage />} />
-      <Route path="/order/:locationId/:seatNumber" element={<UserOrderPage />} />
-      <Route path="/:shortCode/order/:locationId/:seatNumber" element={<UserOrderPage />} />
-
-      {/* NEW: Permanent QR entry routes — validate permanent token, create temp session, redirect */}
+      {/* Order Entry routes — validate permanent employee or seat QR, create temporary session, redirect */}
+      <Route path="/order/:locationId/:seatNumber" element={<QrEntryPage />} />
+      <Route path="/:shortCode/order/:locationId/:seatNumber" element={<QrEntryPage />} />
       <Route path="/:shortCode/employee/:permanentToken" element={<QrEntryPage />} />
       <Route path="/employee/:permanentToken" element={<QrEntryPage />} />
 

@@ -7,6 +7,9 @@ const qrRoutes = new Hono();
 // POST /api/qr/session  — validate permanent token, create temporary session
 qrRoutes.post("/session", qrSessionController.createSession);
 
+// POST /api/qr/seat-session — validate seat & employee, create temporary session
+qrRoutes.post("/seat-session", qrSessionController.createSeatSession);
+
 // GET /api/qr/validate/:tempToken  — validate a temporary ordering session
 qrRoutes.get("/validate/:tempToken", qrSessionController.validateSession);
 

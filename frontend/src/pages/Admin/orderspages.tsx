@@ -138,9 +138,10 @@ export default function OrdersPage() {
   useEffect(() => {
     workingHoursApi
       .getWorkingHours()
-      .then((wh) => {
-        if (wh && wh.timezone) {
-          setOrgTimezone(wh.timezone);
+      .then((res: any) => {
+        const tz = res?.workingHours?.timezone || res?.timezone;
+        if (tz) {
+          setOrgTimezone(tz);
         }
       })
       .catch(() => {
@@ -417,14 +418,19 @@ export default function OrdersPage() {
       const orderItemCount = o.items.reduce((acc, it) => acc + (it.qty || 1), 0);
       totalItems += orderItemCount;
 
-      grossAmount += o.total;
-      totalDiscounts += o.discount || 0;
-      totalAdjustments += o.adjustmentAmount || 0;
+      // Exclude cancelled orders from sales totals according to business rules
+      const isCancelled = o.status === "Canceled";
+
+      if (!isCancelled) {
+        grossAmount += o.total;
+        totalDiscounts += o.discount || 0;
+        totalAdjustments += o.adjustmentAmount || 0;
+      }
 
       // Status breakdown
       if (o.status === "Delivered" || o.status === "Completed") {
         completedAmount += o.total;
-      } else if (o.status === "Canceled") {
+      } else if (isCancelled) {
         cancelledAmount += o.total;
       } else {
         pendingAmount += o.total;
@@ -433,10 +439,14 @@ export default function OrdersPage() {
       // Period breakdown
       if (o.period === "morning") {
         morning.push(o);
-        morningAmount += o.total;
+        if (!isCancelled) {
+          morningAmount += o.total;
+        }
       } else if (o.period === "evening") {
         evening.push(o);
-        eveningAmount += o.total;
+        if (!isCancelled) {
+          eveningAmount += o.total;
+        }
       } else {
         other.push(o);
       }

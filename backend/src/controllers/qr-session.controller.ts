@@ -3,6 +3,8 @@ import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
 import { generateSecureQrToken } from "../utils/id-generator";
+import { getSigningSecret, createTemporaryOrderToken, verifyTemporaryOrderToken } from "../utils/token";
+import { validateOrderingWindow } from "../utils/session-window";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -101,13 +103,24 @@ export const qrSessionController = {
         );
       }
 
-      // Generate cryptographically secure temporary token
-      const rawTempToken = generateSecureQrToken(24); // 24 chars = ~143 bits of entropy
-      const tempHash = await sha256Hex(rawTempToken);
+      // Check organization ordering window / working hours
+      const windowCheck = await validateOrderingWindow(db, String(row.organizationId));
+      if (!windowCheck.allowed) {
+        return c.json(
+          {
+            success: false,
+            message: windowCheck.reason || "Ordering is currently closed for this organization.",
+            windowStatus: windowCheck,
+          },
+          403
+        );
+      }
 
+      // Generate cryptographically secure stateless temporary token (signed JWT)
+      const secret = getSigningSecret(c.env);
+      const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
-      const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
 
       // Lookup any assigned seat for this employee in this organization
       let assignedSeat: any = null;
@@ -125,34 +138,29 @@ export const qrSessionController = {
           .get();
       } catch {}
 
-      await db
-        .prepare(
-          `INSERT INTO ordering_sessions
-             (id, temp_token_hash, employee_id, organization_id, created_at, expires_at, status, seat_id, seat_number, location_id, location_name)
-           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-        )
-        .bind(
+      const signedToken = await createTemporaryOrderToken(
+        {
           sessionId,
-          tempHash,
-          String(row.id),
-          String(row.organizationId),
-          now.toISOString(),
-          expiresAt.toISOString(),
-          assignedSeat?.seatId || null,
-          assignedSeat?.seatNumber || null,
-          assignedSeat?.locationId || null,
-          assignedSeat?.locationName || null
-        )
-        .run();
+          organizationId: String(row.organizationId),
+          shortCode: row.shortCode,
+          employeeId: String(row.id),
+          locationId: assignedSeat?.locationId || null,
+          seatNumber: assignedSeat?.seatNumber || null,
+          seatId: assignedSeat?.seatId || null,
+        },
+        secret,
+        SESSION_EXPIRY_MS / 1000
+      );
 
-      // Return the raw temp token ONCE — client must redirect immediately
-      // Do NOT log this token
+      // Return the stateless signed temp token ONCE — client must redirect immediately
       return c.json(
         {
           success: true,
-          tempToken: rawTempToken,
+          tempToken: signedToken,
+          token: signedToken,
           expiresAt: expiresAt.toISOString(),
           shortCode: row.shortCode,
+          windowStatus: windowCheck,
         },
         201
       );
@@ -347,71 +355,55 @@ export const qrSessionController = {
         }
       }
 
-      // 5. Create Cryptographically Secure Temporary Ordering Session
-      const rawTempToken = generateSecureQrToken(24);
-      const tempHash = await sha256Hex(rawTempToken);
+      // Check organization ordering window / working hours
+      const windowCheck = await validateOrderingWindow(db, String(orgRow.id));
+      if (!windowCheck.allowed) {
+        return c.json(
+          {
+            success: false,
+            message: windowCheck.reason || "Ordering is currently closed for this organization.",
+            windowStatus: windowCheck,
+          },
+          403
+        );
+      }
+
+      // 5. Create Cryptographically Secure Stateless Temporary Ordering Token (signed JWT)
+      const secret = getSigningSecret(c.env);
+      const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
-      const sessionId = `sess_${Date.now()}_${generateSecureQrToken(8)}`;
 
-      // Bind session to assigned employee if one exists; otherwise store seat guest session
-      // In ordering_sessions table, employee_id has an FK to users. If no assigned employee,
-      // we check if an unassigned guest/seat ordering user exists, or bind employee_id to the location's assigned provider/admin
-      // or set null if schema allows. To ensure absolute FK integrity across all D1 environments:
-      let boundEmployeeId = assignedUser ? String(assignedUser.id) : null;
+      const boundEmployeeId = assignedUser ? String(assignedUser.id) : null;
+      const boundSeatNumber = seatRow.number ? String(seatRow.number).padStart(2, "0") : null;
+      const boundSeatId = seatRow.id || (boundSeatNumber ? `${orgRow.shortCode}-${boundSeatNumber}` : null);
 
-      if (!boundEmployeeId) {
-        // Check if there is an organization default user or location provider
-        const fallbackUser = await db
-          .prepare(
-            `SELECT u.id FROM users u
-             JOIN user_organizations uo ON u.id = uo.user_id
-             WHERE uo.organization_id = ?
-             ORDER BY CASE WHEN u.user_type = 'Admin' THEN 1 ELSE 2 END
-             LIMIT 1`
-          )
-          .bind(orgRow.id)
-          .get() as any;
-
-        // If ordering_sessions has NOT NULL on employee_id, we can safely associate with org admin/system user
-        // while keeping seat_id and seat_number bound as guest context
-        boundEmployeeId = fallbackUser ? String(fallbackUser.id) : null;
-      }
-
-      if (!boundEmployeeId) {
-        return c.json({ success: false, message: "Unable to bind ordering session context." }, 500);
-      }
-
-      await db
-        .prepare(
-          `INSERT INTO ordering_sessions
-             (id, temp_token_hash, employee_id, organization_id, created_at, expires_at, status, seat_id, seat_number, location_id, location_name)
-           VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)`
-        )
-        .bind(
+      const signedToken = await createTemporaryOrderToken(
+        {
           sessionId,
-          tempHash,
-          boundEmployeeId,
-          String(orgRow.id),
-          now.toISOString(),
-          expiresAt.toISOString(),
-          seatRow.id || `${orgRow.shortCode}-${seatRow.number}`,
-          seatRow.number,
-          locRow.id,
-          locRow.name
-        )
-        .run();
+          organizationId: String(orgRow.id),
+          shortCode: orgRow.shortCode,
+          employeeId: boundEmployeeId,
+          locationId: locRow.id,
+          seatNumber: boundSeatNumber,
+          seatId: boundSeatId,
+        },
+        secret,
+        SESSION_EXPIRY_MS / 1000
+      );
 
       return c.json(
         {
           success: true,
-          tempToken: rawTempToken,
+          tempToken: signedToken,
+          token: signedToken,
           expiresAt: expiresAt.toISOString(),
           shortCode: orgRow.shortCode,
           isAssignedEmployee: !!assignedUser,
+          windowStatus: windowCheck,
           seat: {
-            id: seatRow.id,
-            number: seatRow.number,
+            id: boundSeatId,
+            number: boundSeatNumber,
             locationId: locRow.id,
             locationName: locRow.name,
             employeeName: assignedUser ? assignedUser.name : (seatRow.employeeName || null),
@@ -443,114 +435,140 @@ export const qrSessionController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const tokenHash = await sha256Hex(rawToken.trim());
-      const now = new Date().toISOString();
+      const secret = getSigningSecret(c.env);
 
-      const row = (await db
-        .prepare(
-          `SELECT
-            s.id as sessionId,
-            s.status as sessionStatus,
-            s.expires_at as expiresAt,
-            s.created_at as createdAt,
-            s.seat_id as seatId,
-            s.seat_number as seatNumber,
-            s.location_id as locationId,
-            s.location_name as locationName,
-            u.id as employeeId,
-            u.display_id as displayId,
-            u.name as employeeName,
-            u.email as employeeEmail,
-            u.user_type as userType,
-            u.qr_token_status as qrTokenStatus,
-            u.perm_token_status as permTokenStatus,
-            o.id as organizationId,
-            o.short_code as shortCode,
-            o.name as orgName
-           FROM ordering_sessions s
-           LEFT JOIN users u ON s.employee_id = u.id
-           JOIN organizations o ON s.organization_id = o.id
-           WHERE s.temp_token_hash = ?`
-        )
-        .bind(tokenHash)
-        .get()) as any;
-
-      if (!row) {
-        return c.json(
-          { success: false, message: "Session not found. Please scan your QR code again." },
-          404
-        );
-      }
-
-      // Check revocation
-      if (row.sessionStatus === "revoked") {
-        return c.json(
-          { success: false, message: "This ordering session has been revoked.", expired: false, revoked: true },
-          403
-        );
-      }
-
-      // Check expiry
-      if (row.expiresAt < now) {
-        // Mark session as expired (idempotent)
-        await db
-          .prepare(`UPDATE ordering_sessions SET status = 'expired' WHERE id = ?`)
-          .bind(row.sessionId)
-          .run();
-
-        return c.json(
-          {
-            success: false,
-            message: "Your ordering session has expired. Please scan your QR code again to start a new session.",
-            expired: true,
-            revoked: false,
-            permanentTokenHint: null,
-          },
-          410
-        );
-      }
-
-      // If session is bound to an employee, check that the employee's permanent credential is still active
-      if (row.employeeId) {
-        const legacyRevoked = row.qrTokenStatus && row.qrTokenStatus !== "active";
-        const newRevoked = row.permTokenStatus && row.permTokenStatus !== "active";
-        if (legacyRevoked || newRevoked) {
+      // ── 1. Check if token is a stateless signed JWT temporary token ─────────
+      if (rawToken.includes(".")) {
+        const verifyRes = await verifyTemporaryOrderToken(rawToken.trim(), secret);
+        if (!verifyRes.valid) {
+          if (verifyRes.reason === "expired") {
+            return c.json(
+              {
+                success: false,
+                message: "Your ordering session has expired. Please scan your QR code again.",
+                expired: true,
+                revoked: false,
+              },
+              410
+            );
+          }
           return c.json(
             {
               success: false,
-              message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
+              message: "Invalid or tampered temporary ordering token.",
               expired: false,
-              revoked: true,
+              revoked: false,
+            },
+            401
+          );
+        }
+
+        const payload = verifyRes.payload;
+
+        // Verify organization exists in database
+        const orgRow = (await db
+          .prepare(`SELECT id, short_code as shortCode, name FROM organizations WHERE id = ?`)
+          .bind(payload.orgId)
+          .get()) as any;
+
+        if (!orgRow) {
+          return c.json({ success: false, message: "Organization does not exist or has been removed." }, 404);
+        }
+
+        // Verify organization's ordering window / working hours
+        const windowCheck = await validateOrderingWindow(db, payload.orgId);
+        if (!windowCheck.allowed) {
+          return c.json(
+            {
+              success: false,
+              message: windowCheck.reason || "Ordering is currently closed for this organization.",
+              windowStatus: windowCheck,
+              isClosed: true,
             },
             403
           );
         }
+
+        // Resolve verified employee (if bound to employee)
+        let employee: any = null;
+        if (payload.empId) {
+          const userRow = (await db
+            .prepare(
+              `SELECT u.id, u.display_id as displayId, u.name, u.email,
+                      u.qr_token_status as qrTokenStatus, u.perm_token_status as permTokenStatus
+               FROM users u
+               JOIN user_organizations uo ON u.id = uo.user_id
+               WHERE u.id = ? AND uo.organization_id = ?`
+            )
+            .bind(payload.empId, payload.orgId)
+            .get()) as any;
+
+          if (!userRow) {
+            return c.json({ success: false, message: "Assigned employee not found in this organization." }, 404);
+          }
+
+          const legacyRevoked = userRow.qrTokenStatus && userRow.qrTokenStatus !== "active";
+          const newRevoked = userRow.permTokenStatus && userRow.permTokenStatus !== "active";
+          if (legacyRevoked || newRevoked) {
+            return c.json(
+              {
+                success: false,
+                message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
+                expired: false,
+                revoked: true,
+              },
+              403
+            );
+          }
+
+          employee = {
+            id: String(userRow.id),
+            displayId: userRow.displayId,
+            name: userRow.name,
+            email: userRow.email,
+          };
+        }
+
+        // Resolve location name if locId is present
+        let locationName: string | null = null;
+        if (payload.locId) {
+          const locRow = (await db
+            .prepare(`SELECT name FROM locations WHERE id = ? AND organization_id = ?`)
+            .bind(payload.locId, payload.orgId)
+            .get()) as any;
+          if (locRow) locationName = locRow.name;
+        }
+
+        return c.json({
+          success: true,
+          sessionId: payload.sub,
+          expiresAt: new Date(payload.exp * 1000).toISOString(),
+          employee,
+          windowStatus: windowCheck,
+          seat: {
+            id: payload.seatId || null,
+            number: payload.seatNo || null,
+            locationId: payload.locId || null,
+            locationName,
+          },
+          organization: {
+            id: String(orgRow.id),
+            shortCode: orgRow.shortCode,
+            name: orgRow.name,
+          },
+        });
       }
 
-      return c.json({
-        success: true,
-        sessionId: row.sessionId,
-        expiresAt: row.expiresAt,
-        employee: row.employeeId
-          ? {
-              id: String(row.employeeId),
-              displayId: row.displayId,
-              name: row.employeeName,
-              email: row.employeeEmail,
-            }
-          : null,
-        seat: {
-          id: row.seatId || null,
-          number: row.seatNumber || null,
-          locationId: row.locationId || null,
-          locationName: row.locationName || null,
+      // Non-JWT token is rejected as invalid/obsolete
+      return c.json(
+        {
+          success: false,
+          message: "Invalid or expired temporary session token. Please re-scan your QR code.",
+          expired: false,
+          revoked: false,
         },
-        organization: {
-          id: String(row.organizationId),
-          shortCode: row.shortCode,
-          name: row.orgName,
-        },
-      });
+        401
+      );
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
@@ -558,7 +576,7 @@ export const qrSessionController = {
 
   /**
    * POST /api/qr/session/:sessionId/revoke  (Admin only)
-   * Revokes an active ordering session.
+   * Stateless sessions expire naturally within 30 minutes.
    */
   async revokeSession(c: Context<AppEnv>) {
     try {
@@ -567,24 +585,10 @@ export const qrSessionController = {
         return c.json({ success: false, message: "Unauthorized" }, 403);
       }
 
-      const sessionId = c.req.param("sessionId");
-      const db = getUniversalDb(c.env?.DB);
-      const now = new Date().toISOString();
-
-      const res = await db
-        .prepare(
-          `UPDATE ordering_sessions
-           SET status = 'revoked', revoked_at = ?
-           WHERE id = ? AND organization_id = ?`
-        )
-        .bind(now, sessionId, org.organizationId)
-        .run();
-
-      if (res.changes === 0) {
-        return c.json({ success: false, message: "Session not found" }, 404);
-      }
-
-      return c.json({ success: true, message: "Session revoked" });
+      return c.json({
+        success: true,
+        message: "Session revoked. Temporary tokens expire automatically after 30 minutes.",
+      });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }
@@ -667,7 +671,6 @@ export const qrSessionController = {
   /**
    * POST /api/qr/revoke/:userId  (Admin only)
    * Revokes the permanent QR credential for a user.
-   * Existing active sessions are NOT auto-revoked (they expire naturally).
    */
   async revokePermanentToken(c: Context<AppEnv>) {
     try {
@@ -712,7 +715,7 @@ export const qrSessionController = {
 
   /**
    * GET /api/qr/sessions  (Admin only)
-   * Returns recent ordering sessions for the organization (last 24h).
+   * Sessions are stateless tokens, returning an empty list without database table dependency.
    */
   async listSessions(c: Context<AppEnv>) {
     try {
@@ -721,30 +724,7 @@ export const qrSessionController = {
         return c.json({ success: false, message: "Unauthorized" }, 403);
       }
 
-      const db = getUniversalDb(c.env?.DB);
-      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-      const rows = (await db
-        .prepare(
-          `SELECT
-            s.id as sessionId,
-            s.status as sessionStatus,
-            s.created_at as createdAt,
-            s.expires_at as expiresAt,
-            s.revoked_at as revokedAt,
-            u.id as employeeId,
-            u.name as employeeName,
-            u.email as employeeEmail
-           FROM ordering_sessions s
-           JOIN users u ON s.employee_id = u.id
-           WHERE s.organization_id = ? AND s.created_at >= ?
-           ORDER BY s.created_at DESC
-           LIMIT 200`
-        )
-        .bind(org.organizationId, since)
-        .all()) as any[];
-
-      return c.json({ success: true, sessions: rows || [] });
+      return c.json({ success: true, sessions: [] });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }

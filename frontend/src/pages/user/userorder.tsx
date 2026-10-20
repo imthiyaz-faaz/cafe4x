@@ -43,11 +43,13 @@ export default function UserOrderPage() {
     qrToken?: string;
   }>();
   const [searchParams] = useSearchParams();
+  const queryToken = searchParams.get("token") || "";
+  const effectiveToken = qrToken || queryToken;
 
   // Token validation state
-  // "checking" = validating, "valid" = session active, "invalid" = bad/revoked, "expired" = expired, "none" = no token
-  const [tokenStatus, setTokenStatus] = useState<"checking" | "valid" | "invalid" | "expired" | "none">(
-    qrToken ? "checking" : "none"
+  // "checking" = validating, "valid" = session active, "invalid" = bad/revoked, "expired" = expired, "closed" = outside ordering window, "none" = no token
+  const [tokenStatus, setTokenStatus] = useState<"checking" | "valid" | "invalid" | "expired" | "closed" | "none">(
+    effectiveToken ? "checking" : "none"
   );
   const [tokenErrorMessage, setTokenErrorMessage] = useState<string>("");
   const [authenticatedEmployee, setAuthenticatedEmployee] = useState<any>(null);
@@ -105,20 +107,19 @@ export default function UserOrderPage() {
   const [effectiveShortCode, setEffectiveShortCode] = useState<string>(shortCode || "");
 
   // Validate QR Token if present
-  // New flow: use /api/qr/validate/:tempToken (two-tier sessions)
-  // Legacy fallback: use /api/users/qr-token/:token (permanent tokens)
+  // Validate Token if present (via URL param or ?token= query string)
   useEffect(() => {
-    if (!qrToken) {
+    if (!effectiveToken) {
       setTokenStatus("none");
       return;
     }
 
     setTokenStatus("checking");
 
-    // Try two-tier session validation
+    // Try temporary token validation
     qrApi
-      .validateSession(qrToken)
-      .then((res) => {
+      .validateSession(effectiveToken)
+      .then((res: any) => {
         if (res && res.success) {
           // ── Session valid ──────────────────────────────────
           setTokenStatus("valid");
@@ -141,6 +142,12 @@ export default function UserOrderPage() {
           if (res.organization?.shortCode) {
             setEffectiveShortCode(res.organization.shortCode.toUpperCase());
           }
+        } else if (res && res.isClosed) {
+          // ── Outside ordering window / emergency closed ────────
+          setTokenStatus("closed");
+          setTokenErrorMessage(
+            res.message || "Ordering is currently closed for this organization."
+          );
         } else if (res && res.expired) {
           // ── Session expired ───────────────────────────────────────────
           setTokenStatus("expired");
@@ -153,57 +160,75 @@ export default function UserOrderPage() {
           setTokenErrorMessage(res.message || "This session is no longer valid.");
         }
       })
-      .catch(() => {
-        // If /api/qr/validate returns 404 (token not found in sessions table),
-        // fall back to legacy permanent token validation for backward compat
-        userApi
-          .validateQrToken(qrToken)
-          .then((res) => {
-            if (res && res.success && res.employee) {
-              setTokenStatus("valid");
-              setAuthenticatedEmployee(res.employee);
-              setEmployeeName(res.employee.name);
-              setEmployeeEmail(res.employee.email);
-              if (res.organization?.shortCode) {
-                setEffectiveShortCode(res.organization.shortCode.toUpperCase());
-              }
+      .catch((err: any) => {
+        const errorData = err.response?.data;
+        if (errorData?.isClosed) {
+          setTokenStatus("closed");
+          setTokenErrorMessage(errorData.message || "Ordering is currently closed for this organization.");
+          return;
+        }
+        if (errorData?.expired) {
+          setTokenStatus("expired");
+          setTokenErrorMessage(errorData.message || "Your ordering session has expired. Please scan your QR code again.");
+          return;
+        }
 
-              // Legacy: check localStorage for seat assignment
-              try {
-                const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
-                for (const k of allKeys) {
-                  const storedSeats = localStorage.getItem(k);
-                  if (storedSeats) {
-                    const parsed = JSON.parse(storedSeats);
-                    for (const locKey of Object.keys(parsed)) {
-                      const locSeats = parsed[locKey] || [];
-                      const assignedSeat = locSeats.find(
-                        (s: any) =>
-                          s.employee &&
-                          (s.employee.toLowerCase() === res.employee.email.toLowerCase() ||
-                           s.employee.toLowerCase() === res.employee.name.toLowerCase())
-                      );
-                      if (assignedSeat) {
-                        setSeatId(assignedSeat.id || `Seat-${assignedSeat.number}`);
-                        break;
+        // If not a JWT, fall back to legacy permanent token validation for backward compat
+        if (!effectiveToken.includes(".")) {
+          userApi
+            .validateQrToken(effectiveToken)
+            .then((res) => {
+              if (res && res.success && res.employee) {
+                setTokenStatus("valid");
+                setAuthenticatedEmployee(res.employee);
+                setEmployeeName(res.employee.name);
+                setEmployeeEmail(res.employee.email);
+                if (res.organization?.shortCode) {
+                  setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+                }
+
+                // Legacy: check localStorage for seat assignment
+                try {
+                  const allKeys = Object.keys(localStorage).filter((k) => k.startsWith("cafe4x_seatsByLoc"));
+                  for (const k of allKeys) {
+                    const storedSeats = localStorage.getItem(k);
+                    if (storedSeats) {
+                      const parsed = JSON.parse(storedSeats);
+                      for (const locKey of Object.keys(parsed)) {
+                        const locSeats = parsed[locKey] || [];
+                        const assignedSeat = locSeats.find(
+                          (s: any) =>
+                            s.employee &&
+                            (s.employee.toLowerCase() === res.employee.email.toLowerCase() ||
+                             s.employee.toLowerCase() === res.employee.name.toLowerCase())
+                        );
+                        if (assignedSeat) {
+                          setSeatId(assignedSeat.id || `Seat-${assignedSeat.number}`);
+                          break;
+                        }
                       }
                     }
                   }
-                }
-              } catch {}
-            } else {
+                } catch {}
+              } else {
+                setTokenStatus("invalid");
+                setTokenErrorMessage(res.message || "Invalid or revoked QR code.");
+              }
+            })
+            .catch((fallbackErr) => {
               setTokenStatus("invalid");
-              setTokenErrorMessage(res.message || "Invalid or revoked QR code.");
-            }
-          })
-          .catch((err) => {
-            setTokenStatus("invalid");
-            setTokenErrorMessage(
-              err.response?.data?.message || err.message || "Invalid, revoked or expired QR ordering token."
-            );
-          });
+              setTokenErrorMessage(
+                fallbackErr.response?.data?.message || fallbackErr.message || "Invalid, revoked or expired QR ordering token."
+              );
+            });
+        } else {
+          setTokenStatus("invalid");
+          setTokenErrorMessage(
+            errorData?.message || err.message || "Invalid, revoked or expired QR ordering token."
+          );
+        }
       });
-  }, [qrToken]);
+  }, [effectiveToken]);
 
 
   useEffect(() => {
@@ -486,8 +511,8 @@ export default function UserOrderPage() {
       locationName: locationName || "Office",
       locationId: activeLocationId || undefined,
       employeeName: employeeName || employeeEmail || (activeSeatNumber ? `Seat ${activeSeatNumber}` : "Employee"),
-      qrToken: qrToken || undefined,
-      tempSessionToken: qrToken || undefined,
+      qrToken: effectiveToken || undefined,
+      tempSessionToken: effectiveToken || undefined,
       items: selectedItems.map((it) => {
         const isBeverage = (it.category || "Beverages") === "Beverages";
         const hasPref = isBeverage && it.preferenceChoice && it.preferenceChoice.trim().length > 0;
@@ -525,8 +550,8 @@ export default function UserOrderPage() {
         locationName: orderData.locationName,
         locationId: activeLocationId || undefined,
         employeeName: orderData.employeeName,
-        qrToken: qrToken || undefined,
-        tempSessionToken: qrToken || undefined,
+        qrToken: effectiveToken || undefined,
+        tempSessionToken: effectiveToken || undefined,
         items: orderData.items,
         total: orderData.total,
         time: orderData.time,
@@ -594,6 +619,31 @@ export default function UserOrderPage() {
         return "bg-gray-100 text-gray-800 border-gray-300";
     }
   };
+
+  // If outside permitted ordering window or emergency closed
+  if (tokenStatus === "closed") {
+    return (
+      <Background>
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl border border-[#EEE5DC] bg-white p-8 text-center shadow-2xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 shadow-sm">
+              <Clock size={32} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-[#342219]">Ordering Window Closed</h2>
+            <p className="mt-2 text-sm text-[#8A7667]">
+              {tokenErrorMessage || "The cafe is currently closed for ordering. Orders can only be placed during configured break and service sessions."}
+            </p>
+            <div className="mt-6 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-xs text-amber-900">
+              <p className="font-semibold">Ordering Schedule Notice</p>
+              <p className="mt-1 text-[11px] text-amber-800">
+                Please visit during your organization's scheduled ordering windows. Once ordering hours resume, scanning your QR code will open the live menu immediately.
+              </p>
+            </div>
+          </div>
+        </div>
+      </Background>
+    );
+  }
 
   // If scanning via QR token and it's invalid / revoked
   if (tokenStatus === "invalid") {

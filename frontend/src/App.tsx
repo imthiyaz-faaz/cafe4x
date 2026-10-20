@@ -165,6 +165,8 @@ export default function App() {
       />
 
       {/* Order Entry routes — validate permanent employee or seat QR, create temporary session, redirect */}
+      <Route path="/order" element={<UserOrderPage />} />
+      <Route path="/:shortCode/order" element={<UserOrderPage />} />
       <Route path="/order/:locationId/:seatNumber" element={<QrEntryPage />} />
       <Route path="/:shortCode/order/:locationId/:seatNumber" element={<QrEntryPage />} />
       <Route path="/:shortCode/employee/:permanentToken" element={<QrEntryPage />} />

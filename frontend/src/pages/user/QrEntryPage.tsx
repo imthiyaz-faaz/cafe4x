@@ -33,7 +33,7 @@ export default function QrEntryPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  type Status = "creating" | "redirecting" | "invalid" | "revoked" | "error";
+  type Status = "creating" | "redirecting" | "invalid" | "revoked" | "closed" | "error";
   const [status, setStatus] = useState<Status>("creating");
   const [errorMessage, setErrorMessage] = useState<string>("");
   const [isRetrying, setIsRetrying] = useState(false);
@@ -63,7 +63,9 @@ export default function QrEntryPage() {
 
       if (!res.success || !res.tempToken) {
         const msg = res.message || "This ordering link could not be validated.";
-        if (msg.toLowerCase().includes("revoked")) {
+        if (msg.toLowerCase().includes("closed") || msg.toLowerCase().includes("hours") || msg.toLowerCase().includes("window")) {
+          setStatus("closed");
+        } else if (msg.toLowerCase().includes("revoked")) {
           setStatus("revoked");
         } else {
           setStatus("invalid");
@@ -76,7 +78,8 @@ export default function QrEntryPage() {
 
       // Determine the correct shortCode for the redirect URL
       const effectiveShortCode = shortCode || res.shortCode || "FTS";
-      const targetPath = `/${effectiveShortCode}/qrorder/${res.tempToken}`;
+      // Redirect to /:shortCode/order?token=<TEMP_TOKEN> (also backwards-compatible with /:shortCode/qrorder/:token)
+      const targetPath = `/${effectiveShortCode}/order?token=${encodeURIComponent(res.tempToken)}`;
 
       // Small delay for smooth UX transition, then redirect
       setTimeout(() => {
@@ -84,7 +87,9 @@ export default function QrEntryPage() {
       }, 350);
     } catch (err: any) {
       const msg = err.response?.data?.message || err.message || "Failed to validate ordering link.";
-      if (msg.toLowerCase().includes("revoked")) {
+      if (msg.toLowerCase().includes("closed") || msg.toLowerCase().includes("hours") || msg.toLowerCase().includes("window")) {
+        setStatus("closed");
+      } else if (msg.toLowerCase().includes("revoked")) {
         setStatus("revoked");
       } else if (msg.toLowerCase().includes("not found") || msg.toLowerCase().includes("invalid")) {
         setStatus("invalid");
@@ -99,6 +104,16 @@ export default function QrEntryPage() {
     createSessionAndRedirect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permanentToken, locationId, seatNumber, shortCode]);
+
+  // If ordering window is closed, automatically re-check every 10 seconds
+  useEffect(() => {
+    if (status !== "closed") return;
+    const interval = setInterval(() => {
+      createSessionAndRedirect();
+    }, 10000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   // ── Render: Creating session ──────────────────────────────────────────────
   if (status === "creating" || status === "redirecting") {
@@ -155,6 +170,47 @@ export default function QrEntryPage() {
                 cannot be re-activated.
               </p>
             </div>
+          </div>
+        </div>
+      </Background>
+    );
+  }
+
+  // ── Render: Closed Ordering Window ───────────────────────────────────────
+  if (status === "closed") {
+    return (
+      <Background>
+        <div className="flex min-h-screen items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-3xl border border-[#EEE5DC] bg-white p-8 text-center shadow-2xl">
+            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-100 text-amber-700 shadow-sm">
+              <AlertTriangle size={32} />
+            </div>
+            <h2 className="mt-5 text-xl font-black text-[#342219]">Ordering Window Closed</h2>
+            <p className="mt-2 text-sm text-[#8A7667]">
+              {errorMessage || "The cafe is currently closed for ordering. Orders can only be placed during configured break and service sessions."}
+            </p>
+            <div className="mt-6 rounded-2xl border border-amber-100 bg-amber-50/70 p-4 text-xs text-amber-900">
+              <p className="font-semibold">Ordering Schedule Notice</p>
+              <p className="mt-1 text-[11px] text-amber-800">
+                This page automatically checks for active ordering windows every 10 seconds. You can also click below to refresh immediately.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              disabled={isRetrying}
+              onClick={async () => {
+                setIsRetrying(true);
+                setStatus("creating");
+                setErrorMessage("");
+                await createSessionAndRedirect();
+                setIsRetrying(false);
+              }}
+              className="mt-5 inline-flex items-center gap-2 rounded-2xl bg-[#704225] px-6 py-2.5 text-xs font-bold text-white shadow-md transition hover:bg-[#5C3620] disabled:opacity-50 cursor-pointer"
+            >
+              <RefreshCw size={14} className={isRetrying ? "animate-spin" : ""} />
+              Check Ordering Status Now
+            </button>
           </div>
         </div>
       </Background>

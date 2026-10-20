@@ -51,6 +51,7 @@ export interface MeResponse {
   success: boolean;
   message?: string;
   user?: AuthUser;
+  organizations?: UserOrganizationInfo[];
 }
 
 export const authApi = {

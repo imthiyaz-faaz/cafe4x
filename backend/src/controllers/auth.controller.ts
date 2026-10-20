@@ -82,16 +82,16 @@ export const authController = {
         } catch {}
       }
 
-      // Fetch organizations linked to this user in user_organizations
+      // Fetch organizations linked to this user in user_organizations or as owner
       const userOrgs = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
+          `SELECT DISTINCT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, COALESCE(uo.role, 'Owner') as role
            FROM organizations o
-           JOIN user_organizations uo ON o.id = uo.organization_id
-           WHERE uo.user_id = ?
+           LEFT JOIN user_organizations uo ON o.id = uo.organization_id AND uo.user_id = ?
+           WHERE uo.user_id = ? OR o.owner_user_id = ?
            ORDER BY o.created_at DESC`
         )
-        .bind(row.id)
+        .bind(row.id, row.id, row.id)
         .all()) as any[];
 
       const primaryOrg = userOrgs.length > 0 ? userOrgs[0] : null;
@@ -286,13 +286,13 @@ export const authController = {
 
     const userOrgs = (await db
       .prepare(
-        `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
+        `SELECT DISTINCT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, COALESCE(uo.role, 'Owner') as role
          FROM organizations o
-         JOIN user_organizations uo ON o.id = uo.organization_id
-         WHERE uo.user_id = ?
+         LEFT JOIN user_organizations uo ON o.id = uo.organization_id AND uo.user_id = ?
+         WHERE uo.user_id = ? OR o.owner_user_id = ?
          ORDER BY o.created_at DESC`
       )
-      .bind(user.id)
+      .bind(user.id, user.id, user.id)
       .all()) as any[];
 
     const primaryOrg = userOrgs.length > 0 ? userOrgs[0] : null;

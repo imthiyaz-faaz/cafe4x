@@ -41,20 +41,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const logout = useCallback(async () => {
-    try {
-      await authApi.logout();
-    } catch {
-      // Ignore network errors
-    } finally {
-      localStorage.removeItem("cafe4x_token");
-      localStorage.removeItem("cafe4x_currentUser");
-      localStorage.removeItem("cafe4x_organizations");
-      localStorage.removeItem("cafe4x_userOrganizations");
-      setToken(null);
-      setUser(null);
-      setOrganizations([]);
+    const tokenToRevoke = localStorage.getItem("cafe4x_token") || token;
+    // Clear storage and state immediately to avoid race conditions with subsequent operations
+    localStorage.removeItem("cafe4x_token");
+    localStorage.removeItem("cafe4x_currentUser");
+    localStorage.removeItem("cafe4x_organizations");
+    localStorage.removeItem("cafe4x_userOrganizations");
+    setToken(null);
+    setUser(null);
+    setOrganizations([]);
+
+    if (tokenToRevoke) {
+      try {
+        await authApi.logout(tokenToRevoke);
+      } catch {
+        // Ignore network errors
+      }
     }
-  }, []);
+  }, [token]);
 
   const checkAuth = useCallback(async (): Promise<boolean> => {
     const currentToken = localStorage.getItem("cafe4x_token");

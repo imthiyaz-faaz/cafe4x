@@ -187,15 +187,15 @@ export async function resolveAuthorizedOrg(
     return null;
   }
 
-  // Fetch all organizations the user belongs to from user_organizations
+  // Fetch all organizations the user belongs to from user_organizations or as owner
   const userOrgs = (await db
     .prepare(
-      `SELECT o.id, o.short_code as shortCode, uo.role 
+      `SELECT DISTINCT o.id, o.short_code as shortCode, COALESCE(uo.role, 'Owner') as role 
        FROM organizations o
-       JOIN user_organizations uo ON o.id = uo.organization_id
-       WHERE uo.user_id = ?`
+       LEFT JOIN user_organizations uo ON o.id = uo.organization_id AND uo.user_id = ?
+       WHERE uo.user_id = ? OR o.owner_user_id = ?`
     )
-    .bind(user.id)
+    .bind(user.id, user.id, user.id)
     .all()) as any[];
 
   if (!userOrgs || userOrgs.length === 0) {

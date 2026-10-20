@@ -67,9 +67,13 @@ export const authApi = {
     return api.get<MeResponse>("/api/auth/me");
   },
 
-  async logout(): Promise<void> {
+  async logout(tokenToRevoke?: string): Promise<void> {
     try {
-      await api.post("/api/auth/logout", {});
+      const headers: Record<string, string> = {};
+      if (tokenToRevoke) {
+        headers["Authorization"] = `Bearer ${tokenToRevoke}`;
+      }
+      await api.post("/api/auth/logout", {}, { headers });
     } catch {
       // Ignore network errors during logout
     }
@@ -78,8 +82,8 @@ export const authApi = {
 
 export const authService = {
   ...authApi,
-  async logout(): Promise<void> {
-    await authApi.logout();
+  async logout(tokenToRevoke?: string): Promise<void> {
+    await authApi.logout(tokenToRevoke);
     localStorage.removeItem("cafe4x_token");
     localStorage.removeItem("cafe4x_currentUser");
     localStorage.removeItem("cafe4x_userOrganizations");

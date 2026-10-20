@@ -30,13 +30,13 @@ export const organizationController = {
 
       const rows = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, o.created_at as createdAt
+          `SELECT DISTINCT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, o.created_at as createdAt, COALESCE(uo.role, 'Owner') as role
            FROM organizations o
-           JOIN user_organizations uo ON o.id = uo.organization_id
-           WHERE uo.user_id = ?
+           LEFT JOIN user_organizations uo ON o.id = uo.organization_id AND uo.user_id = ?
+           WHERE uo.user_id = ? OR o.owner_user_id = ?
            ORDER BY o.created_at DESC`
         )
-        .bind(targetUserId)
+        .bind(targetUserId, targetUserId, targetUserId)
         .all()) as any[];
 
       return c.json({ success: true, organizations: rows || [] });

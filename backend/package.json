@@ -8,6 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "dev:wrangler": "wrangler dev",
     "dev:remote": "wrangler dev --remote",
+    "db:migrate:local": "wrangler d1 migrations apply cafe4x-db --local",
+    "db:seed:local": "wrangler d1 execute cafe4x-db --local --file=./seed_local.sql",
     "deploy": "wrangler deploy --minify"
   },
   "dependencies": {

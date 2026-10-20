@@ -14,7 +14,22 @@ import qrRoutes from './routes/qr.routes'
 
 const app = new Hono<AppEnv>()
 
-app.use('*', cors())
+app.use(
+  '*',
+  cors({
+    origin: '*',
+    allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowHeaders: [
+      'Content-Type',
+      'Authorization',
+      'x-shortcode',
+      'x-organization-id',
+      'x-user-id',
+    ],
+    exposeHeaders: ['Content-Length'],
+    maxAge: 600,
+  })
+)
 
 app.route('/api/auth', authRoutes)
 app.route('/api/organizations', organizationRoutes)

@@ -75,12 +75,7 @@ export async function apiRequest<T = any>(
   }
 
   if (!response.ok) {
-    if (
-      response.status === 401 &&
-      !endpoint.includes("/api/auth/login") &&
-      !endpoint.includes("/api/auth/signup") &&
-      !endpoint.includes("/api/organizations")
-    ) {
+    if (response.status === 401 && !endpoint.includes("/api/auth/login") && !endpoint.includes("/api/auth/signup")) {
       localStorage.removeItem("cafe4x_token");
       localStorage.removeItem("cafe4x_currentUser");
       localStorage.removeItem("cafe4x_userOrganizations");

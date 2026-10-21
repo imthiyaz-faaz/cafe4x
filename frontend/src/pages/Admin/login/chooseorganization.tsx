@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { User, Plus, Loader2, AlertCircle, RefreshCw, LogOut } from "lucide-react";
+import { User, Plus, Loader2 } from "lucide-react";
 import { organizationApi, type Organization } from "../../../services/organizationApi";
 import Background from "../../../components/background";
 import logoImg from "../../../assets/images/logo.png";
@@ -9,28 +9,9 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function ChooseOrganizationPage() {
   const navigate = useNavigate();
-  const { user: currentUser, organizations: authOrgs, switchOrganization, logout } = useAuth();
-  
-  // Initialize with organizations already available from login or storage so user never sees empty screen
-  const [organizations, setOrganizations] = useState<Organization[]>(() => {
-    if (authOrgs && authOrgs.length > 0) return authOrgs;
-    try {
-      const stored = localStorage.getItem("cafe4x_organizations");
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {}
-    return [];
-  });
-
-  const [loading, setLoading] = useState<boolean>(() => {
-    // If organizations are already available in context or localStorage, don't show full-page spinner
-    const stored = localStorage.getItem("cafe4x_organizations");
-    return !authOrgs?.length && !stored;
-  });
-
-  const [fetchError, setFetchError] = useState<string>("");
+  const { user: currentUser, switchOrganization } = useAuth();
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -39,7 +20,25 @@ export default function ChooseOrganizationPage() {
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState("");
 
-  const loadLocalOrgs = useCallback((user: any) => {
+  useEffect(() => {
+    if (!currentUser) return;
+
+    organizationApi
+      .getOrganizations(currentUser.id)
+      .then((orgs: Organization[]) => {
+        if (orgs && orgs.length > 0) {
+          setOrganizations(orgs);
+        } else {
+          loadLocalOrgs(currentUser);
+        }
+      })
+      .catch(() => {
+        loadLocalOrgs(currentUser);
+      })
+      .finally(() => setLoading(false));
+  }, [currentUser]);
+
+  const loadLocalOrgs = (user: any) => {
     try {
       const stored = localStorage.getItem("cafe4x_organizations");
       if (stored) {
@@ -60,43 +59,10 @@ export default function ChooseOrganizationPage() {
           shortCode: user.shortCode || "ORG",
         },
       ]);
+    } else {
+      setOrganizations([]);
     }
-  }, []);
-
-  const loadOrganizations = useCallback(async () => {
-    if (!currentUser?.id) {
-      setLoading(false);
-      return;
-    }
-
-    setFetchError("");
-    try {
-      const orgs = await organizationApi.getOrganizations(currentUser.id);
-      if (orgs && orgs.length > 0) {
-        setOrganizations(orgs);
-        try {
-          localStorage.setItem("cafe4x_organizations", JSON.stringify(orgs));
-        } catch {}
-      } else {
-        loadLocalOrgs(currentUser);
-      }
-    } catch (err: any) {
-      console.warn("Could not fetch remote organizations:", err);
-      // Keep existing organizations if present, or attempt fallback
-      setOrganizations((prev) => {
-        if (prev.length > 0) return prev;
-        loadLocalOrgs(currentUser);
-        return prev;
-      });
-      setFetchError(err.message || "Failed to load organizations from server.");
-    } finally {
-      setLoading(false);
-    }
-  }, [currentUser, loadLocalOrgs]);
-
-  useEffect(() => {
-    loadOrganizations();
-  }, [loadOrganizations]);
+  };
 
   const handleSelectOrg = (org: Organization) => {
     // Update active organization in AuthContext and localStorage
@@ -166,23 +132,6 @@ export default function ChooseOrganizationPage() {
   return (
     <Background>
       <div className="relative min-h-screen w-full flex flex-col items-center justify-start overflow-x-hidden pt-12 pb-16 px-4">
-        {/* Top Account & Logout Bar */}
-        {currentUser && (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-full border border-[#E9D7C6] bg-white/80 px-4 py-1.5 shadow-sm backdrop-blur-sm">
-            <span className="text-xs font-medium text-[#70523E]">
-              Signed in as <strong className="text-[#342219]">{currentUser.name || currentUser.userName || currentUser.email}</strong>
-            </span>
-            <button
-              onClick={() => logout()}
-              type="button"
-              className="inline-flex items-center gap-1 text-xs font-semibold text-[#8B5738] hover:text-[#5B2E15] transition-colors cursor-pointer"
-            >
-              <LogOut size={13} />
-              <span>Log out</span>
-            </button>
-          </div>
-        )}
-
         {/* Logo Card with Framed Cafe4X Logo */}
         <div className="mb-5 flex items-center justify-center">
           <div className="flex h-24 w-20 items-center justify-center rounded-xl border-2 border-[#69391D]/30 bg-white/90 p-2 shadow-lg shadow-[#70452D]/5 backdrop-blur-sm">
@@ -209,27 +158,9 @@ export default function ChooseOrganizationPage() {
         </h1>
 
         {/* Subtitle identical to landing page tone */}
-        <p className="mx-auto mb-8 max-w-xl text-center text-base sm:text-lg font-medium text-[#70523E]">
+        <p className="mx-auto mb-10 max-w-xl text-center text-base sm:text-lg font-medium text-[#70523E]">
           Where our app is your gateway to happiness
         </p>
-
-        {/* Error Notification Banner if network or API issue occurred */}
-        {fetchError && (
-          <div className="w-full max-w-xl mb-8 flex items-center justify-between gap-3 rounded-2xl border border-amber-300 bg-amber-50/95 p-4 text-amber-900 shadow-sm backdrop-blur-sm">
-            <div className="flex items-center gap-3 min-w-0">
-              <AlertCircle size={22} className="shrink-0 text-amber-600" />
-              <p className="text-sm font-medium leading-tight truncate">{fetchError}</p>
-            </div>
-            <button
-              onClick={() => loadOrganizations()}
-              type="button"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-amber-200/80 px-3 py-1.5 text-xs font-bold text-amber-900 hover:bg-amber-300 transition-colors cursor-pointer"
-            >
-              <RefreshCw size={13} />
-              <span>Retry</span>
-            </button>
-          </div>
-        )}
 
         {/* Organizations Grid */}
         {loading ? (
@@ -240,7 +171,7 @@ export default function ChooseOrganizationPage() {
         ) : (
           <div className="w-full max-w-5xl">
             {/* Existing Organizations Cards */}
-            {organizations.length > 0 ? (
+            {organizations.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                 {organizations.map((org) => (
                   <button
@@ -263,15 +194,6 @@ export default function ChooseOrganizationPage() {
                     </div>
                   </button>
                 ))}
-              </div>
-            ) : (
-              <div className="mb-10 rounded-2xl border border-dashed border-[#D2BBA7] bg-white/60 p-8 text-center backdrop-blur-sm">
-                <p className="text-base font-semibold text-[#5B3E2D]">
-                  No organizations found for your account.
-                </p>
-                <p className="mt-1 text-sm text-[#876D5C]">
-                  Get started by creating your first workplace organization below.
-                </p>
               </div>
             )}
 

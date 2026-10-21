@@ -15,7 +15,7 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, login } = useAuth();
+  const { login, logout } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -23,17 +23,11 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  // If already logged in, redirect straight to their home/dashboard
+  // When visiting the Login page, ensure any prior or stale session is cleaned up
+  // so browser navigation or visiting /login cannot bypass entering credentials.
   useEffect(() => {
-    if (isAuthenticated && user) {
-      if (user.userType === "Provider") {
-        const userShortCode = user.shortCode ? user.shortCode.toUpperCase() : "";
-        navigate(userShortCode ? `/${userShortCode}/provider` : "/provider", { replace: true });
-      } else {
-        navigate("/home", { replace: true });
-      }
-    }
-  }, [isAuthenticated, user, navigate]);
+    logout();
+  }, [logout]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

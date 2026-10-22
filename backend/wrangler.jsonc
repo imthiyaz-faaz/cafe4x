@@ -3,6 +3,8 @@
   "name": "cafe4x-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-15",
+ 
+  // Production DB (used by `wrangler deploy` / `wrangler dev` with no env flag)
   "d1_databases": [
     {
       "binding": "DB",
@@ -10,5 +12,19 @@
       "database_id": "b9273831-ef0d-4a54-a873-5dbb2de0e3f5",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+ 
+  // Dev environment – uses a separate D1 database
+  "env": {
+    "dev": {
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "test",
+          "database_id": "6f15bb80-d58b-4a7b-9ce2-f5f444d6c0b1",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

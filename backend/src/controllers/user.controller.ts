@@ -60,6 +60,8 @@ export const userController = {
       if (type) {
         query += ` AND LOWER(u.user_type) = LOWER(?)`;
         params.push(type);
+      } else {
+        query += ` AND u.user_type IN ('Admin', 'Provider')`;
       }
 
       query += ` ORDER BY u.created_at DESC`;
@@ -195,7 +197,7 @@ export const userController = {
             hashedPassword,
             email,
             body.mobileNumber ? String(body.mobileNumber).trim() : "",
-            body.userType || "Staff",
+            body.userType === "Provider" ? "Provider" : "Admin",
             generatedQrToken,
             now,
             "active",
@@ -245,7 +247,7 @@ export const userController = {
             userName,
             email,
             mobileNumber: body.mobileNumber ? String(body.mobileNumber).trim() : "",
-            userType: body.userType || "Staff",
+            userType: body.userType === "Provider" ? "Provider" : "Admin",
             organizationId: org.organizationId,
             shortCode: org.shortCode,
             qrToken: generatedQrToken,

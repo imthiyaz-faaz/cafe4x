@@ -57,7 +57,7 @@ export const orderController = {
       const endDate = c.req.query("endDate");
 
       let query = `
-        SELECT 
+        SELECT DISTINCT
           o.id, 
           o.display_id as displayId,
           o.organization_id as organizationId, 

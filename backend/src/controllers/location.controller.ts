@@ -34,7 +34,7 @@ export const locationController = {
       const providerId = c.req.query("providerId") || (authUser?.userType === "Provider" ? authUser.id : undefined);
 
       let query = `
-        SELECT 
+        SELECT DISTINCT
           l.id,
           l.display_id as displayId,
           l.organization_id as organizationId,

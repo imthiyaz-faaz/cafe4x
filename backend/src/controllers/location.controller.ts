@@ -607,7 +607,10 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const db = getUniversalDb(c.env?.DB);
 
       // Verify location belongs to authorized organization
@@ -691,7 +694,10 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const body = await c.req.json();
 
       const employeeName = body.employeeName ? String(body.employeeName).trim() : null;
@@ -877,7 +883,10 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const db = getUniversalDb(c.env?.DB);
 
       // Verify location belongs to authorized organization

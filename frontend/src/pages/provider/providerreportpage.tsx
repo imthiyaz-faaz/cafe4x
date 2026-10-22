@@ -169,28 +169,15 @@ export default function ProviderReportPage() {
     reportApi
       .getReportOrders()
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setOrders(data);
         } else {
-          // Fallback to locally cached provider orders
-          const providerStorageKey = "cafe4x_provider_orders";
-          let fallbackOrders: any[] = [];
-          try {
-            const raw = localStorage.getItem(providerStorageKey);
-            if (raw) fallbackOrders = JSON.parse(raw);
-          } catch {}
-          setOrders(Array.isArray(fallbackOrders) ? fallbackOrders : []);
+          setOrders([]);
         }
       })
       .catch((err) => {
         console.error("Failed to fetch provider report orders:", err);
-        const providerStorageKey = "cafe4x_provider_orders";
-        let fallbackOrders: any[] = [];
-        try {
-          const raw = localStorage.getItem(providerStorageKey);
-          if (raw) fallbackOrders = JSON.parse(raw);
-        } catch {}
-        setOrders(Array.isArray(fallbackOrders) ? fallbackOrders : []);
+        setOrders([]);
       })
       .finally(() => {
         setIsLoading(false);

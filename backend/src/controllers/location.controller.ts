@@ -404,6 +404,14 @@ export const locationController = {
       const locId = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
+      // Resolve location by id or display_id
+      const loc = (await db
+        .prepare(`SELECT id, organization_id as organizationId FROM locations WHERE id = ? OR display_id = ?`)
+        .bind(locId, locId)
+        .get()) as any;
+
+      const targetLocId = loc ? loc.id : locId;
+
       let rows: any[] = [];
       try {
         rows = (await db
@@ -411,9 +419,9 @@ export const locationController = {
             `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
                     number, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId,
                     order_url as orderUrl
-             FROM seats WHERE location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
+             FROM seats WHERE location_id = ? OR location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
           )
-          .bind(locId)
+          .bind(targetLocId, locId)
           .all()) as any[];
       } catch {
         // Fallback if employee_name/employee_email columns not yet migrated
@@ -421,9 +429,9 @@ export const locationController = {
           .prepare(
             `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
                     number, employee, order_url as orderUrl
-             FROM seats WHERE location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
+             FROM seats WHERE location_id = ? OR location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
           )
-          .bind(locId)
+          .bind(targetLocId, locId)
           .all()) as any[];
       }
 
@@ -451,6 +459,20 @@ export const locationController = {
       const displayId = `SEAT-${org.shortCode}-${number}`;
       const seatId = body.id || `${org.shortCode}-${number}`;
 
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify location belongs to authorized organization
+      const loc = (await db
+        .prepare(`SELECT id, organization_id as organizationId FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locId, locId, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
       // Employee assignment fields
       const employeeName = body.employeeName ? String(body.employeeName).trim() : null;
       const employeeEmail = body.employeeEmail ? String(body.employeeEmail).trim().toLowerCase() : null;
@@ -467,8 +489,6 @@ export const locationController = {
         }
       }
 
-      const db = getUniversalDb(c.env?.DB);
-
       // Check if another seat in this location already has this employee
       if (employeeEmail) {
         try {
@@ -480,7 +500,7 @@ export const locationController = {
                  AND (LOWER(employee) = ? OR LOWER(employee_email) = ?) 
                  AND number != ?`
             )
-            .bind(locId, employeeEmail, employeeEmail, number)
+            .bind(effectiveLocId, employeeEmail, employeeEmail, number)
             .get()) as any;
 
           if (duplicateAssignment) {
@@ -521,7 +541,7 @@ export const locationController = {
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
       let orderUrl = matchedQrToken
         ? `${orgPrefix}/employee/${matchedQrToken}`
-        : `${orgPrefix}/order/${locId}/${parseInt(number, 10) || 1}`;
+        : `${orgPrefix}/order/${effectiveLocId}/${parseInt(number, 10) || 1}`;
 
       const now = new Date().toISOString();
 
@@ -541,7 +561,7 @@ export const locationController = {
                order_url = excluded.order_url,
                updated_at = excluded.updated_at`
           )
-          .run(seatId, displayId, locId, org.organizationId, number, employee, employeeName, employeeEmail, matchedUserId, orderUrl, now, now);
+          .run(seatId, displayId, effectiveLocId, org.organizationId, number, employee, employeeName, employeeEmail, matchedUserId, orderUrl, now, now);
       } catch {
         // Fallback for base schema
         await db
@@ -555,7 +575,7 @@ export const locationController = {
                order_url = excluded.order_url,
                updated_at = excluded.updated_at`
           )
-          .run(seatId, displayId, locId, org.organizationId, number, employee, orderUrl, now, now);
+          .run(seatId, displayId, effectiveLocId, org.organizationId, number, employee, orderUrl, now, now);
       }
 
       return c.json({
@@ -563,7 +583,7 @@ export const locationController = {
         seat: {
           id: seatId,
           displayId,
-          locationId: locId,
+          locationId: effectiveLocId,
           organizationId: org.organizationId,
           number,
           employee,
@@ -587,13 +607,32 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const db = getUniversalDb(c.env?.DB);
 
-      // Find the seat first
+      // Verify location belongs to authorized organization
+      const loc = (await db
+        .prepare(`SELECT id, organization_id as organizationId FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locId, locId, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      // Extract number if seatParam is e.g. "FTS-05", "SEAT-FTS-05", or "05"
+      const numberMatch = seatParam.match(/(\d+)$/);
+      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+
+      // Find the seat
       const seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
-        .bind(locId, seatParam, seatParam, seatParam)
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
+        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
         .get()) as any;
 
       if (!seat) {
@@ -602,7 +641,7 @@ export const locationController = {
 
       const now = new Date().toISOString();
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      const defaultOrderUrl = `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
+      const defaultOrderUrl = `${orgPrefix}/order/${effectiveLocId}/${parseInt(seat.number, 10) || 1}`;
 
       // Update seat assignment to NULL - keep seat, location, org, and number intact
       try {
@@ -633,7 +672,7 @@ export const locationController = {
           id: seat.id,
           displayId: seat.displayId,
           number: seat.number,
-          locationId: locId,
+          locationId: effectiveLocId,
           employee: null,
           employeeName: null,
           employeeEmail: null,
@@ -646,7 +685,7 @@ export const locationController = {
     }
   },
 
-  // POST /api/locations/:id/seats/:seatId/assign (Assign employee to existing seat)
+  // POST /api/locations/:id/seats/:seatId/assign (Assign employee to existing seat or auto-upsert)
   async assignSeat(c: Context<AppEnv>) {
     try {
       const org = await resolveAuthorizedOrg(c);
@@ -655,7 +694,10 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const body = await c.req.json();
 
       const employeeName = body.employeeName ? String(body.employeeName).trim() : null;
@@ -678,11 +720,61 @@ export const locationController = {
 
       const db = getUniversalDb(c.env?.DB);
 
-      // Verify seat exists
-      const seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
-        .bind(locId, seatParam, seatParam, seatParam)
+      // Verify location belongs to authorized organization
+      const loc = (await db
+        .prepare(`SELECT id, display_id as displayId, total_seats as totalSeats, organization_id as organizationId FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locId, locId, org.organizationId)
         .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      // Extract seat number from seatParam e.g. "FTS-05", "SEAT-FTS-05", or "05"
+      const numberMatch = seatParam.match(/(\d+)$/);
+      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam.padStart(2, "0");
+
+      // Verify if seat exists in D1
+      let seat = (await db
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
+        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
+        .get()) as any;
+
+      const now = new Date().toISOString();
+
+      // If seat not found, auto-upsert it for this location (handles virtual/un-seeded seats)
+      if (!seat) {
+        const generatedSeatId = `${org.shortCode}-${extractedNumber}`;
+        const generatedDisplayId = `SEAT-${org.shortCode}-${extractedNumber}`;
+        const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
+        const defaultOrderUrl = `${orgPrefix}/order/${effectiveLocId}/${parseInt(extractedNumber, 10) || 1}`;
+
+        try {
+          await db
+            .prepare(
+              `INSERT INTO seats (id, display_id, location_id, organization_id, number, order_url, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(location_id, number) DO UPDATE SET updated_at = excluded.updated_at`
+            )
+            .bind(generatedSeatId, generatedDisplayId, effectiveLocId, org.organizationId, extractedNumber, defaultOrderUrl, now, now)
+            .run();
+
+          seat = {
+            id: generatedSeatId,
+            displayId: generatedDisplayId,
+            number: extractedNumber,
+            locationId: effectiveLocId,
+          };
+        } catch (e: any) {
+          // If already inserted concurrently, re-fetch
+          seat = (await db
+            .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND number = ?`)
+            .bind(effectiveLocId, extractedNumber)
+            .get()) as any;
+        }
+      }
 
       if (!seat) {
         return c.json({ success: false, message: "Seat not found in this location" }, 404);
@@ -697,9 +789,9 @@ export const locationController = {
                FROM seats 
                WHERE location_id = ? 
                  AND (LOWER(employee) = ? OR LOWER(employee_email) = ?) 
-                 AND id != ?`
+                 AND id != ? AND number != ?`
             )
-            .bind(locId, employeeEmail, employeeEmail, seat.id)
+            .bind(effectiveLocId, employeeEmail, employeeEmail, seat.id, seat.number)
             .get()) as any;
 
           if (duplicate) {
@@ -739,9 +831,8 @@ export const locationController = {
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
       let orderUrl = matchedQrToken
         ? `${orgPrefix}/employee/${matchedQrToken}`
-        : `${orgPrefix}/order/${locId}/${parseInt(seat.number, 10) || 1}`;
+        : `${orgPrefix}/order/${effectiveLocId}/${parseInt(seat.number, 10) || 1}`;
 
-      const now = new Date().toISOString();
       try {
         await db
           .prepare(
@@ -770,7 +861,7 @@ export const locationController = {
           id: seat.id,
           displayId: seat.displayId,
           number: seat.number,
-          locationId: locId,
+          locationId: effectiveLocId,
           employee,
           employeeName,
           employeeEmail,
@@ -792,12 +883,26 @@ export const locationController = {
       }
 
       const locId = c.req.param("id");
-      const seatParam = c.req.param("seatId");
+      const seatParam = String(c.req.param("seatId") || "");
+      if (!seatParam) {
+        return c.json({ success: false, message: "Seat identifier is required" }, 400);
+      }
       const db = getUniversalDb(c.env?.DB);
 
+      // Verify location belongs to authorized organization
+      const loc = (await db
+        .prepare(`SELECT id, organization_id as organizationId FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locId, locId, org.organizationId)
+        .get()) as any;
+
+      const effectiveLocId = loc ? loc.id : locId;
+
+      const numberMatch = seatParam.match(/(\d+)$/);
+      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+
       const res = await db
-        .prepare(`DELETE FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
-        .bind(locId, seatParam, seatParam, seatParam)
+        .prepare(`DELETE FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
+        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
         .run();
 
       if (res.changes === 0) {

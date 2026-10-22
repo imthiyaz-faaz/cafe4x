@@ -15,7 +15,28 @@ export interface UniversalDb {
   exec: (query: string) => Promise<void>;
 }
 
-const dbPath = "C:/Users/imthi/OneDrive/Desktop/Cafe4x/backend/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/metadata.sqlite";
+function getActiveLocalDbPath(): string {
+  try {
+    const fs = (globalThis as any).process?.getBuiltinModule?.("node:fs") || 
+      ((globalThis as any).require ? (globalThis as any).require("node:fs") : null);
+    const path = (globalThis as any).process?.getBuiltinModule?.("node:path") || 
+      ((globalThis as any).require ? (globalThis as any).require("node:path") : null);
+
+    if (fs && path) {
+      const dir = path.resolve(process.cwd(), ".wrangler/state/v3/d1/miniflare-D1DatabaseObject");
+      if (fs.existsSync(dir)) {
+        const files: string[] = fs.readdirSync(dir);
+        // Find the database sqlite file that is not metadata.sqlite
+        const dbFile = files.find((f: string) => f.endsWith(".sqlite") && !f.startsWith("metadata"));
+        if (dbFile) {
+          return path.join(dir, dbFile);
+        }
+      }
+    }
+  } catch {}
+  return "C:/Users/imthi/OneDrive/Desktop/cafe4x/backend/.wrangler/state/v3/d1/miniflare-D1DatabaseObject/4f6297955562fa647a7ffb8b4b13b38cc5c1b683cc275e7168665524bde388ef.sqlite";
+}
+
 let localSqliteInstance: any = null;
 
 function getLocalSqlite(): any {
@@ -41,7 +62,8 @@ function getLocalSqlite(): any {
 
     if (DatabaseSync) {
       try {
-        localSqliteInstance = new DatabaseSync(dbPath);
+        const targetDbPath = getActiveLocalDbPath();
+        localSqliteInstance = new DatabaseSync(targetDbPath);
       } catch (e) {
         console.warn("Could not instantiate local node:sqlite:", e);
       }

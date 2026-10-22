@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { authApi, type AuthUser, type UserOrganizationInfo } from "../../services/auth";
+import { ApiError } from "../../services/apiClient";
 
 interface AuthContextType {
   user: AuthUser | null;
@@ -134,6 +135,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return false;
       }
     } catch (err: any) {
+      // If server returned 401 Unauthorized or 404 User Not Found, invalidate session
+      if (err instanceof ApiError && (err.status === 401 || err.status === 404)) {
+        await logout();
+        setIsLoading(false);
+        return false;
+      }
+
+      // For network errors or 5xx server issues, preserve the existing cached session if valid
+      const cachedUser = localStorage.getItem("cafe4x_currentUser");
+      if (cachedUser && currentToken) {
+        try {
+          const parsed = JSON.parse(cachedUser);
+          setUser(parsed);
+          setToken(currentToken);
+          setIsLoading(false);
+          return true;
+        } catch {}
+      }
+
       await logout();
       setIsLoading(false);
       return false;

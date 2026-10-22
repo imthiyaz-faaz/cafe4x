@@ -1,4 +1,4 @@
-import { useState, useEffect, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   Coffee,
@@ -15,19 +15,13 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, logout } = useAuth();
+  const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-
-  // When visiting the Login page, ensure any prior or stale session is cleaned up
-  // so browser navigation or visiting /login cannot bypass entering credentials.
-  useEffect(() => {
-    logout();
-  }, [logout]);
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();

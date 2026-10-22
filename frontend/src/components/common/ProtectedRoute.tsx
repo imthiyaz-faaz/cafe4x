@@ -14,7 +14,7 @@ export default function ProtectedRoute({
   allowedRoles,
   requireOrgMatch = false,
 }: ProtectedRouteProps) {
-  const { user, isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading, switchOrganization } = useAuth();
   const location = useLocation();
   const params = useParams();
 
@@ -130,17 +130,16 @@ export default function ProtectedRoute({
         } catch {}
       }
 
-      // If user is authorized to access the organization, allow access and sync user state in background
+      // If user is authorized to access the organization, allow access and sync user state
       if (isAuthorized) {
         if (matchedOrg && user.shortCode?.toUpperCase() !== routeCode) {
           try {
-            const updated = {
-              ...user,
-              organization: matchedOrg.name,
-              shortCode: matchedOrg.shortCode.toUpperCase(),
-              organizationId: matchedOrg.id,
-            };
-            localStorage.setItem("cafe4x_currentUser", JSON.stringify(updated));
+            const userRole = user.userType || "Admin";
+            const workspace = userRole === "Provider" ? "Provider" : "Admin";
+            switchOrganization(
+              { id: matchedOrg.id, name: matchedOrg.name, shortCode: matchedOrg.shortCode },
+              workspace
+            );
           } catch {}
         }
       } else {

@@ -112,13 +112,15 @@ export const orderController = {
       }
 
       if (startDate) {
+        const startBound = startDate.length === 10 ? `${startDate}T00:00:00.000Z` : startDate;
         query += ` AND o.created_at >= ?`;
-        params.push(startDate);
+        params.push(startBound);
       }
 
       if (endDate) {
+        const endBound = endDate.length === 10 ? `${endDate}T23:59:59.999Z` : endDate;
         query += ` AND o.created_at <= ?`;
-        params.push(endDate);
+        params.push(endBound);
       }
 
       query += ` ORDER BY o.created_at DESC`;
@@ -205,7 +207,8 @@ export const orderController = {
 
       return c.json({ success: true, orders });
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("[orderController.getOrders] Error executing orders query:", err);
+      return c.json({ success: false, message: err.message || "Failed to retrieve orders" }, 500);
     }
   },
 
@@ -242,12 +245,14 @@ export const orderController = {
       const params: any[] = [org.organizationId];
 
       if (startDate) {
+        const startBound = startDate.length === 10 ? `${startDate}T00:00:00.000Z` : startDate;
         query += ` AND o.created_at >= ?`;
-        params.push(startDate);
+        params.push(startBound);
       }
       if (endDate) {
+        const endBound = endDate.length === 10 ? `${endDate}T23:59:59.999Z` : endDate;
         query += ` AND o.created_at <= ?`;
-        params.push(endDate);
+        params.push(endBound);
       }
 
       query += `

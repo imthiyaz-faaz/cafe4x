@@ -86,6 +86,16 @@ export default function WorkingHoursPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+
+  // Live real-time clock ticker updated every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Load configured working hours on mount
   useEffect(() => {
     workingHoursService
@@ -391,19 +401,26 @@ export default function WorkingHoursPage() {
                         <label className="block text-xs font-bold text-gray-800">
                           Timezone
                         </label>
-                        <span className="text-[10px] font-semibold text-[#8E6548] bg-[#F8F2EC] px-1.5 py-0.5 rounded">
-                          Current: {(() => {
-                            try {
-                              return new Intl.DateTimeFormat("en-GB", {
-                                timeZone: timezone,
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                hour12: false,
-                              }).format(new Date());
-                            } catch {
-                              return "--:--";
-                            }
-                          })()}
+                        <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#8E6548] bg-[#F8F2EC] px-2 py-0.5 rounded-full border border-[#8E6548]/15 shadow-xs">
+                          <span className="relative flex h-1.5 w-1.5">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
+                          </span>
+                          <span>
+                            Live: {(() => {
+                              try {
+                                return new Intl.DateTimeFormat("en-GB", {
+                                  timeZone: timezone,
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  second: "2-digit",
+                                  hour12: false,
+                                }).format(currentTime);
+                              } catch {
+                                return "--:--:--";
+                              }
+                            })()}
+                          </span>
                         </span>
                       </div>
                       <div className="relative">
@@ -608,7 +625,7 @@ export default function WorkingHoursPage() {
               <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-[#FFFBF7] p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
               <h3 className="text-sm font-bold text-gray-900">
-                Example: Cafe Ordering Timeline
+               Cafe Ordering Timeline
               </h3>
 
               {/* Legend */}

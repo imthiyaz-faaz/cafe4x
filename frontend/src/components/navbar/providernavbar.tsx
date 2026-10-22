@@ -2,18 +2,19 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   MapPin,
-  UserCircle,
   Menu,
   X,
   LogOut,
   Package,
+  FileBarChart,
 } from "lucide-react";
 import logoImg from "../../assets/images/logo.png";
 import { useAuth } from "../common/AuthContext";
+import OrganizationDropdown from "./OrganizationDropdown";
 
 interface ProviderNavbarProps {
-  activeTab?: "provider" | "pendingOrders";
-  onTabChange?: (tab: "provider" | "pendingOrders") => void;
+  activeTab?: "provider" | "pendingOrders" | "reports";
+  onTabChange?: (tab: "provider" | "pendingOrders" | "reports") => void;
   pendingOrdersCount?: number;
 }
 
@@ -24,7 +25,7 @@ export default function ProviderNavbar({
 }: ProviderNavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const navigate = useNavigate();
-  const { user: currentUser, logout } = useAuth();
+  const { logout } = useAuth();
 
   const handleLogout = async () => {
     await logout();
@@ -43,6 +44,12 @@ export default function ProviderNavbar({
       name: "My Pending Orders",
       icon: Package,
       badge: pendingOrdersCount > 0 ? pendingOrdersCount : undefined,
+    },
+    {
+      id: "reports" as const,
+      name: "Reports",
+      icon: FileBarChart,
+      badge: undefined,
     },
   ];
 
@@ -106,17 +113,7 @@ export default function ProviderNavbar({
 
         {/* Right Action / Profile */}
         <div className="hidden items-center gap-3 sm:flex">
-          <div className="flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5">
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-              <UserCircle size={24} />
-            </div>
-            <div className="text-left">
-              <p className="text-xs font-bold text-[#342219]">
-                {currentUser?.name || currentUser?.userName || "Cafe Provider"}
-              </p>
-              <p className="text-[10px] text-[#9A8778]">Provider Access</p>
-            </div>
-          </div>
+          <OrganizationDropdown userRole="Provider" />
 
           <button
             type="button"
@@ -180,26 +177,22 @@ export default function ProviderNavbar({
             })}
           </div>
 
-          <div className="mt-4 flex items-center justify-between border-t border-[#EFE7DE] pt-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-                <UserCircle size={24} />
-              </div>
-              <div className="text-left">
-                <p className="text-xs font-bold text-[#342219]">
-                  {currentUser?.name || currentUser?.userName || "Cafe Provider"}
-                </p>
-                <p className="text-[10px] text-[#9A8778]">Provider Access</p>
-              </div>
+          <div className="mt-4 flex flex-col gap-3 border-t border-[#EFE7DE] pt-4">
+            <div className="flex items-center justify-between">
+              <OrganizationDropdown
+                userRole="Provider"
+                isMobile
+                onCloseMobileMenu={() => setMobileMenuOpen(false)}
+              />
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer shrink-0 ml-2"
+              >
+                <LogOut size={15} />
+                Logout
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer"
-            >
-              <LogOut size={15} />
-              Logout
-            </button>
           </div>
         </div>
       )}

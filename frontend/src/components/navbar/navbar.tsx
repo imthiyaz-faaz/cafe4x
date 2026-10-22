@@ -6,14 +6,15 @@ import {
   ListTodo,
   Truck,
   Clock,
-  UserCircle,
   Menu,
   X,
   LogOut,
   LayoutDashboard,
+  FileBarChart,
 } from "lucide-react";
 import logoImg from "../../assets/images/logo.png";
 import { useAuth } from "../common/AuthContext";
+import OrganizationDropdown from "./OrganizationDropdown";
 
 export default function Navbar() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -21,7 +22,7 @@ export default function Navbar() {
   const params = useParams();
   const navigate = useNavigate();
   const shortCode = params.shortCode;
-  const { user: currentUser, logout } = useAuth();
+  const { logout } = useAuth();
 
   const handleLogout = async () => {
     await logout();
@@ -37,15 +38,13 @@ export default function Navbar() {
     { name: "Items", icon: ListTodo, href: `${basePath}/items` },
     { name: "Orders", icon: Truck, href: `${basePath}/orders` },
     { name: "Working Hours", icon: Clock, href: `${basePath}/working-hours` },
+    { name: "Reports", icon: FileBarChart, href: `${basePath}/reports` },
   ];
 
   const isCurrent = (href: string) => {
     if (href.startsWith("#")) return false;
     return location.pathname === href;
   };
-
-  const displayName = currentUser?.name || currentUser?.userName || "Admin User";
-  const orgName = currentUser?.organization || (shortCode ? `${shortCode.toUpperCase()} Workspace` : "Admin Access");
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 w-full border-b border-[#EEE5DC]/80 bg-white/90 px-4 backdrop-blur-md shadow-sm sm:px-6 lg:px-8">
@@ -95,27 +94,7 @@ export default function Navbar() {
 
         {/* Right Action / Profile */}
         <div className="hidden items-center gap-3 sm:flex">
-          <Link
-            to="/home"
-            title="Switch Organization"
-            className="flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5 transition hover:border-[#DEC5B0] hover:bg-[#F5ECE0]"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-              <UserCircle size={24} />
-            </div>
-            <div className="text-left">
-              <p className="text-xs font-bold text-[#342219]">{displayName}</p>
-              <div className="flex items-center gap-1 text-[10px] text-[#9A8778]">
-                {currentUser?.shortCode && (
-                  <span className="rounded bg-[#E3D3C4] px-1 py-0.2 font-semibold text-[#633B22]">
-                    {currentUser.shortCode}
-                  </span>
-                )}
-                <span>{orgName}</span>
-                <span className="ml-1 text-[9px] font-semibold text-[#009FB7]">⇄ Switch</span>
-              </div>
-            </div>
-          </Link>
+          <OrganizationDropdown userRole="Admin" />
 
           <button
             type="button"
@@ -169,24 +148,22 @@ export default function Navbar() {
             })}
           </div>
 
-          <div className="mt-4 flex items-center justify-between border-t border-[#EFE7DE] pt-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
-                <UserCircle size={24} />
-              </div>
-              <div className="text-left">
-                <p className="text-xs font-bold text-[#342219]">{displayName}</p>
-                <p className="text-[10px] text-[#9A8778]">{orgName}</p>
-              </div>
+          <div className="mt-4 flex flex-col gap-3 border-t border-[#EFE7DE] pt-4">
+            <div className="flex items-center justify-between">
+              <OrganizationDropdown
+                userRole="Admin"
+                isMobile
+                onCloseMobileMenu={() => setMobileMenuOpen(false)}
+              />
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer shrink-0 ml-2"
+              >
+                <LogOut size={15} />
+                Logout
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 rounded-lg border border-[#DEC5B0] px-3 py-1.5 text-xs font-semibold text-[#70452D] hover:bg-[#FAF6F1] cursor-pointer"
-            >
-              <LogOut size={15} />
-              Logout
-            </button>
           </div>
         </div>
       )}

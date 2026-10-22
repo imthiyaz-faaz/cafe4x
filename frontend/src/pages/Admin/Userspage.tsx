@@ -48,7 +48,7 @@ export default function UsersPage() {
     userApi.getUsers(undefined, currentShortCode || undefined)
       .then((serverUsers) => {
         if (Array.isArray(serverUsers)) {
-          setUsers(serverUsers as UserItem[]);
+          setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
         } else {
           setUsers([]);
         }

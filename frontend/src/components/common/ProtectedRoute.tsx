@@ -55,10 +55,98 @@ export default function ProtectedRoute({
     const routeCode = params.shortCode.toUpperCase();
     const activeCode = (user.shortCode || "").toUpperCase();
 
-    // If user's active organization does not match the URL shortCode, allow seamless organization match if user has access
-    if (activeCode && activeCode !== routeCode) {
-      // Stored user is in another organization; redirect to Choose Organization
-      return <Navigate to="/home" replace />;
+    // Check if the route shortCode matches user's active code or any authorized organization
+    if (activeCode !== routeCode) {
+      let isAuthorized = false;
+      let matchedOrg: { id: string; name: string; shortCode: string } | null = null;
+
+      // 1. Check user object's organizations if present
+      if (Array.isArray((user as any).organizations)) {
+        const found = (user as any).organizations.find(
+          (o: any) => (o.shortCode || "").toUpperCase() === routeCode
+        );
+        if (found) {
+          isAuthorized = true;
+          matchedOrg = {
+            id: String(found.id),
+            name: found.name,
+            shortCode: (found.shortCode || "").toUpperCase(),
+          };
+        }
+      }
+
+      // 2. Check localStorage "cafe4x_currentUser"
+      if (!isAuthorized) {
+        try {
+          const storedUser = localStorage.getItem("cafe4x_currentUser");
+          if (storedUser) {
+            const parsedUser = JSON.parse(storedUser);
+            if ((parsedUser.shortCode || "").toUpperCase() === routeCode) {
+              isAuthorized = true;
+              matchedOrg = {
+                id: String(parsedUser.organizationId || parsedUser.id || ""),
+                name: parsedUser.organization || `${routeCode} Workplace`,
+                shortCode: routeCode,
+              };
+            }
+          }
+        } catch {}
+      }
+
+      // 3. Check localStorage "cafe4x_admin_activeOrg" or "cafe4x_provider_activeOrg"
+      if (!isAuthorized) {
+        try {
+          const storedAdminOrg = localStorage.getItem("cafe4x_admin_activeOrg");
+          if (storedAdminOrg) {
+            const parsed = JSON.parse(storedAdminOrg);
+            if ((parsed.shortCode || "").toUpperCase() === routeCode) {
+              isAuthorized = true;
+              matchedOrg = {
+                id: String(parsed.id || ""),
+                name: parsed.name || `${routeCode} Workplace`,
+                shortCode: routeCode,
+              };
+            }
+          }
+        } catch {}
+      }
+
+      // 4. Check cached organizations in "cafe4x_organizations"
+      if (!isAuthorized) {
+        try {
+          const storedOrgs = localStorage.getItem("cafe4x_organizations");
+          const orgList = storedOrgs ? JSON.parse(storedOrgs) : [];
+          const found = orgList.find(
+            (o: any) => (o.shortCode || "").toUpperCase() === routeCode
+          );
+          if (found) {
+            isAuthorized = true;
+            matchedOrg = {
+              id: String(found.id || ""),
+              name: found.name || `${routeCode} Workplace`,
+              shortCode: (found.shortCode || "").toUpperCase(),
+            };
+          }
+        } catch {}
+      }
+
+      // If user is authorized to access the organization, allow access and sync user state in background
+      if (isAuthorized) {
+        if (matchedOrg && user.shortCode?.toUpperCase() !== routeCode) {
+          try {
+            const updated = {
+              ...user,
+              organization: matchedOrg.name,
+              shortCode: matchedOrg.shortCode.toUpperCase(),
+              organizationId: matchedOrg.id,
+            };
+            localStorage.setItem("cafe4x_currentUser", JSON.stringify(updated));
+          } catch {}
+        }
+      } else {
+        // Not authorized for this organization; redirect to Choose Organization
+        return <Navigate to="/home" replace />;
+      }
     }
   }
 

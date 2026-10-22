@@ -5,7 +5,10 @@ import LocationPage from './pages/Admin/locationpage'
 import ItemsPage from './pages/Admin/itemspage'
 import OrdersPage from './pages/Admin/orderspages'
 import WorkingHoursPage from './pages/Admin/workinghourspage'
+import AdminReportPage from './pages/Admin/reportspage'
 import ProviderPage from './pages/provider/providerpage'
+import ProviderReportPage from './pages/provider/providerreportpage'
+import ProviderPendingOrdersPage from './pages/provider/providerpendingorderspage'
 import UserOrderPage from './pages/user/userorder'
 import QrEntryPage from './pages/user/QrEntryPage'
 import Home from './pages/Admin/login/homepage'
@@ -90,15 +93,31 @@ export default function App() {
         }
       />
       <Route
-        path="/provider"
+        path="/reports"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
-            <ProviderPage />
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <AdminReportPage />
           </ProtectedRoute>
         }
       />
       <Route
-        path="/FTS/Provider"
+        path="/provider/reports"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+            <ProviderReportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/provider/pending-orders"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+            <ProviderPendingOrdersPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/provider"
         element={
           <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
             <ProviderPage />
@@ -152,6 +171,30 @@ export default function App() {
         element={
           <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
             <WorkingHoursPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/reports"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <AdminReportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/provider/reports"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+            <ProviderReportPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/:shortCode/provider/pending-orders"
+        element={
+          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+            <ProviderPendingOrdersPage />
           </ProtectedRoute>
         }
       />

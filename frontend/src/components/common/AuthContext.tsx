@@ -10,7 +10,10 @@ interface AuthContextType {
   checkAuth: () => Promise<boolean>;
   login: (token: string, user: AuthUser, orgs?: UserOrganizationInfo[]) => void;
   logout: () => Promise<void>;
-  switchOrganization: (org: { id: string; name: string; shortCode: string }) => void;
+  switchOrganization: (
+    org: { id: string; name: string; shortCode: string },
+    workspace?: "Admin" | "Provider"
+  ) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -50,6 +53,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem("cafe4x_currentUser");
       localStorage.removeItem("cafe4x_organizations");
       localStorage.removeItem("cafe4x_userOrganizations");
+      localStorage.removeItem("cafe4x_admin_activeOrg");
+      localStorage.removeItem("cafe4x_provider_activeOrg");
       setToken(null);
       setUser(null);
       setOrganizations([]);
@@ -69,7 +74,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await authApi.me();
       if (res.success && res.user) {
-        // Keep active organization context if present
         const storedUser = localStorage.getItem("cafe4x_currentUser");
         const parsedStored = storedUser ? JSON.parse(storedUser) : null;
 
@@ -84,22 +88,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setToken(currentToken);
         localStorage.setItem("cafe4x_currentUser", JSON.stringify(mergedUser));
 
-        if (Array.isArray((res as any).organizations) && (res as any).organizations.length > 0) {
-          setOrganizations((res as any).organizations);
-          localStorage.setItem("cafe4x_organizations", JSON.stringify((res as any).organizations));
+        const userOrgs: UserOrganizationInfo[] = Array.isArray((res as any).organizations)
+          ? (res as any).organizations
+          : [];
+
+        if (userOrgs.length > 0) {
+          setOrganizations(userOrgs);
+          localStorage.setItem("cafe4x_organizations", JSON.stringify(userOrgs));
+
+          // Initialize workspace-specific org caches if not set
+          if (res.user.userType === "Provider") {
+            const currentProv = localStorage.getItem("cafe4x_provider_activeOrg");
+            if (!currentProv) {
+              const provOrg = userOrgs[0];
+              localStorage.setItem(
+                "cafe4x_provider_activeOrg",
+                JSON.stringify({
+                  id: provOrg.id,
+                  name: provOrg.name,
+                  shortCode: provOrg.shortCode.toUpperCase(),
+                })
+              );
+            }
+          } else {
+            const currentAdmin = localStorage.getItem("cafe4x_admin_activeOrg");
+            if (!currentAdmin) {
+              const admOrg = userOrgs.find((o) => o.shortCode?.toUpperCase() === mergedUser.shortCode) || userOrgs[0];
+              localStorage.setItem(
+                "cafe4x_admin_activeOrg",
+                JSON.stringify({
+                  id: admOrg.id,
+                  name: admOrg.name,
+                  shortCode: admOrg.shortCode.toUpperCase(),
+                })
+              );
+            }
+          }
         }
 
         setIsLoading(false);
         return true;
       } else {
-        // Token was rejected or invalid
         await logout();
         setIsLoading(false);
         return false;
       }
     } catch (err: any) {
-      // Any failure to verify the session (401, network, invalid token) logs out the user
-      // so stale sessions cannot bypass the login screen or protected routes.
       await logout();
       setIsLoading(false);
       return false;
@@ -129,19 +163,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (newOrgs && newOrgs.length > 0) {
         localStorage.setItem("cafe4x_organizations", JSON.stringify(newOrgs));
         setOrganizations(newOrgs);
+
+        if (newUser.userType === "Provider") {
+          const provOrg = newOrgs[0];
+          localStorage.setItem(
+            "cafe4x_provider_activeOrg",
+            JSON.stringify({
+              id: provOrg.id,
+              name: provOrg.name,
+              shortCode: provOrg.shortCode.toUpperCase(),
+            })
+          );
+        } else {
+          const admOrg = newOrgs[0];
+          localStorage.setItem(
+            "cafe4x_admin_activeOrg",
+            JSON.stringify({
+              id: admOrg.id,
+              name: admOrg.name,
+              shortCode: admOrg.shortCode.toUpperCase(),
+            })
+          );
+        }
       }
     },
     []
   );
 
   const switchOrganization = useCallback(
-    (org: { id: string; name: string; shortCode: string }) => {
+    (
+      org: { id: string; name: string; shortCode: string },
+      workspace?: "Admin" | "Provider"
+    ) => {
+      const cleanShort = org.shortCode.toUpperCase();
+      const orgData = {
+        id: org.id,
+        name: org.name,
+        shortCode: cleanShort,
+      };
+
+      if (workspace === "Provider") {
+        localStorage.setItem("cafe4x_provider_activeOrg", JSON.stringify(orgData));
+      } else if (workspace === "Admin") {
+        localStorage.setItem("cafe4x_admin_activeOrg", JSON.stringify(orgData));
+      } else {
+        // Infer from current path if not explicitly provided
+        const isProv =
+          typeof window !== "undefined" &&
+          (window.location.pathname.toLowerCase().includes("/provider") ||
+           window.location.pathname.toLowerCase().includes("/fts/provider"));
+        if (isProv) {
+          localStorage.setItem("cafe4x_provider_activeOrg", JSON.stringify(orgData));
+        } else {
+          localStorage.setItem("cafe4x_admin_activeOrg", JSON.stringify(orgData));
+        }
+      }
+
       setUser((prev) => {
         if (!prev) return null;
         const updated: AuthUser = {
           ...prev,
           organization: org.name,
-          shortCode: org.shortCode.toUpperCase(),
+          shortCode: cleanShort,
           organizationId: org.id,
         };
         localStorage.setItem("cafe4x_currentUser", JSON.stringify(updated));

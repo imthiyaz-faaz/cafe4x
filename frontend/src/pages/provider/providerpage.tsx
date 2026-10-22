@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import {
   ChevronLeft,
   ChevronRight,
@@ -30,6 +31,7 @@ import {
 } from "lucide-react";
 import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
+import { useAuth } from "../../components/common/AuthContext";
 
 // Category images from src/assets/images
 import pendingOrdersImg from "../../assets/images/pending_orders_4k.png";
@@ -94,6 +96,8 @@ const categoryDetails: Record<OrderCategory, { title: string; subtitle: string; 
 };
 
 export default function ProviderPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<"provider" | "pendingOrders">("provider");
   const [searchQuery, setSearchQuery] = useState("");
   const [pageSize, setPageSize] = useState(12);
@@ -302,25 +306,46 @@ export default function ProviderPage() {
   };
 
 
-  // Get current logged in user from localStorage
+  const params = useParams();
+  const urlShortCode = params.shortCode ? params.shortCode.toUpperCase() : "";
+  const { user: authUser } = useAuth();
+
+  // Get current logged in user reactively from AuthContext or localStorage
   const currentUser = useMemo(() => {
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) return JSON.parse(stored);
     } catch { }
-    return null;
-  }, []);
+    return authUser || null;
+  }, [authUser, urlShortCode]);
 
   const [serverLocations, setServerLocations] = useState<ProviderLocation[]>([]);
 
   // Fetch locations assigned to this provider from backend
   useEffect(() => {
-    let providerId = currentUser?.id ? String(currentUser.id) : "";
-    let shortCode = currentUser?.shortCode || "";
+    let providerId = currentUser?.userType === "Provider" && currentUser?.id ? String(currentUser.id) : "";
+    
+    // Resolve organization shortCode specifically for provider workspace
+    let providerShortCode = urlShortCode;
+    if (!providerShortCode) {
+      try {
+        const storedProviderOrg = localStorage.getItem("cafe4x_provider_activeOrg");
+        if (storedProviderOrg) {
+          const parsed = JSON.parse(storedProviderOrg);
+          if (parsed?.shortCode) providerShortCode = parsed.shortCode.toUpperCase();
+        }
+      } catch {}
+    }
+    if (!providerShortCode && currentUser?.userType === "Provider") {
+      providerShortCode = (currentUser.shortCode || "").toUpperCase();
+    }
+    if (!providerShortCode) {
+      providerShortCode = "FTS"; // Default provider linked organization
+    }
 
     import("../../services/locations").then(({ locationApi }) => {
       locationApi
-        .getLocations(providerId || undefined, shortCode || undefined)
+        .getLocations(providerId || undefined, providerShortCode || undefined)
         .then((locList) => {
           if (Array.isArray(locList)) {
             const mapped: ProviderLocation[] = locList.map((loc: any, idx: number) => ({
@@ -335,13 +360,67 @@ export default function ProviderPage() {
               assignedProviderName: loc.assignedProviderName,
             }));
             setServerLocations(mapped);
+
+            // Auto-select location if specified in URL query
+            const targetLocParam = searchParams.get("locationId") || searchParams.get("location");
+            if (targetLocParam) {
+              const matched = mapped.find(
+                (l) =>
+                  String(l.id) === targetLocParam ||
+                  l.name.toLowerCase() === targetLocParam.toLowerCase()
+              );
+              if (matched) {
+                setSelectedLocation(matched);
+                setSelectedCategory(null);
+              }
+            }
           }
         })
         .catch((err) => {
           console.warn("Could not fetch assigned locations for provider:", err);
         });
     });
-  }, [currentUser]);
+  }, [currentUser, searchParams, urlShortCode]);
+
+  // Also listen for custom location selection event from dropdown
+  useEffect(() => {
+    const handleLocationSelect = (e: any) => {
+      const targetLoc = e.detail;
+      if (!targetLoc) return;
+
+      if (serverLocations.length > 0) {
+        const found = serverLocations.find(
+          (l) =>
+            String(l.id) === String(targetLoc.id) ||
+            l.name.toLowerCase() === (targetLoc.name || "").toLowerCase()
+        );
+        if (found) {
+          setSelectedLocation(found);
+          setSelectedCategory(null);
+          return;
+        }
+      }
+
+      // If not in serverLocations yet, construct ProviderLocation
+      setSelectedLocation({
+        id: String(targetLoc.id),
+        name: targetLoc.name || "Location",
+        badgeCount: targetLoc.totalSeats || 12,
+        isRedBadge: false,
+        image: targetLoc.image || OFFICE_IMG,
+        totalSeats: targetLoc.totalSeats || 12,
+        assignedProviderId: targetLoc.assignedProviderId,
+        assignedProviderEmail: targetLoc.assignedProviderEmail,
+        assignedProviderName: targetLoc.assignedProviderName,
+      });
+      setSelectedCategory(null);
+    };
+
+    window.addEventListener("cafe4x_select_location", handleLocationSelect);
+    return () => {
+      window.removeEventListener("cafe4x_select_location", handleLocationSelect);
+    };
+  }, [serverLocations]);
 
   useEffect(() => {
     // Also fetch items to retrieve item images for delivered summary
@@ -612,6 +691,14 @@ export default function ProviderPage() {
         <ProviderNavbar
           activeTab={activeTab}
           onTabChange={(tab) => {
+            if (tab === "reports") {
+              navigate("/provider/reports");
+              return;
+            }
+            if (tab === "pendingOrders") {
+              navigate("/provider/pending-orders");
+              return;
+            }
             setActiveTab(tab);
             if (tab === "provider") {
               setSelectedLocation(null);

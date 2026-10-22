@@ -41,18 +41,40 @@ export async function apiRequest<T = any>(
 
   // Automatically attach active organization and current user context
   try {
+    const isProviderWorkspace =
+      typeof window !== "undefined" &&
+      (window.location.pathname.toLowerCase().includes("/provider") ||
+       window.location.pathname.toLowerCase().includes("/fts/provider"));
+
     const userStr = localStorage.getItem("cafe4x_currentUser");
-    if (userStr) {
-      const u = JSON.parse(userStr);
-      if (u.id && !headers.has("x-user-id")) {
-        headers.set("x-user-id", u.id);
+    const u = userStr ? JSON.parse(userStr) : null;
+
+    if (u?.id && !headers.has("x-user-id")) {
+      headers.set("x-user-id", u.id);
+    }
+
+    // Determine active organization separately for Provider vs Admin
+    let activeOrg: { id?: string; shortCode?: string; name?: string } | null = null;
+    if (isProviderWorkspace || u?.userType === "Provider") {
+      const storedProviderOrg = localStorage.getItem("cafe4x_provider_activeOrg");
+      if (storedProviderOrg) {
+        activeOrg = JSON.parse(storedProviderOrg);
       }
-      if (u.shortCode && !headers.has("x-shortcode")) {
-        headers.set("x-shortcode", u.shortCode.toUpperCase());
+    } else {
+      const storedAdminOrg = localStorage.getItem("cafe4x_admin_activeOrg");
+      if (storedAdminOrg) {
+        activeOrg = JSON.parse(storedAdminOrg);
       }
-      if (u.organizationId && !headers.has("x-organization-id")) {
-        headers.set("x-organization-id", u.organizationId);
-      }
+    }
+
+    const effectiveShortCode = activeOrg?.shortCode || u?.shortCode;
+    const effectiveOrgId = activeOrg?.id || u?.organizationId;
+
+    if (effectiveShortCode && !headers.has("x-shortcode")) {
+      headers.set("x-shortcode", effectiveShortCode.toUpperCase());
+    }
+    if (effectiveOrgId && !headers.has("x-organization-id")) {
+      headers.set("x-organization-id", effectiveOrgId);
     }
   } catch {}
 

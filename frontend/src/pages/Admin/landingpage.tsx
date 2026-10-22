@@ -4,23 +4,48 @@ import { useState, useEffect } from "react";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
+import { useAuth } from "../../components/common/AuthContext";
 
 export default function LandingPage() {
   const params = useParams();
   const shortCode = params.shortCode;
-  const [currentUser, setCurrentUser] = useState<any>(null);
+  const { user } = useAuth();
+  const [currentUser, setCurrentUser] = useState<any>(user);
 
   useEffect(() => {
     try {
       const stored = localStorage.getItem("cafe4x_currentUser");
       if (stored) {
         setCurrentUser(JSON.parse(stored));
+        return;
       }
     } catch {}
-  }, []);
+    if (user) {
+      setCurrentUser(user);
+    }
+  }, [shortCode, user]);
 
-  const orgName = currentUser?.organization || (shortCode ? `${shortCode.toUpperCase()} Workplace` : "Cafe4X");
-  const codeTag = currentUser?.shortCode || (shortCode ? shortCode.toUpperCase() : "");
+  const matchedOrgName = (() => {
+    if (shortCode) {
+      const codeUpper = shortCode.toUpperCase();
+      try {
+        const storedOrgs = localStorage.getItem("cafe4x_organizations");
+        if (storedOrgs) {
+          const list = JSON.parse(storedOrgs);
+          const found = list.find((o: any) => (o.shortCode || "").toUpperCase() === codeUpper);
+          if (found && found.name) return found.name;
+        }
+      } catch {}
+      if (currentUser?.shortCode?.toUpperCase() === codeUpper && currentUser.organization) {
+        return currentUser.organization;
+      }
+      return `${codeUpper} Workplace`;
+    }
+    return currentUser?.organization || "Cafe4X";
+  })();
+
+  const orgName = matchedOrgName;
+  const codeTag = shortCode ? shortCode.toUpperCase() : (currentUser?.shortCode || "");
 
   return (
     <Background>

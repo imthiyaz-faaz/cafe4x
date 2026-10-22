@@ -29,6 +29,18 @@ export function buildUrl(
   return queryString ? `${base}${base.includes("?") ? "&" : "?"}${queryString}` : base;
 }
 
+export class ApiError extends Error {
+  status: number;
+  data: any;
+
+  constructor(message: string, status: number, data?: any) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.data = data;
+  }
+}
+
 export async function apiRequest<T = any>(
   endpoint: string,
   options: ApiRequestOptions = {}
@@ -67,7 +79,20 @@ export async function apiRequest<T = any>(
       }
     }
 
-    const effectiveShortCode = activeOrg?.shortCode || u?.shortCode;
+    // If URL pathname starts with an organization shortcode (e.g. /FTS/working-hours)
+    let urlShortCode: string | null = null;
+    if (typeof window !== "undefined" && window.location.pathname) {
+      const segments = window.location.pathname.split("/").filter(Boolean);
+      if (segments.length > 0) {
+        const first = segments[0].toUpperCase();
+        // Skip reserved non-org routes
+        if (!["LOGIN", "SIGNUP", "ORDER", "ADMIN", "PROVIDER", "API"].includes(first)) {
+          urlShortCode = first;
+        }
+      }
+    }
+
+    const effectiveShortCode = urlShortCode || activeOrg?.shortCode || u?.shortCode;
     const effectiveOrgId = activeOrg?.id || u?.organizationId;
 
     if (effectiveShortCode && !headers.has("x-shortcode")) {
@@ -112,7 +137,7 @@ export async function apiRequest<T = any>(
       data.message ||
       data.error ||
       `Request failed with status ${response.status} (${response.statusText})`;
-    throw new Error(errorMsg);
+    throw new ApiError(errorMsg, response.status, data);
   }
 
   return data as T;

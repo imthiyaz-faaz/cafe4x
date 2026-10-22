@@ -18,11 +18,7 @@ import {
   Sun,
   Moon,
   Receipt,
-  CheckCircle2,
-  AlertCircle,
-  XCircle,
   Filter,
-  DollarSign,
   Layers,
   ChevronDown,
 } from "lucide-react";
@@ -93,7 +89,6 @@ export interface EmployeeGroup {
 export default function OrdersPage() {
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
-  const isNewOrg = currentShortCode && currentShortCode !== "HQ" && currentShortCode !== "FTS";
   const ordersStorageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
 
   // Timezone & Period Configuration
@@ -106,16 +101,7 @@ export default function OrdersPage() {
   const [customEndDate, setCustomEndDate] = useState<string>("");
 
   // Orders State
-  const [orders, setOrders] = useState<OrderRecord[]>(() => {
-    try {
-      const stored = localStorage.getItem(ordersStorageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {}
-    return isNewOrg ? [] : [];
-  });
+  const [orders, setOrders] = useState<OrderRecord[]>([]);
 
   // Selected Employee Key for Inspection/Filter
   const [selectedEmployeeKey, setSelectedEmployeeKey] = useState<string | null>(null);
@@ -290,6 +276,9 @@ export default function OrdersPage() {
           } catch {}
         } else {
           setOrders([]);
+          try {
+            localStorage.removeItem(ordersStorageKey);
+          } catch {}
         }
       })
       .catch(() => {
@@ -373,7 +362,7 @@ export default function OrdersPage() {
   }, [employeeGroups, selectedEmployeeKey]);
 
   // Orders for the selected employee, classified into Morning, Evening, and Other
-  const { morningOrders, eveningOrders, otherOrders, financialSummary } = useMemo(() => {
+  const { morningOrders, eveningOrders, otherOrders } = useMemo(() => {
     if (!selectedEmployee) {
       return {
         morningOrders: [] as OrderRecord[],
@@ -760,203 +749,125 @@ export default function OrdersPage() {
                   </div>
                 </div>
 
-                {/* 2. Employee Summary Cards (Financial & Order Counts) */}
-                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                  {/* Card 1: Total Orders */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between text-gray-400">
-                      <span className="text-xs font-bold uppercase tracking-wider">Total Orders</span>
-                      <div className="rounded-lg bg-[#FAF4ED] p-2 text-[#754329]">
-                        <Receipt size={18} />
-                      </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-black text-gray-900">
-                      {financialSummary.totalOrders}
-                    </p>
-                    <p className="mt-1 text-[11px] text-gray-400">
-                      {financialSummary.totalItems} total items ordered
-                    </p>
-                  </div>
-
-                  {/* Card 2: Morning Orders */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between text-amber-500">
-                      <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                        Morning Orders
-                      </span>
-                      <div className="rounded-lg bg-amber-50 p-2 text-amber-700">
-                        <Sun size={18} />
-                      </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-black text-amber-800">
-                      {financialSummary.morningCount}
-                    </p>
-                    <p className="mt-1 text-[11px] font-semibold text-amber-700">
-                      ₹ {financialSummary.morningAmount.toFixed(2)} total
-                    </p>
-                  </div>
-
-                  {/* Card 3: Evening Orders */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between text-indigo-500">
-                      <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                        Evening Orders
-                      </span>
-                      <div className="rounded-lg bg-indigo-50 p-2 text-indigo-700">
-                        <Moon size={18} />
-                      </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-black text-indigo-900">
-                      {financialSummary.eveningCount}
-                    </p>
-                    <p className="mt-1 text-[11px] font-semibold text-indigo-700">
-                      ₹ {financialSummary.eveningAmount.toFixed(2)} total
-                    </p>
-                  </div>
-
-                  {/* Card 4: Total Order Amount & Financial Summary */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between text-[#754329]">
-                      <span className="text-xs font-bold uppercase tracking-wider text-gray-400">
-                        Completed Sales
-                      </span>
-                      <div className="rounded-lg bg-[#FAF4ED] p-2 text-[#754329]">
-                        <DollarSign size={18} />
-                      </div>
-                    </div>
-                    <p className="mt-2 text-2xl font-black text-[#754329]">
-                      ₹ {financialSummary.completedAmount.toFixed(2)}
-                    </p>
-                    <div className="mt-1 flex items-center gap-2 text-[10px] text-gray-500">
-                      <span>Gross: ₹{financialSummary.grossAmount.toFixed(2)}</span>
-                      {financialSummary.cancelledAmount > 0 && (
-                        <span className="text-rose-500">
-                          (Cancelled: ₹{financialSummary.cancelledAmount.toFixed(2)})
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 3. Detailed Financial Breakdown Bar */}
-                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 shadow-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-gray-700">Order Status Breakdown:</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-1 font-semibold text-emerald-800 border border-emerald-200">
-                        <CheckCircle2 size={13} />
-                        Delivered: ₹ {financialSummary.completedAmount.toFixed(2)}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 font-semibold text-amber-800 border border-amber-200">
-                        <AlertCircle size={13} />
-                        Pending: ₹ {financialSummary.pendingAmount.toFixed(2)}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-50 px-2.5 py-1 font-semibold text-rose-800 border border-rose-200">
-                        <XCircle size={13} />
-                        Cancelled: ₹ {financialSummary.cancelledAmount.toFixed(2)}
-                      </span>
-                      <span className="inline-flex items-center gap-1.5 rounded-lg bg-gray-50 px-2.5 py-1 font-semibold text-gray-800 border border-gray-200">
-                        Net Sales: ₹ {financialSummary.netAmount.toFixed(2)}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 4. SECTION A: MORNING ORDERS */}
-                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-6 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
-                        <Sun size={18} />
-                      </div>
-                      <div>
-                        <h4 className="text-base font-extrabold text-[#342219]">Morning Orders</h4>
-                        <p className="text-xs text-gray-500">
-                          Orders placed between {periodConfig.morningStart} AM - {periodConfig.morningEnd} AM ({orgTimezone})
-                        </p>
-                      </div>
-                    </div>
-                    <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-bold text-amber-800 border border-amber-200">
-                      {morningOrders.length} {morningOrders.length === 1 ? "Order" : "Orders"}
-                    </span>
-                  </div>
-
-                  {morningOrders.length === 0 ? (
-                    <div className="py-10 text-center text-xs text-gray-400">
-                      <Sun className="mx-auto mb-2 h-7 w-7 text-amber-300" />
-                      <p className="font-semibold text-gray-600">No morning orders placed by this employee</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {morningOrders.map((order) => (
-                        <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 5. SECTION B: EVENING ORDERS */}
-                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-6 shadow-sm">
-                  <div className="mb-4 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <Moon size={18} />
-                      </div>
-                      <div>
-                        <h4 className="text-base font-extrabold text-[#342219]">Evening Orders</h4>
-                        <p className="text-xs text-gray-500">
-                          Orders placed between 04:00 PM - 11:59 PM ({orgTimezone})
-                        </p>
-                      </div>
-                    </div>
-                    <span className="rounded-full bg-indigo-100 px-3 py-1 text-xs font-bold text-indigo-800 border border-indigo-200">
-                      {eveningOrders.length} {eveningOrders.length === 1 ? "Order" : "Orders"}
-                    </span>
-                  </div>
-
-                  {eveningOrders.length === 0 ? (
-                    <div className="py-10 text-center text-xs text-gray-400">
-                      <Moon className="mx-auto mb-2 h-7 w-7 text-indigo-300" />
-                      <p className="font-semibold text-gray-600">No evening orders placed by this employee</p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-                      {eveningOrders.map((order) => (
-                        <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* 6. SECTION C: OTHER ORDERS (If any orders exist outside standard periods) */}
-                {otherOrders.length > 0 && (
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-6 shadow-sm">
-                    <div className="mb-4 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                      <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gray-100 text-gray-700 border border-gray-200">
-                          <Layers size={18} />
+                {/* 2. SYMMETRICAL SESSIONS GRID: MORNING & EVENING SESSIONS SIDE-BY-SIDE */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+                  {/* MORNING ORDERS SESSION */}
+                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs flex flex-col h-full">
+                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
+                          <Sun size={16} />
                         </div>
                         <div>
-                          <h4 className="text-base font-extrabold text-[#342219]">Other Orders</h4>
-                          <p className="text-xs text-gray-500">
-                            Orders placed outside configured morning and evening hours
+                          <h4 className="text-sm font-bold text-[#342219]">Morning Orders</h4>
+                          <p className="text-[11px] text-gray-400">
+                            {periodConfig.morningStart} AM - {periodConfig.morningEnd} AM
                           </p>
                         </div>
                       </div>
-                      <span className="rounded-full bg-gray-100 px-3 py-1 text-xs font-bold text-gray-800 border border-gray-200">
+                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
+                        {morningOrders.length} {morningOrders.length === 1 ? "Order" : "Orders"}
+                      </span>
+                    </div>
+
+                    {morningOrders.length === 0 ? (
+                      <div className="flex flex-1 flex-col items-center justify-center py-8 text-center text-xs text-gray-400">
+                        <Sun className="mb-1.5 h-6 w-6 text-amber-200" />
+                        <p className="font-medium text-gray-500">No morning orders</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {morningOrders.map((order) => (
+                          <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* EVENING ORDERS SESSION */}
+                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs flex flex-col h-full">
+                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          <Moon size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-[#342219]">Evening Orders</h4>
+                          <p className="text-[11px] text-gray-400">
+                            04:00 PM - 11:59 PM
+                          </p>
+                        </div>
+                      </div>
+                      <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800 border border-indigo-200">
+                        {eveningOrders.length} {eveningOrders.length === 1 ? "Order" : "Orders"}
+                      </span>
+                    </div>
+
+                    {eveningOrders.length === 0 ? (
+                      <div className="flex flex-1 flex-col items-center justify-center py-8 text-center text-xs text-gray-400">
+                        <Moon className="mb-1.5 h-6 w-6 text-indigo-200" />
+                        <p className="font-medium text-gray-500">No evening orders</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {eveningOrders.map((order) => (
+                          <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* 3. SECTION C: OTHER ORDERS (If any exist outside standard periods) */}
+                {otherOrders.length > 0 && (
+                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs">
+                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gray-100 text-gray-700 border border-gray-200">
+                          <Layers size={16} />
+                        </div>
+                        <div>
+                          <h4 className="text-sm font-bold text-[#342219]">Other Orders</h4>
+                          <p className="text-[11px] text-gray-400">Outside standard hours</p>
+                        </div>
+                      </div>
+                      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-700 border border-gray-200">
                         {otherOrders.length} {otherOrders.length === 1 ? "Order" : "Orders"}
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {otherOrders.map((order) => (
                         <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* 5. Total Amount Calculated at the End */}
+                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#FAF4ED] text-[#754329] border border-[#EEDFCE]">
+                        <Receipt size={22} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
+                          Total Amount Calculated
+                        </h4>
+                        <p className="text-xs text-gray-400 mt-0.5">
+                          {selectedEmployee.orders.length} {selectedEmployee.orders.length === 1 ? "order" : "orders"} &bull; {selectedEmployee.orders.reduce((acc, o) => acc + o.items.reduce((sum, it) => sum + (it.qty || 1), 0), 0)} items
+                        </p>
+                      </div>
+                    </div>
+                    <div className="text-left sm:text-right">
+                      <span className="text-xs text-gray-400 font-medium">Total Spend</span>
+                      <p className="text-3xl font-black text-[#754329]">
+                        ₹ {selectedEmployee.totalSpend.toFixed(2)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
               </div>
             ) : (
               /* IF NO EMPLOYEE SELECTED: DISPLAY ALL EMPLOYEES DIRECTORY TABLE */

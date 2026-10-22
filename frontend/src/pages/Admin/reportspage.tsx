@@ -13,6 +13,8 @@ import {
   Moon,
   Receipt,
   Percent,
+  Wallet,
+  TrendingUp,
 } from "lucide-react";
 
 import Background from "../../components/background";
@@ -167,34 +169,15 @@ export default function AdminReportPage() {
     reportApi
       .getReportOrders()
       .then((data) => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setOrders(data);
         } else {
-          // Fallback to locally cached orders
-          const storageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
-          const providerStorageKey = "cafe4x_provider_orders";
-          let fallbackOrders: any[] = [];
-          try {
-            const raw1 = localStorage.getItem(storageKey);
-            const raw2 = localStorage.getItem(providerStorageKey);
-            if (raw1) fallbackOrders = JSON.parse(raw1);
-            else if (raw2) fallbackOrders = JSON.parse(raw2);
-          } catch {}
-          setOrders(Array.isArray(fallbackOrders) ? fallbackOrders : []);
+          setOrders([]);
         }
       })
       .catch((err) => {
         console.error("Failed to fetch report orders:", err);
-        const storageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
-        const providerStorageKey = "cafe4x_provider_orders";
-        let fallbackOrders: any[] = [];
-        try {
-          const raw1 = localStorage.getItem(storageKey);
-          const raw2 = localStorage.getItem(providerStorageKey);
-          if (raw1) fallbackOrders = JSON.parse(raw1);
-          else if (raw2) fallbackOrders = JSON.parse(raw2);
-        } catch {}
-        setOrders(Array.isArray(fallbackOrders) ? fallbackOrders : []);
+        setOrders([]);
       })
       .finally(() => {
         setIsLoading(false);
@@ -203,6 +186,9 @@ export default function AdminReportPage() {
 
   useEffect(() => {
     fetchMonthOrders();
+    // Periodically fetch reports to ensure data stays updated automatically
+    const interval = setInterval(fetchMonthOrders, 5000);
+    return () => clearInterval(interval);
   }, [selectedMonth, currentShortCode]);
 
   // 5. Aggregate Orders into Daily Records matching the screenshot table exactly
@@ -371,6 +357,30 @@ export default function AdminReportPage() {
     return records;
   }, [orders, orgTimezone, periodConfig, itemsByName]);
 
+  // Monthly Spending Calculation (Office Cafe Expenses, not sales/revenue)
+  const monthlySpendingSummary = useMemo(() => {
+    let totalSpending = 0;
+    let morningSpending = 0;
+    let eveningSpending = 0;
+    let totalOrdersCount = 0;
+    let totalDaysActive = dailyRecords.length;
+
+    dailyRecords.forEach((r) => {
+      totalSpending += r.netAmount;
+      morningSpending += r.morningSubtotal;
+      eveningSpending += r.eveningSubtotal;
+      totalOrdersCount += r.morningOrdersCount + r.eveningOrdersCount;
+    });
+
+    return {
+      totalSpending,
+      morningSpending,
+      eveningSpending,
+      totalOrdersCount,
+      totalDaysActive,
+    };
+  }, [dailyRecords]);
+
   // Keep first record selected by default or update if selectedDayRecord is set
   useEffect(() => {
     if (dailyRecords.length > 0) {
@@ -439,7 +449,7 @@ export default function AdminReportPage() {
                       Daily Reports
                     </h1>
                     <p className="mt-1 text-sm font-medium text-[#7C6B5E]">
-                      View daily sales, items and order details
+                      Monthly office cafe expenditure, daily spending, and order inspection
                     </p>
                   </div>
 
@@ -461,6 +471,73 @@ export default function AdminReportPage() {
                       />
                       <ChevronDown size={15} className="ml-1 text-[#8A7667]" />
                     </div>
+                  </div>
+                </div>
+
+                {/* Monthly Cafe Spending Section (Office Expenditure) */}
+                <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  {/* Total Monthly Spending */}
+                  <div className="rounded-2xl border border-[#DEC5B0] bg-gradient-to-br from-white to-[#FAF6F1] p-4.5 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-[#75472D] uppercase tracking-wide">
+                        Monthly Total Spending
+                      </span>
+                      <div className="rounded-full bg-[#75472D]/10 p-1.5 text-[#75472D]">
+                        <Wallet size={16} />
+                      </div>
+                    </div>
+                    <div className="text-2xl font-black text-[#1E140E]">
+                      ₹ {monthlySpendingSummary.totalSpending.toLocaleString("en-IN")}
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#8A7667]">
+                      Office cafe expense across {monthlySpendingSummary.totalDaysActive} active days
+                    </p>
+                  </div>
+
+                  {/* Morning vs Evening Breakdown */}
+                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
+                        Session Spending
+                      </span>
+                      <div className="flex items-center gap-1 text-[#8E6548]">
+                        <Sun size={15} className="text-amber-500" />
+                        <Moon size={15} className="text-orange-500" />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-0.5">
+                      <div>
+                        <span className="text-[10px] font-semibold text-[#8A7667] block">Morning</span>
+                        <span className="text-sm font-extrabold text-[#1E140E]">
+                          ₹ {monthlySpendingSummary.morningSpending.toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                      <div className="h-7 w-[1px] bg-[#EEE5DC]"></div>
+                      <div>
+                        <span className="text-[10px] font-semibold text-[#8A7667] block">Evening</span>
+                        <span className="text-sm font-extrabold text-[#1E140E]">
+                          ₹ {monthlySpendingSummary.eveningSpending.toLocaleString("en-IN")}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Total Office Orders Placed */}
+                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
+                        Total Office Orders
+                      </span>
+                      <div className="rounded-full bg-emerald-50 p-1.5 text-emerald-600">
+                        <TrendingUp size={16} />
+                      </div>
+                    </div>
+                    <div className="text-2xl font-black text-[#1E140E]">
+                      {monthlySpendingSummary.totalOrdersCount}
+                    </div>
+                    <p className="mt-1 text-[11px] text-[#8A7667]">
+                      Employee cafe orders fulfilled this month
+                    </p>
                   </div>
                 </div>
 

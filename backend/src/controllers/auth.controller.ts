@@ -120,7 +120,8 @@ export const authController = {
             `INSERT INTO user_sessions (id, token_hash, user_id, expires_at)
              VALUES (?, ?, ?, ?)`
           )
-          .run(sessionId, tokenHash, String(row.id), expiresAt);
+          .bind(sessionId, tokenHash, String(row.id), expiresAt)
+          .run();
       } catch (sessErr) {
         console.warn("Could not record session:", sessErr);
       }
@@ -239,7 +240,8 @@ export const authController = {
             `INSERT INTO user_sessions (id, token_hash, user_id, expires_at)
              VALUES (?, ?, ?, ?)`
           )
-          .run(sessionId, tokenHash, String(newUserId), expiresAt);
+          .bind(sessionId, tokenHash, String(newUserId), expiresAt)
+          .run();
       } catch (sessErr) {
         console.warn("Could not record session:", sessErr);
       }

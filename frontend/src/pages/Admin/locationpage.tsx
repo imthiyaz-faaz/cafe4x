@@ -247,11 +247,14 @@ export default function LocationPage() {
             employeeId: s.employeeId,
             orderUrl: s.orderUrl || getEmployeeOrderUrl(s.employee || s.employeeEmail, s.id, locId, s.number),
           }));
-          setSeatsByLoc((prev) => ({ ...prev, [locId]: mapped }));
-          try {
-            localStorage.setItem(seatsStorageKey, JSON.stringify({ ...seatsByLoc, [locId]: mapped }));
-            localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify({ ...seatsByLoc, [locId]: mapped }));
-          } catch { }
+          setSeatsByLoc((prev) => {
+            const next = { ...prev, [locId]: mapped };
+            try {
+              localStorage.setItem(seatsStorageKey, JSON.stringify(next));
+              localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(next));
+            } catch { }
+            return next;
+          });
           return;
         }
 
@@ -589,11 +592,7 @@ export default function LocationPage() {
 
     try {
       // 1. Sync to backend
-      try {
-        await locationApi.unassignSeat(locId, currentSeat.id);
-      } catch (err: any) {
-        console.warn("Backend unassignSeat error (updating local state):", err);
-      }
+      const resultSeat = await locationApi.unassignSeat(locId, currentSeat.id);
 
       // 2. Update local state — keep seat, seat identifier, and position; clear employee assignment
       const updatedSeats = (seatsByLoc[locId] || []).map((s) => {
@@ -604,7 +603,7 @@ export default function LocationPage() {
             employeeName: undefined,
             employeeEmail: undefined,
             employeeId: undefined,
-            orderUrl: defaultUrl,
+            orderUrl: resultSeat?.orderUrl || defaultUrl,
           };
         }
         return s;
@@ -682,19 +681,15 @@ export default function LocationPage() {
     try {
       const idealUrl = getEmployeeOrderUrl(trimmedEmail || trimmedName, currentSeat.id, locId, currentSeat.number);
 
-      // 1. Sync to backend
-      try {
-        await locationApi.assignSeat(locId, currentSeat.id, {
-          employeeName: trimmedName,
-          employeeEmail: trimmedEmail,
-          employee: trimmedEmail,
-          orderUrl: idealUrl,
-        });
-      } catch (err: any) {
-        console.warn("Backend assignSeat error (updating local state):", err);
-      }
+      // 1. Sync to backend (guaranteed persistence in D1 database)
+      const assignedSeat = await locationApi.assignSeat(locId, currentSeat.id, {
+        employeeName: trimmedName,
+        employeeEmail: trimmedEmail,
+        employee: trimmedEmail,
+        orderUrl: idealUrl,
+      });
 
-      // 2. Update local state
+      // 2. Update local state with response from backend
       const updatedSeats = currentLocSeats.map((s) => {
         if (s.number === currentSeat.number) {
           return {
@@ -702,7 +697,8 @@ export default function LocationPage() {
             employee: trimmedEmail,
             employeeName: trimmedName,
             employeeEmail: trimmedEmail,
-            orderUrl: idealUrl,
+            employeeId: assignedSeat?.employeeId,
+            orderUrl: assignedSeat?.orderUrl || idealUrl,
           };
         }
         return s;

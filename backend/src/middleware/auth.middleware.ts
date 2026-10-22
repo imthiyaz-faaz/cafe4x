@@ -61,19 +61,24 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
       };
     }
 
-    // 2. Backward compatibility fallback for legacy active tokens not yet in user_sessions:
+    // 2. Backward compatibility fallback for active tokens not yet in user_sessions:
     // Only valid if this token was NOT previously recorded (or revoked) in user_sessions
-    if (parsedUserId && rawToken.startsWith("cafe4x_token_")) {
+    if (rawToken.startsWith("cafe4x_token_")) {
       const parts = rawToken.split("_");
+      // Format: "cafe4x", "token", ...userIdParts..., timestamp
       const tokenTime = parseInt(parts[parts.length - 1], 10);
+      const extractedUserId = parts.length >= 4 
+        ? parts.slice(2, parts.length - 1).join("_") 
+        : (parts.length >= 3 ? parts[2] : null);
+
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-      if (!isNaN(tokenTime) && Date.now() - tokenTime < SEVEN_DAYS_MS) {
+      if (extractedUserId && !isNaN(tokenTime) && Date.now() - tokenTime < SEVEN_DAYS_MS) {
         const userRow = (await db
           .prepare(
             `SELECT id, name, user_name as userName, email, user_type as userType 
              FROM users WHERE id = ?`
           )
-          .bind(parsedUserId)
+          .bind(extractedUserId)
           .get()) as any;
 
         if (userRow) {
@@ -86,7 +91,8 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
                 `INSERT OR IGNORE INTO user_sessions (id, token_hash, user_id, expires_at)
                  VALUES (?, ?, ?, ?)`
               )
-              .run(sessionId, tokenHash, userRow.id, expiresAt);
+              .bind(sessionId, tokenHash, String(userRow.id), expiresAt)
+              .run();
           } catch {}
 
           return {
@@ -152,7 +158,7 @@ export async function resolveAuthorizedOrg(
   const reqShortCode = (
     c.req.header("x-shortcode") ||
     c.req.query("shortCode") ||
-    c.req.param("shortCode") ||
+    (typeof c.req.param === "function" ? c.req.param("shortCode") : "") ||
     ""
   ).trim().toUpperCase();
 

@@ -16,14 +16,29 @@ import Login from './pages/Admin/login/login'
 import Signup from './pages/Admin/login/signup'
 import ChooseOrganizationPage from './pages/Admin/login/chooseorganization'
 import ProtectedRoute from './components/common/ProtectedRoute'
+import PublicOnlyRoute from './components/common/PublicOnlyRoute'
 
 export default function App() {
   return (
     <Routes>
       {/* Public Guest Routes */}
       <Route path="/" element={<Home />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
+      <Route
+        path="/login"
+        element={
+          <PublicOnlyRoute>
+            <Login />
+          </PublicOnlyRoute>
+        }
+      />
+      <Route
+        path="/signup"
+        element={
+          <PublicOnlyRoute>
+            <Signup />
+          </PublicOnlyRoute>
+        }
+      />
 
       {/* Authenticated Organization Selection */}
       <Route

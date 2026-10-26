@@ -281,21 +281,39 @@ export const orderController = {
   },
   async getOrderById(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
+
       const id = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
+      const authUser = await getAuthUser(c);
 
-      const row = (await db
-        .prepare(
-          `SELECT 
-            id, display_id as displayId, organization_id as organizationId, short_code as shortCode,
-            seat, location_id as locationId, location_name as locationName,
-            employee_name as employeeName, subtotal, adjustment_amount as adjustmentAmount, discount,
-            total, time, status, notes,
-            items_json as itemsJson, created_at as createdAt, updated_at as updatedAt
-           FROM orders WHERE id = ? OR display_id = ?`
-        )
-        .bind(id, id)
-        .get()) as any;
+      let query = `
+        SELECT 
+          o.id, o.display_id as displayId, o.organization_id as organizationId, o.short_code as shortCode,
+          o.seat, o.location_id as locationId, o.location_name as locationName,
+          o.employee_name as employeeName, o.subtotal, o.adjustment_amount as adjustmentAmount, o.discount,
+          o.total, o.time, o.status, o.notes,
+          o.items_json as itemsJson, o.created_at as createdAt, o.updated_at as updatedAt
+        FROM orders o
+      `;
+      const params: any[] = [id, id, org.organizationId];
+
+      if (authUser?.userType === "Provider") {
+        query += `
+          LEFT JOIN locations loc ON o.location_id = loc.id
+          LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
+          WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?
+            AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+        `;
+        params.push(authUser.id, authUser.id);
+      } else {
+        query += ` WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?`;
+      }
+
+      const row = (await db.prepare(query).bind(...params).get()) as any;
 
       if (!row) {
         return c.json({ success: false, message: "Order not found" }, 404);
@@ -731,20 +749,44 @@ export const orderController = {
   // PATCH /api/orders/:id/status
   async updateStatus(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
+
       const id = c.req.param("id");
       const body = await c.req.json();
       const status = body.status || "Pending";
       const now = new Date().toISOString();
       const db = getUniversalDb(c.env?.DB);
+      const authUser = await getAuthUser(c);
+
+      // Verify order exists in authorized organization
+      let checkQuery = `SELECT * FROM orders WHERE (id = ? OR display_id = ?) AND organization_id = ?`;
+      const params: any[] = [id, id, org.organizationId];
+
+      if (authUser?.userType === "Provider") {
+        checkQuery = `
+          SELECT o.* 
+          FROM orders o
+          LEFT JOIN locations loc ON o.location_id = loc.id
+          LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
+          WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?
+            AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+        `;
+        params.push(authUser.id, authUser.id);
+      }
+
+      const existing = (await db.prepare(checkQuery).bind(...params).get()) as any;
+      if (!existing) {
+        return c.json({ success: false, message: "Order not found or access denied" }, 404);
+      }
 
       await db
-        .prepare(`UPDATE orders SET status = ?, updated_at = ? WHERE id = ? OR display_id = ?`)
-        .run(status, now, id, id);
+        .prepare(`UPDATE orders SET status = ?, updated_at = ? WHERE id = ?`)
+        .run(status, now, existing.id);
 
-      const updated = (await db.prepare(`SELECT * FROM orders WHERE id = ? OR display_id = ?`).bind(id, id).get()) as any;
-      if (!updated) {
-        return c.json({ success: false, message: "Order not found" }, 404);
-      }
+      const updated = (await db.prepare(`SELECT * FROM orders WHERE id = ?`).bind(existing.id).get()) as any;
 
       let items: OrderItem[] = [];
       try {
@@ -791,11 +833,32 @@ export const orderController = {
   // PUT /api/orders/:id (Update order details, adjustment amount, discount, seat, notes, status)
   async updateOrder(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
+
       const id = c.req.param("id");
       const body = await c.req.json();
       const db = getUniversalDb(c.env?.DB);
+      const authUser = await getAuthUser(c);
 
-      const existing = (await db.prepare(`SELECT * FROM orders WHERE id = ? OR display_id = ?`).bind(id, id).get()) as any;
+      let checkQuery = `SELECT * FROM orders WHERE (id = ? OR display_id = ?) AND organization_id = ?`;
+      const params: any[] = [id, id, org.organizationId];
+
+      if (authUser?.userType === "Provider") {
+        checkQuery = `
+          SELECT o.* 
+          FROM orders o
+          LEFT JOIN locations loc ON o.location_id = loc.id
+          LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
+          WHERE (o.id = ? OR o.display_id = ?) AND o.organization_id = ?
+            AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+        `;
+        params.push(authUser.id, authUser.id);
+      }
+
+      const existing = (await db.prepare(checkQuery).bind(...params).get()) as any;
       if (!existing) {
         return c.json({ success: false, message: "Order not found" }, 404);
       }
@@ -830,9 +893,9 @@ export const orderController = {
           `UPDATE orders SET 
             subtotal = ?, adjustment_amount = ?, discount = ?, total = ?, 
             status = ?, seat = ?, notes = ?, employee_name = ?, items_json = ?, updated_at = ?
-           WHERE id = ? OR display_id = ?`
+           WHERE id = ?`
         )
-        .run(subtotal, adjustmentAmount, discount, total, status, seat, notes, employeeName, itemsJson, now, id, id);
+        .run(subtotal, adjustmentAmount, discount, total, status, seat, notes, employeeName, itemsJson, now, existing.id);
 
       return c.json({
         success: true,
@@ -925,12 +988,20 @@ export const orderController = {
   // DELETE /api/orders/:id
   async deleteOrder(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
+
       const id = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
-      const res = await db.prepare(`DELETE FROM orders WHERE id = ? OR display_id = ?`).bind(id, id).run();
+      const res = await db
+        .prepare(`DELETE FROM orders WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .run();
       if (res.changes === 0) {
-        return c.json({ success: false, message: "Order not found" }, 404);
+        return c.json({ success: false, message: "Order not found in this organization" }, 404);
       }
 
       // Clean up order_items

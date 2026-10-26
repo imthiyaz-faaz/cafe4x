@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { User, Plus, Loader2 } from "lucide-react";
 import { organizationApi, type Organization } from "../../../services/organizationApi";
 import Background from "../../../components/background";
@@ -9,9 +9,13 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function ChooseOrganizationPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user: currentUser, switchOrganization } = useAuth();
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Intended return path passed from login redirection
+  const returnTo = (location.state as any)?.returnTo;
 
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -65,13 +69,29 @@ export default function ChooseOrganizationPage() {
   };
 
   const handleSelectOrg = (org: Organization) => {
+    const cleanShort = org.shortCode.toUpperCase();
     // Update active organization in AuthContext and localStorage
     switchOrganization({
       id: org.id,
       name: org.name,
-      shortCode: org.shortCode.toUpperCase(),
+      shortCode: cleanShort,
     });
-    navigate(`/${org.shortCode.toUpperCase()}/landing`);
+
+    // If returning to a requested protected route
+    if (returnTo && returnTo.pathname) {
+      const path: string = returnTo.pathname;
+      const segments = path.split("/").filter(Boolean);
+      if (segments.length >= 2 && segments[0].toUpperCase() === cleanShort) {
+        navigate(path + (returnTo.search || ""), { replace: true });
+        return;
+      }
+      if (segments.length >= 1 && ["users", "location", "items", "orders", "working-hours", "reports"].includes(segments[0].toLowerCase())) {
+        navigate(`/${cleanShort}/${segments[0]}` + (returnTo.search || ""), { replace: true });
+        return;
+      }
+    }
+
+    navigate(`/${cleanShort}/landing`, { replace: true });
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {

@@ -67,23 +67,22 @@ export const authApi = {
     return api.get<MeResponse>("/api/auth/me");
   },
 
-  async logout(): Promise<void> {
-    try {
-      await api.post("/api/auth/logout", {});
-    } catch {
-      // Ignore network errors during logout
-    }
+  async logout(): Promise<{ success: boolean; message?: string }> {
+    return api.post<{ success: boolean; message?: string }>("/api/auth/logout", {});
   },
 };
 
 export const authService = {
   ...authApi,
   async logout(): Promise<void> {
-    await authApi.logout();
-    localStorage.removeItem("cafe4x_token");
-    localStorage.removeItem("cafe4x_currentUser");
-    localStorage.removeItem("cafe4x_userOrganizations");
-    localStorage.removeItem("cafe4x_organizations");
+    try {
+      await authApi.logout();
+    } finally {
+      localStorage.removeItem("cafe4x_token");
+      localStorage.removeItem("cafe4x_currentUser");
+      localStorage.removeItem("cafe4x_userOrganizations");
+      localStorage.removeItem("cafe4x_organizations");
+    }
   },
 };
 

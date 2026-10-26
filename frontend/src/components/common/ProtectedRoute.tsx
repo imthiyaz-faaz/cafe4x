@@ -14,7 +14,7 @@ export default function ProtectedRoute({
   allowedRoles,
   requireOrgMatch = false,
 }: ProtectedRouteProps) {
-  const { user, isAuthenticated, isLoading, switchOrganization } = useAuth();
+  const { user, organizations, isAuthenticated, isLoading, switchOrganization } = useAuth();
   const location = useLocation();
   const params = useParams();
 
@@ -32,7 +32,7 @@ export default function ProtectedRoute({
     );
   }
 
-  // Not authenticated? Redirect directly to /login
+  // Not authenticated? Redirect directly to /login and preserve requested path
   if (!isAuthenticated || !user) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
@@ -41,7 +41,6 @@ export default function ProtectedRoute({
   if (allowedRoles && allowedRoles.length > 0) {
     const userRole = user.userType || "Admin";
     if (!allowedRoles.includes(userRole)) {
-      // If a Provider tries to enter Admin routes or vice versa, redirect them to their home
       if (userRole === "Provider") {
         const short = user.shortCode ? user.shortCode.toUpperCase() : "";
         return <Navigate to={short ? `/${short}/provider` : "/provider"} replace />;
@@ -55,98 +54,37 @@ export default function ProtectedRoute({
     const routeCode = params.shortCode.toUpperCase();
     const activeCode = (user.shortCode || "").toUpperCase();
 
-    // Check if the route shortCode matches user's active code or any authorized organization
-    if (activeCode !== routeCode) {
-      let isAuthorized = false;
-      let matchedOrg: { id: string; name: string; shortCode: string } | null = null;
-
-      // 1. Check user object's organizations if present
-      if (Array.isArray((user as any).organizations)) {
-        const found = (user as any).organizations.find(
-          (o: any) => (o.shortCode || "").toUpperCase() === routeCode
-        );
-        if (found) {
-          isAuthorized = true;
-          matchedOrg = {
-            id: String(found.id),
-            name: found.name,
-            shortCode: (found.shortCode || "").toUpperCase(),
-          };
-        }
-      }
-
-      // 2. Check localStorage "cafe4x_currentUser"
-      if (!isAuthorized) {
-        try {
-          const storedUser = localStorage.getItem("cafe4x_currentUser");
-          if (storedUser) {
-            const parsedUser = JSON.parse(storedUser);
-            if ((parsedUser.shortCode || "").toUpperCase() === routeCode) {
-              isAuthorized = true;
-              matchedOrg = {
-                id: String(parsedUser.organizationId || parsedUser.id || ""),
-                name: parsedUser.organization || `${routeCode} Workplace`,
-                shortCode: routeCode,
-              };
-            }
-          }
-        } catch {}
-      }
-
-      // 3. Check localStorage "cafe4x_admin_activeOrg" or "cafe4x_provider_activeOrg"
-      if (!isAuthorized) {
-        try {
-          const storedAdminOrg = localStorage.getItem("cafe4x_admin_activeOrg");
-          if (storedAdminOrg) {
-            const parsed = JSON.parse(storedAdminOrg);
-            if ((parsed.shortCode || "").toUpperCase() === routeCode) {
-              isAuthorized = true;
-              matchedOrg = {
-                id: String(parsed.id || ""),
-                name: parsed.name || `${routeCode} Workplace`,
-                shortCode: routeCode,
-              };
-            }
-          }
-        } catch {}
-      }
-
-      // 4. Check cached organizations in "cafe4x_organizations"
-      if (!isAuthorized) {
-        try {
-          const storedOrgs = localStorage.getItem("cafe4x_organizations");
-          const orgList = storedOrgs ? JSON.parse(storedOrgs) : [];
-          const found = orgList.find(
-            (o: any) => (o.shortCode || "").toUpperCase() === routeCode
-          );
-          if (found) {
-            isAuthorized = true;
-            matchedOrg = {
-              id: String(found.id || ""),
-              name: found.name || `${routeCode} Workplace`,
-              shortCode: (found.shortCode || "").toUpperCase(),
-            };
-          }
-        } catch {}
-      }
-
-      // If user is authorized to access the organization, allow access and sync user state
-      if (isAuthorized) {
-        if (matchedOrg && user.shortCode?.toUpperCase() !== routeCode) {
-          try {
-            const userRole = user.userType || "Admin";
-            const workspace = userRole === "Provider" ? "Provider" : "Admin";
-            switchOrganization(
-              { id: matchedOrg.id, name: matchedOrg.name, shortCode: matchedOrg.shortCode },
-              workspace
-            );
-          } catch {}
-        }
-      } else {
-        // Not authorized for this organization; redirect to Choose Organization
-        return <Navigate to="/home" replace />;
-      }
+    // Check if user is authorized for this organization shortcode
+    // 1. First check if it matches the currently active organization
+    if (activeCode === routeCode) {
+      return <>{children}</>;
     }
+
+    // 2. Check user's verified organizations from session/backend
+    const matchedOrg = (organizations || []).find(
+      (o) => (o.shortCode || "").toUpperCase() === routeCode
+    );
+
+    if (matchedOrg) {
+      // User is authorized for this organization; sync user state if needed
+      try {
+        const userRole = user.userType || "Admin";
+        const workspace = userRole === "Provider" ? "Provider" : "Admin";
+        switchOrganization(
+          { id: matchedOrg.id, name: matchedOrg.name, shortCode: matchedOrg.shortCode.toUpperCase() },
+          workspace
+        );
+      } catch {}
+      return <>{children}</>;
+    }
+
+    // 3. Check if user object has this organization
+    if (user.shortCode?.toUpperCase() === routeCode) {
+      return <>{children}</>;
+    }
+
+    // Not authorized for this organization; redirect to Choose Organization
+    return <Navigate to="/home" replace />;
   }
 
   return <>{children}</>;

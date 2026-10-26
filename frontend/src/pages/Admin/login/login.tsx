@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import {
   Coffee,
   Mail,
@@ -15,6 +15,7 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -22,6 +23,9 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Preserve intended destination from ProtectedRoute redirection
+  const fromLocation = (location.state as any)?.from;
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -49,12 +53,22 @@ export default function Login() {
 
         if (res.user.userType === "Provider") {
           const userShortCode = res.user.shortCode ? res.user.shortCode.toUpperCase() : "";
-          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider");
+          if (fromLocation && fromLocation.pathname && fromLocation.pathname !== "/login") {
+            navigate(fromLocation.pathname + (fromLocation.search || ""), { replace: true });
+            return;
+          }
+          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider", { replace: true });
+          return;
+        }
+
+        // Check if there is an intended org-specific target destination
+        if (fromLocation && fromLocation.pathname && fromLocation.pathname !== "/login" && fromLocation.pathname !== "/home") {
+          navigate("/home", { state: { returnTo: fromLocation }, replace: true });
           return;
         }
 
         // Navigate to Choose Organization page
-        navigate("/home");
+        navigate("/home", { replace: true });
         return;
       }
     } catch (apiErr: any) {

@@ -1,8 +1,24 @@
-import { Link } from 'react-router-dom'
+import { Link, Navigate } from 'react-router-dom'
 import { ArrowRight, Coffee, Clock, Sparkles } from 'lucide-react'
 import Background from '../../../components/background'
+import { useAuth } from '../../../components/common/AuthContext'
 
 export default function Home() {
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  // If already authenticated, redirect to their authorized destination
+  if (!isLoading && isAuthenticated && user) {
+    const userRole = user.userType || 'Admin';
+    const short = (user.shortCode || '').toUpperCase();
+    if (userRole === 'Provider') {
+      return <Navigate to={short ? `/${short}/provider` : '/provider'} replace />;
+    }
+    if (short) {
+      return <Navigate to={`/${short}/landing`} replace />;
+    }
+    return <Navigate to="/home" replace />;
+  }
+
   return (
     <Background>
       <main className="flex min-h-screen items-center justify-center px-4 py-8 sm:px-6 lg:px-8">

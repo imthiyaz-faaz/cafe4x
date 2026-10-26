@@ -47,8 +47,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
-    } catch {
-      // Ignore network errors
+    } catch (err) {
+      console.warn("Server-side session invalidation encountered an issue:", err);
     } finally {
       localStorage.removeItem("cafe4x_token");
       localStorage.removeItem("cafe4x_currentUser");
@@ -59,6 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setToken(null);
       setUser(null);
       setOrganizations([]);
+      setIsLoading(false);
     }
   }, []);
 

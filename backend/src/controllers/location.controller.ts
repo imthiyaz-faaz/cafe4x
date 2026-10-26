@@ -96,6 +96,11 @@ export const locationController = {
   // GET /api/locations/:id
   async getLocationById(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found or access denied" }, 403);
+      }
+
       const id = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
@@ -108,9 +113,10 @@ export const locationController = {
             assigned_provider_name as assignedProviderName,
             assigned_provider_email as assignedProviderEmail,
             created_at as createdAt, updated_at as updatedAt
-           FROM locations WHERE id = ? OR display_id = ?`
+           FROM locations 
+           WHERE (id = ? OR display_id = ?) AND organization_id = ?`
         )
-        .bind(id, id)
+        .bind(id, id, org.organizationId)
         .get()) as any;
 
       if (!row) {

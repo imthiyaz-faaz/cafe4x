@@ -1,4 +1,5 @@
 import React from "react";
+import { createPortal } from "react-dom";
 import { X, Check } from "lucide-react";
 
 export interface CreateFormModalProps {
@@ -69,6 +70,15 @@ export default function CreateFormModal({
   isSubmitting = false,
   maxWidth = "lg",
 }: CreateFormModalProps) {
+  React.useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const maxWidthClass =
@@ -80,10 +90,14 @@ export default function CreateFormModal({
       ? "max-w-2xl"
       : "max-w-lg";
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+  const modalContent = (
+    <div
+      onClick={onClose}
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs animate-in fade-in duration-150 cursor-pointer"
+    >
       <div
-        className={`relative w-full ${maxWidthClass} overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 sm:p-7 shadow-2xl`}
+        onClick={(e) => e.stopPropagation()}
+        className={`relative w-full ${maxWidthClass} overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 sm:p-7 shadow-2xl cursor-default`}
       >
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-gray-100 pb-3.5 mb-5">
@@ -128,4 +142,8 @@ export default function CreateFormModal({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined"
+    ? createPortal(modalContent, document.body)
+    : modalContent;
 }

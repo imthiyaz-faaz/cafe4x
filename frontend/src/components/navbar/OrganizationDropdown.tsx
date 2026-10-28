@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
-import { Building2, Check, Loader2, UserCircle, MapPin } from "lucide-react";
+import { Building2, Check, Loader2, UserCircle, MapPin, Plus } from "lucide-react";
 import { organizationApi, type Organization } from "../../services/organizationApi";
 import { locationApi, type LocationItem } from "../../services/locations";
 import { useAuth } from "../common/AuthContext";
+import CreateFormModal, { FormRow } from "../common/CreateFormModal";
 
 interface OrganizationDropdownProps {
   userRole?: "Admin" | "Provider" | string;
@@ -24,6 +25,13 @@ export default function OrganizationDropdown({
   const [locations, setLocations] = useState<LocationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+
+    // Add Organization Modal
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [newOrgName, setNewOrgName] = useState("");
+  const [newOrgShortCode, setNewOrgShortCode] = useState("");
+  const [createLoading, setCreateLoading] = useState(false);
+  const [createError, setCreateError] = useState("");
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -227,6 +235,65 @@ export default function OrganizationDropdown({
     window.location.href = targetPath;
   };
 
+    const handleCreateOrganization = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCreateError("");
+
+    const cleanName = newOrgName.trim();
+    const cleanShortCode = newOrgShortCode.trim().toUpperCase();
+
+    if (!cleanName || !cleanShortCode) {
+      setCreateError("Please provide both organization name and short code.");
+      return;
+    }
+
+    if (!currentUser?.id) {
+      setCreateError("User information is missing. Please login again.");
+      return;
+    }
+
+    setCreateLoading(true);
+
+    try {
+      const created = await organizationApi.createOrganization({
+        name: cleanName,
+        shortCode: cleanShortCode,
+        userId: currentUser.id,
+      });
+
+      setOrganizations((previous) => {
+        const updated = [
+          created,
+          ...previous.filter((org) => org.id !== created.id),
+        ];
+
+        try {
+          localStorage.setItem(
+            "cafe4x_organizations",
+            JSON.stringify(updated)
+          );
+        } catch {
+          // Ignore localStorage errors
+        }
+
+        return updated;
+      });
+
+      setNewOrgName("");
+      setNewOrgShortCode("");
+      setIsCreateModalOpen(false);
+      setIsOpen(false);
+
+      handleSelectOrg(created);
+    } catch (error: any) {
+      setCreateError(
+        error?.message || "Unable to create organization. Please try again."
+      );
+    } finally {
+      setCreateLoading(false);
+    }
+  };
+
   const handleSelectLocation = (loc: LocationItem) => {
     setIsOpen(false);
     if (onCloseMobileMenu) onCloseMobileMenu();
@@ -385,71 +452,138 @@ export default function OrganizationDropdown({
                 </div>
               )
             ) : (
-              /* ADMIN ORGANIZATIONS LIST */
-              organizations.length === 0 ? (
-                <div className="py-6 px-3 text-center">
-                  <p className="text-xs font-medium text-[#8B7B70]">No organizations available.</p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  {organizations.map((org) => {
-                    const orgShort = (org.shortCode || "").toUpperCase();
-                    const isActive = Boolean(
-                      (org.id && org.id === currentUser?.organizationId) ||
-                      (orgShort && orgShort === activeShortCode)
-                    );
+            /* ADMIN ORGANIZATIONS LIST */
+<div className="flex flex-col gap-1">
+  {organizations.length === 0 ? (
+    <div className="py-6 px-3 text-center">
+      <p className="text-xs font-medium text-[#8B7B70]">
+        No organizations available.
+      </p>
+    </div>
+  ) : (
+    organizations.map((org) => {
+      const orgShort = (org.shortCode || "").toUpperCase();
+      const isActive = Boolean(
+        (org.id && org.id === currentUser?.organizationId) ||
+        (orgShort && orgShort === activeShortCode)
+      );
 
-                    const initials = (org.name || orgShort || "O")
-                      .split(" ")
-                      .map((word) => word[0])
-                      .join("")
-                      .slice(0, 2)
-                      .toUpperCase();
+      const initials = (org.name || orgShort || "O")
+        .split(" ")
+        .map((word) => word[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase();
 
-                    return (
-                      <button
-                        key={org.id || orgShort}
-                        type="button"
-                        role="option"
-                        aria-selected={isActive}
-                        onClick={() => handleSelectOrg(org)}
-                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${
-                          isActive
-                            ? "bg-[#FAF6F1] text-[#342219] font-bold border border-[#E9DFD5]"
-                            : "text-[#5D4E44] hover:bg-[#FAF6F1]/80 hover:text-[#342219]"
-                        }`}
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <div
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${
-                              isActive
-                                ? "bg-gradient-to-r from-[#75472D] to-[#9A6747] text-white shadow-xs"
-                                : "bg-[#EAD5C0]/60 text-[#70452D]"
-                            }`}
-                          >
-                            {initials}
-                          </div>
-                          <div className="min-w-0 truncate">
-                            <p className="truncate font-semibold text-[#342219]">{org.name}</p>
-                            <p className="text-[10px] text-[#9A8778]">{orgShort}</p>
-                          </div>
-                        </div>
+      return (
+        <button
+          key={org.id || orgShort}
+          type="button"
+          role="option"
+          aria-selected={isActive}
+          onClick={() => handleSelectOrg(org)}
+          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${
+            isActive
+              ? "bg-[#FAF6F1] text-[#342219] font-bold border border-[#E9DFD5]"
+              : "text-[#5D4E44] hover:bg-[#FAF6F1]/80 hover:text-[#342219]"
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${
+                isActive
+                  ? "bg-gradient-to-r from-[#75472D] to-[#9A6747] text-white shadow-xs"
+                  : "bg-[#EAD5C0]/60 text-[#70452D]"
+              }`}
+            >
+              {initials}
+            </div>
 
-                        {isActive && (
-                          <div className="flex items-center gap-1 shrink-0 text-[#70452D]">
-                            <span className="text-[10px] font-semibold text-[#009FB7]">Active</span>
-                            <Check size={14} className="stroke-[2.5]" />
-                          </div>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )
+            <div className="min-w-0 truncate">
+              <p className="truncate font-semibold text-[#342219]">
+                {org.name}
+              </p>
+              <p className="text-[10px] text-[#9A8778]">
+                {orgShort}
+              </p>
+            </div>
+          </div>
+
+          {isActive && (
+            <div className="flex items-center gap-1 shrink-0 text-[#70452D]">
+              <span className="text-[10px] font-semibold text-[#009FB7]">
+                Active
+              </span>
+              <Check size={14} className="stroke-[2.5]" />
+            </div>
+          )}
+        </button>
+      );
+    })
+  )}
+
+  {/* ADD NEW ORGANIZATION BUTTON */}
+  <button
+    type="button"
+    onClick={() => setIsCreateModalOpen(true)}
+    className="flex w-full items-center gap-2 rounded-xl border border-dashed border-[#D8C4B3] px-3 py-2.5 text-left text-xs font-semibold text-[#70452D] transition-colors hover:bg-[#FAF6F1]"
+  >
+    <Plus size={16} />
+    <span>Add New Organization</span>
+  </button>
+</div>
             )}
           </div>
         </div>
-      )}
+           )}
+
+      {/* CREATE ORGANIZATION MODAL */}
+      <CreateFormModal
+        isOpen={isCreateModalOpen}
+        onClose={() => {
+          setIsCreateModalOpen(false);
+          setCreateError("");
+        }}
+        title="Create New Organization"
+        onSubmit={handleCreateOrganization}
+        submitText="Create Organization"
+        closeText="Cancel"
+        isSubmitting={createLoading}
+        maxWidth="md"
+      >
+        <div className="flex flex-col gap-5">
+          <FormRow label="Organization Name" required>
+            <input
+              type="text"
+              value={newOrgName}
+              onChange={(e) => setNewOrgName(e.target.value)}
+              placeholder="Enter organization name"
+              className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm text-[#342219] placeholder:text-[#A99A8E] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
+              required
+            />
+          </FormRow>
+
+          <FormRow label="Short Code" required>
+            <input
+              type="text"
+              value={newOrgShortCode}
+              onChange={(e) =>
+                setNewOrgShortCode(e.target.value.toUpperCase())
+              }
+              placeholder="Enter short code"
+              maxLength={10}
+              className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm uppercase text-[#342219] placeholder:text-[#A99A8E] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
+              required
+            />
+          </FormRow>
+
+          {createError && (
+            <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-600">
+              {createError}
+            </p>
+          )}
+        </div>
+      </CreateFormModal>
     </div>
   );
 }

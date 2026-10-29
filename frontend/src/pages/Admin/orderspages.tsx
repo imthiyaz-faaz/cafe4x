@@ -35,6 +35,7 @@ import {
   getTimeInTimezone,
   type OrderPeriodConfig,
 } from "../../utils/orderTimeClassification";
+import { organizationApi } from "../../services/organizationApi";
 
 export interface OrderItemDetail {
   itemId?: string;
@@ -90,6 +91,43 @@ export default function OrdersPage() {
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
   const ordersStorageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
+  const [currency, setCurrency] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    organizationApi
+      .getOrganizations()
+      .then((organizations) => {
+        if (!isMounted) return;
+
+        const currentOrganization = organizations.find(
+          (org) => org.shortCode.toUpperCase() === currentShortCode
+        );
+
+        if (currentOrganization?.currency) {
+  setCurrency(currentOrganization.currency);
+} else {
+  setCurrency(null);
+}
+      })
+      .catch((error) => {
+        console.error("Could not fetch organization currency:", error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentShortCode]);
+
+  const formatPrice = (amount: number) => {
+    if (!currency) return "";
+
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+    }).format(amount);
+  };
 
   // Timezone & Period Configuration
   const [orgTimezone, setOrgTimezone] = useState<string>("Asia/Dubai");
@@ -177,7 +215,7 @@ export default function OrdersPage() {
           setItemsByName(byName);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [currentShortCode]);
 
   // 4. Fetch available employees who have orders in this date range
@@ -207,11 +245,11 @@ export default function OrdersPage() {
           const mapped: OrderRecord[] = serverOrders.map((so: ProviderOrder) => {
             const initials = so.employeeName
               ? so.employeeName
-                  .split(" ")
-                  .map((p) => p[0])
-                  .join("")
-                  .slice(0, 2)
-                  .toUpperCase()
+                .split(" ")
+                .map((p) => p[0])
+                .join("")
+                .slice(0, 2)
+                .toUpperCase()
               : "EM";
 
             const itemsMapped = (so.items || []).map((it) => {
@@ -273,12 +311,12 @@ export default function OrdersPage() {
           setOrders(mapped);
           try {
             localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
-          } catch {}
+          } catch { }
         } else {
           setOrders([]);
           try {
             localStorage.removeItem(ordersStorageKey);
-          } catch {}
+          } catch { }
         }
       })
       .catch(() => {
@@ -519,11 +557,10 @@ export default function OrdersPage() {
                     <button
                       type="button"
                       onClick={() => setDateFilterType("today")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${
-                        dateFilterType === "today"
-                          ? "bg-[#754329] text-white shadow-2xs"
-                          : "text-[#704225] hover:bg-[#EFE6DC]"
-                      }`}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "today"
+                        ? "bg-[#754329] text-white shadow-2xs"
+                        : "text-[#704225] hover:bg-[#EFE6DC]"
+                        }`}
                     >
                       <Calendar size={13} />
                       Today
@@ -531,22 +568,20 @@ export default function OrdersPage() {
                     <button
                       type="button"
                       onClick={() => setDateFilterType("yesterday")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${
-                        dateFilterType === "yesterday"
-                          ? "bg-[#754329] text-white shadow-2xs"
-                          : "text-[#704225] hover:bg-[#EFE6DC]"
-                      }`}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "yesterday"
+                        ? "bg-[#754329] text-white shadow-2xs"
+                        : "text-[#704225] hover:bg-[#EFE6DC]"
+                        }`}
                     >
                       Yesterday
                     </button>
                     <button
                       type="button"
                       onClick={() => setDateFilterType("custom")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${
-                        dateFilterType === "custom"
-                          ? "bg-[#754329] text-white shadow-2xs"
-                          : "text-[#704225] hover:bg-[#EFE6DC]"
-                      }`}
+                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "custom"
+                        ? "bg-[#754329] text-white shadow-2xs"
+                        : "text-[#704225] hover:bg-[#EFE6DC]"
+                        }`}
                     >
                       Custom
                     </button>
@@ -578,11 +613,10 @@ export default function OrdersPage() {
                     <button
                       type="button"
                       onClick={() => setEmployeeDropdownOpen(!employeeDropdownOpen)}
-                      className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition shadow-2xs ${
-                        selectedEmployeeKey
-                          ? "border-[#754329] bg-[#FAF4ED] text-[#754329]"
-                          : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
-                      }`}
+                      className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition shadow-2xs ${selectedEmployeeKey
+                        ? "border-[#754329] bg-[#FAF4ED] text-[#754329]"
+                        : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+                        }`}
                     >
                       <Filter size={14} className="text-[#8C5835]" />
                       <span className="max-w-[140px] truncate sm:max-w-[180px]">
@@ -613,11 +647,10 @@ export default function OrdersPage() {
                               setSelectedEmployeeKey(null);
                               setEmployeeDropdownOpen(false);
                             }}
-                            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition ${
-                              !selectedEmployeeKey
-                                ? "bg-[#FAF4ED] text-[#754329]"
-                                : "text-gray-700 hover:bg-gray-50"
-                            }`}
+                            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition ${!selectedEmployeeKey
+                              ? "bg-[#FAF4ED] text-[#754329]"
+                              : "text-gray-700 hover:bg-gray-50"
+                              }`}
                           >
                             All Employees ({availableEmployees.length})
                           </button>
@@ -639,11 +672,10 @@ export default function OrdersPage() {
                                     setSelectedEmployeeKey(empKey);
                                     setEmployeeDropdownOpen(false);
                                   }}
-                                  className={`w-full text-left px-3 py-2 rounded-xl text-xs transition flex items-center justify-between ${
-                                    isSelected
-                                      ? "bg-[#FAF4ED] text-[#754329] font-bold"
-                                      : "text-gray-700 hover:bg-gray-50"
-                                  }`}
+                                  className={`w-full text-left px-3 py-2 rounded-xl text-xs transition flex items-center justify-between ${isSelected
+                                    ? "bg-[#FAF4ED] text-[#754329] font-bold"
+                                    : "text-gray-700 hover:bg-gray-50"
+                                    }`}
                                 >
                                   <div className="truncate pr-2">
                                     <p className="font-bold text-gray-900 truncate">{emp.employeeName}</p>
@@ -778,7 +810,13 @@ export default function OrdersPage() {
                     ) : (
                       <div className="space-y-3">
                         {morningOrders.map((order) => (
-                          <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
+                          <OrderCard
+                            key={order.id}
+                            order={order}
+                            itemsById={itemsById}
+                            itemsByName={itemsByName}
+                            formatPrice={formatPrice}
+                          />
                         ))}
                       </div>
                     )}
@@ -811,8 +849,13 @@ export default function OrdersPage() {
                     ) : (
                       <div className="space-y-3">
                         {eveningOrders.map((order) => (
-                          <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
-                        ))}
+                          <OrderCard
+                            key={order.id}
+                            order={order}
+                            itemsById={itemsById}
+                            itemsByName={itemsByName}
+                            formatPrice={formatPrice}
+                          />))}
                       </div>
                     )}
                   </div>
@@ -838,8 +881,13 @@ export default function OrdersPage() {
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {otherOrders.map((order) => (
-                        <OrderCard key={order.id} order={order} itemsById={itemsById} itemsByName={itemsByName} />
-                      ))}
+                        <OrderCard
+                          key={order.id}
+                          order={order}
+                          itemsById={itemsById}
+                          itemsByName={itemsByName}
+                          formatPrice={formatPrice}
+                        />))}
                     </div>
                   </div>
                 )}
@@ -863,7 +911,7 @@ export default function OrdersPage() {
                     <div className="text-left sm:text-right">
                       <span className="text-xs text-gray-400 font-medium">Total Spend</span>
                       <p className="text-3xl font-black text-[#754329]">
-                        ₹ {selectedEmployee.totalSpend.toFixed(2)}
+                        {formatPrice(selectedEmployee.totalSpend)}
                       </p>
                     </div>
                   </div>
@@ -952,23 +1000,22 @@ export default function OrdersPage() {
 
                               {/* Total Amount */}
                               <td className="px-4 py-3.5 font-bold text-gray-900 text-right">
-                                ₹ {emp.totalSpend.toFixed(2)}
+                                {formatPrice(emp.totalSpend)}
                               </td>
 
                               {/* Latest Status */}
                               <td className="px-4 py-3.5">
                                 <span
-                                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
-                                    emp.latestStatus === "Pending"
-                                      ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                      : emp.latestStatus === "Preparing"
+                                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${emp.latestStatus === "Pending"
+                                    ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                    : emp.latestStatus === "Preparing"
                                       ? "bg-blue-100 text-blue-800 border border-blue-200"
                                       : emp.latestStatus === "Ready"
-                                      ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                                      : emp.latestStatus === "Completed" || emp.latestStatus === "Delivered"
-                                      ? "bg-green-100 text-green-800 border border-green-200"
-                                      : "bg-rose-100 text-rose-800 border border-rose-200"
-                                  }`}
+                                        ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                        : emp.latestStatus === "Completed" || emp.latestStatus === "Delivered"
+                                          ? "bg-green-100 text-green-800 border border-green-200"
+                                          : "bg-rose-100 text-rose-800 border border-rose-200"
+                                    }`}
                                 >
                                   {emp.latestStatus}
                                 </span>
@@ -1081,10 +1128,12 @@ function OrderCard({
   order,
   itemsById,
   itemsByName,
+  formatPrice,
 }: {
   order: OrderRecord;
   itemsById: Record<string, MenuItem>;
   itemsByName: Record<string, MenuItem>;
+  formatPrice: (amount: number) => string;
 }) {
   return (
     <div className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 transition hover:border-[#754329] hover:shadow-md">
@@ -1103,17 +1152,16 @@ function OrderCard({
           </div>
 
           <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-              order.status === "Pending"
-                ? "bg-amber-100 text-amber-800"
-                : order.status === "Preparing"
+            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${order.status === "Pending"
+              ? "bg-amber-100 text-amber-800"
+              : order.status === "Preparing"
                 ? "bg-blue-100 text-blue-800"
                 : order.status === "Ready"
-                ? "bg-emerald-100 text-emerald-800"
-                : order.status === "Completed" || order.status === "Delivered"
-                ? "bg-green-100 text-green-800"
-                : "bg-rose-100 text-rose-800"
-            }`}
+                  ? "bg-emerald-100 text-emerald-800"
+                  : order.status === "Completed" || order.status === "Delivered"
+                    ? "bg-green-100 text-green-800"
+                    : "bg-rose-100 text-rose-800"
+              }`}
           >
             {order.status}
           </span>
@@ -1163,9 +1211,8 @@ function OrderCard({
                       />
                     ) : null}
                     <div
-                      className={`order-neutral-placeholder flex h-full w-full items-center justify-center text-[#8C5835] ${
-                        resolvedImage ? "hidden" : "flex"
-                      }`}
+                      className={`order-neutral-placeholder flex h-full w-full items-center justify-center text-[#8C5835] ${resolvedImage ? "hidden" : "flex"
+                        }`}
                     >
                       <Coffee size={14} />
                     </div>
@@ -1175,7 +1222,7 @@ function OrderCard({
                     <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
                       <span>Qty: {item.qty}</span>
                       <span>&bull;</span>
-                      <span>₹{item.price} each</span>
+                      <span>{formatPrice(item.price)} each</span>
                       {item.preference && (
                         <>
                           <span>&bull;</span>
@@ -1189,7 +1236,7 @@ function OrderCard({
                 </div>
 
                 <span className="font-bold text-gray-900">
-                  ₹ {(item.price * item.qty).toFixed(2)}
+                  {formatPrice(item.price * item.qty)}
                 </span>
               </div>
             );
@@ -1205,18 +1252,18 @@ function OrderCard({
         )}
       </div>
 
-        {/* Order Total & Subtotal Breakdown */}
+      {/* Order Total & Subtotal Breakdown */}
       <div className="mt-3 border-t border-[#F0E6DB] pt-2">
         {(order.discount > 0 || order.adjustmentAmount !== 0) && (
           <div className="mb-1 flex justify-between text-[10px] text-gray-400">
-            <span>Subtotal: ₹{order.subtotal.toFixed(2)}</span>
-            {order.discount > 0 && <span className="text-emerald-600">-₹{order.discount}</span>}
+            <span>Subtotal: {formatPrice(order.subtotal)}</span>
+            {order.discount > 0 && <span className="text-emerald-600">-{formatPrice(order.discount)}</span>}
           </div>
         )}
         <div className="flex items-center justify-between text-xs">
           <span className="font-bold text-gray-600">Order Total</span>
           <span className="text-sm font-black text-[#754329]">
-            ₹ {order.total.toFixed(2)}
+            {formatPrice(order.total)}
           </span>
         </div>
       </div>

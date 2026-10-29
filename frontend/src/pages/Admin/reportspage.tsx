@@ -186,9 +186,6 @@ export default function AdminReportPage() {
 
   useEffect(() => {
     fetchMonthOrders();
-    // Periodically fetch reports to ensure data stays updated automatically
-    const interval = setInterval(fetchMonthOrders, 5000);
-    return () => clearInterval(interval);
   }, [selectedMonth, currentShortCode]);
 
   // 5. Aggregate Orders into Daily Records matching the screenshot table exactly

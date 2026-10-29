@@ -5,6 +5,7 @@ export interface Organization {
   displayId?: string;
   name: string;
   shortCode: string;
+  currency: string;
   ownerUserId?: string;
   createdAt?: string;
 }
@@ -12,6 +13,7 @@ export interface Organization {
 export interface CreateOrganizationPayload {
   name: string;
   shortCode: string;
+  currency: string;
   userId?: string;
 }
 

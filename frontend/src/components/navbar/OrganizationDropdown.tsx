@@ -26,10 +26,11 @@ export default function OrganizationDropdown({
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-    // Add Organization Modal
+  // Add Organization Modal
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgShortCode, setNewOrgShortCode] = useState("");
+  const [newOrgCurrency, setNewOrgCurrency] = useState("INR");
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -125,7 +126,7 @@ export default function OrganizationDropdown({
           return;
         }
       }
-    } catch {}
+    } catch { }
 
     const fallbackOrg = isProvider ? providerActiveOrg : adminActiveOrg;
     if (fallbackOrg?.name || fallbackOrg?.shortCode) {
@@ -134,6 +135,7 @@ export default function OrganizationDropdown({
           id: fallbackOrg.id || "org_1",
           name: fallbackOrg.name || "Current Organization",
           shortCode: (fallbackOrg.shortCode || "ORG").toUpperCase(),
+          currency: "INR",
         },
       ]);
     } else if (currentUser?.organization || currentUser?.shortCode) {
@@ -142,6 +144,7 @@ export default function OrganizationDropdown({
           id: currentUser.organizationId || "org_1",
           name: currentUser.organization || "Current Organization",
           shortCode: (currentUser.shortCode || "ORG").toUpperCase(),
+          currency: "INR",
         },
       ]);
     } else {
@@ -189,6 +192,7 @@ export default function OrganizationDropdown({
         id: org.id,
         name: org.name,
         shortCode: newShort,
+        currency: org.currency || "INR",
       },
       isProvider ? "Provider" : "Admin"
     );
@@ -235,7 +239,7 @@ export default function OrganizationDropdown({
     window.location.href = targetPath;
   };
 
-    const handleCreateOrganization = async (e: React.FormEvent) => {
+  const handleCreateOrganization = async (e: React.FormEvent) => {
     e.preventDefault();
     setCreateError("");
 
@@ -258,6 +262,7 @@ export default function OrganizationDropdown({
       const created = await organizationApi.createOrganization({
         name: cleanName,
         shortCode: cleanShortCode,
+        currency: newOrgCurrency,
         userId: currentUser.id,
       });
 
@@ -281,6 +286,7 @@ export default function OrganizationDropdown({
 
       setNewOrgName("");
       setNewOrgShortCode("");
+      setNewOrgCurrency("INR");
       setIsCreateModalOpen(false);
       setIsOpen(false);
 
@@ -327,9 +333,8 @@ export default function OrganizationDropdown({
         onClick={() => setIsOpen((prev) => !prev)}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
-        className={`flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5 transition text-left cursor-pointer hover:border-[#DEC5B0] hover:bg-[#F5ECE0] ${
-          isOpen ? "ring-2 ring-[#70452D]/20 border-[#DEC5B0]" : ""
-        }`}
+        className={`flex items-center gap-3 rounded-xl border border-[#EFE7DE] bg-[#FAF6F1] px-3.5 py-1.5 transition text-left cursor-pointer hover:border-[#DEC5B0] hover:bg-[#F5ECE0] ${isOpen ? "ring-2 ring-[#70452D]/20 border-[#DEC5B0]" : ""
+          }`}
       >
         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D]">
           <UserCircle size={24} />
@@ -355,9 +360,8 @@ export default function OrganizationDropdown({
         <div
           role="listbox"
           aria-label={isProvider ? "Assigned Locations" : "Switch Organization"}
-          className={`absolute z-50 mt-2 w-72 rounded-2xl border border-[#EEE5DC] bg-white p-2 shadow-xl shadow-[#70452D]/10 backdrop-blur-md transition-all ${
-            isMobile ? "left-0 right-0 max-w-full" : "right-0"
-          }`}
+          className={`absolute z-50 mt-2 w-72 rounded-2xl border border-[#EEE5DC] bg-white p-2 shadow-xl shadow-[#70452D]/10 backdrop-blur-md transition-all ${isMobile ? "left-0 right-0 max-w-full" : "right-0"
+            }`}
         >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-[#F0E6DE] px-3 py-2">
@@ -452,90 +456,88 @@ export default function OrganizationDropdown({
                 </div>
               )
             ) : (
-            /* ADMIN ORGANIZATIONS LIST */
-<div className="flex flex-col gap-1">
-  {organizations.length === 0 ? (
-    <div className="py-6 px-3 text-center">
-      <p className="text-xs font-medium text-[#8B7B70]">
-        No organizations available.
-      </p>
-    </div>
-  ) : (
-    organizations.map((org) => {
-      const orgShort = (org.shortCode || "").toUpperCase();
-      const isActive = Boolean(
-        (org.id && org.id === currentUser?.organizationId) ||
-        (orgShort && orgShort === activeShortCode)
-      );
+              /* ADMIN ORGANIZATIONS LIST */
+              <div className="flex flex-col gap-1">
+                {organizations.length === 0 ? (
+                  <div className="py-6 px-3 text-center">
+                    <p className="text-xs font-medium text-[#8B7B70]">
+                      No organizations available.
+                    </p>
+                  </div>
+                ) : (
+                  organizations.map((org) => {
+                    const orgShort = (org.shortCode || "").toUpperCase();
+                    const isActive = Boolean(
+                      (org.id && org.id === currentUser?.organizationId) ||
+                      (orgShort && orgShort === activeShortCode)
+                    );
 
-      const initials = (org.name || orgShort || "O")
-        .split(" ")
-        .map((word) => word[0])
-        .join("")
-        .slice(0, 2)
-        .toUpperCase();
+                    const initials = (org.name || orgShort || "O")
+                      .split(" ")
+                      .map((word) => word[0])
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase();
 
-      return (
-        <button
-          key={org.id || orgShort}
-          type="button"
-          role="option"
-          aria-selected={isActive}
-          onClick={() => handleSelectOrg(org)}
-          className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${
-            isActive
-              ? "bg-[#FAF6F1] text-[#342219] font-bold border border-[#E9DFD5]"
-              : "text-[#5D4E44] hover:bg-[#FAF6F1]/80 hover:text-[#342219]"
-          }`}
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${
-                isActive
-                  ? "bg-gradient-to-r from-[#75472D] to-[#9A6747] text-white shadow-xs"
-                  : "bg-[#EAD5C0]/60 text-[#70452D]"
-              }`}
-            >
-              {initials}
-            </div>
+                    return (
+                      <button
+                        key={org.id || orgShort}
+                        type="button"
+                        role="option"
+                        aria-selected={isActive}
+                        onClick={() => handleSelectOrg(org)}
+                        className={`flex w-full items-center justify-between rounded-xl px-3 py-2.5 text-left text-xs transition-colors cursor-pointer ${isActive
+                          ? "bg-[#FAF6F1] text-[#342219] font-bold border border-[#E9DFD5]"
+                          : "text-[#5D4E44] hover:bg-[#FAF6F1]/80 hover:text-[#342219]"
+                          }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-bold ${isActive
+                              ? "bg-gradient-to-r from-[#75472D] to-[#9A6747] text-white shadow-xs"
+                              : "bg-[#EAD5C0]/60 text-[#70452D]"
+                              }`}
+                          >
+                            {initials}
+                          </div>
 
-            <div className="min-w-0 truncate">
-              <p className="truncate font-semibold text-[#342219]">
-                {org.name}
-              </p>
-              <p className="text-[10px] text-[#9A8778]">
-                {orgShort}
-              </p>
-            </div>
-          </div>
+                          <div className="min-w-0 truncate">
+                            <p className="truncate font-semibold text-[#342219]">
+                              {org.name}
+                            </p>
+                            <p className="text-[10px] text-[#9A8778]">
+                              {orgShort}
+                            </p>
+                          </div>
+                        </div>
 
-          {isActive && (
-            <div className="flex items-center gap-1 shrink-0 text-[#70452D]">
-              <span className="text-[10px] font-semibold text-[#009FB7]">
-                Active
-              </span>
-              <Check size={14} className="stroke-[2.5]" />
-            </div>
-          )}
-        </button>
-      );
-    })
-  )}
+                        {isActive && (
+                          <div className="flex items-center gap-1 shrink-0 text-[#70452D]">
+                            <span className="text-[10px] font-semibold text-[#009FB7]">
+                              Active
+                            </span>
+                            <Check size={14} className="stroke-[2.5]" />
+                          </div>
+                        )}
+                      </button>
+                    );
+                  })
+                )}
 
-  {/* ADD NEW ORGANIZATION BUTTON */}
-  <button
-    type="button"
-    onClick={() => setIsCreateModalOpen(true)}
-    className="flex w-full items-center gap-2 rounded-xl border border-dashed border-[#D8C4B3] px-3 py-2.5 text-left text-xs font-semibold text-[#70452D] transition-colors hover:bg-[#FAF6F1]"
-  >
-    <Plus size={16} />
-    <span>Add New Organization</span>
-  </button>
-</div>
+                {/* ADD NEW ORGANIZATION BUTTON */}
+                <button
+                  type="button"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="flex w-full items-center gap-2 rounded-xl border border-dashed border-[#D8C4B3] px-3 py-2.5 text-left text-xs font-semibold text-[#70452D] transition-colors hover:bg-[#FAF6F1]"
+                >
+                  <Plus size={16} />
+                  <span>Add New Organization</span>
+                </button>
+              </div>
             )}
           </div>
         </div>
-           )}
+      )}
 
       {/* CREATE ORGANIZATION MODAL */}
       <CreateFormModal
@@ -575,6 +577,21 @@ export default function OrganizationDropdown({
               className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm uppercase text-[#342219] placeholder:text-[#A99A8E] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
               required
             />
+          </FormRow>
+
+          <FormRow label="Currency" required>
+            <select
+              value={newOrgCurrency}
+              onChange={(e) => setNewOrgCurrency(e.target.value)}
+              className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm text-[#342219] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
+              required
+            >
+              <option value="INR">INR - Indian Rupee (₹)</option>
+              <option value="USD">USD - US Dollar ($)</option>
+              <option value="AED">AED - UAE Dirham (د.إ)</option>
+              <option value="GBP">GBP - British Pound (£)</option>
+              <option value="EUR">EUR - Euro (€)</option>
+            </select>
           </FormRow>
 
           {createError && (

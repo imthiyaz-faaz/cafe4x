@@ -12,7 +12,7 @@ interface AuthContextType {
   login: (token: string, user: AuthUser, orgs?: UserOrganizationInfo[]) => void;
   logout: () => Promise<void>;
   switchOrganization: (
-    org: { id: string; name: string; shortCode: string },
+    org: { id: string; name: string; shortCode: string; currency?: string; },
     workspace?: "Admin" | "Provider"
   ) => void;
 }
@@ -83,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           organization: parsedStored?.organization || res.user.organization,
           shortCode: (parsedStored?.shortCode || res.user.shortCode || "").toUpperCase(),
           organizationId: parsedStored?.organizationId || res.user.organizationId,
+          currency: parsedStored?.currency || res.user.currency || "INR",
         };
 
         setUser(mergedUser);
@@ -108,6 +109,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   id: provOrg.id,
                   name: provOrg.name,
                   shortCode: provOrg.shortCode.toUpperCase(),
+                  currency: provOrg.currency || "INR",
                 })
               );
             }
@@ -121,6 +123,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   id: admOrg.id,
                   name: admOrg.name,
                   shortCode: admOrg.shortCode.toUpperCase(),
+                  currency: admOrg.currency || "INR",
                 })
               );
             }
@@ -151,7 +154,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           setToken(currentToken);
           setIsLoading(false);
           return true;
-        } catch {}
+        } catch { }
       }
 
       await logout();
@@ -192,6 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               id: provOrg.id,
               name: provOrg.name,
               shortCode: provOrg.shortCode.toUpperCase(),
+              currency: provOrg.currency || "INR",
             })
           );
         } else {
@@ -202,6 +206,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               id: admOrg.id,
               name: admOrg.name,
               shortCode: admOrg.shortCode.toUpperCase(),
+              currency: admOrg.currency || "INR",
             })
           );
         }
@@ -212,7 +217,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const switchOrganization = useCallback(
     (
-      org: { id: string; name: string; shortCode: string },
+      org: {
+        id: string;
+        name: string;
+        shortCode: string;
+        currency?: string;
+      },
       workspace?: "Admin" | "Provider"
     ) => {
       const cleanShort = org.shortCode.toUpperCase();
@@ -220,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         id: org.id,
         name: org.name,
         shortCode: cleanShort,
+        currency: org.currency || "INR",
       };
 
       if (workspace === "Provider") {
@@ -231,7 +242,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const isProv =
           typeof window !== "undefined" &&
           (window.location.pathname.toLowerCase().includes("/provider") ||
-           window.location.pathname.toLowerCase().includes("/fts/provider"));
+            window.location.pathname.toLowerCase().includes("/fts/provider"));
         if (isProv) {
           localStorage.setItem("cafe4x_provider_activeOrg", JSON.stringify(orgData));
         } else {
@@ -246,6 +257,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           organization: org.name,
           shortCode: cleanShort,
           organizationId: org.id,
+          currency: org.currency || "INR",
         };
         localStorage.setItem("cafe4x_currentUser", JSON.stringify(updated));
         return updated;

@@ -9,6 +9,7 @@ export interface OrganizationModel {
   displayId?: string;
   name: string;
   shortCode: string;
+  currency: string;
   ownerUserId?: string;
   createdAt: string;
 }
@@ -30,7 +31,7 @@ export const organizationController = {
 
       const rows = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, o.created_at as createdAt
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency as currency, o.owner_user_id as ownerUserId, o.created_at as createdAt
            FROM organizations o
            JOIN user_organizations uo ON o.id = uo.organization_id
            WHERE uo.user_id = ?
@@ -56,10 +57,19 @@ export const organizationController = {
       const body = await c.req.json();
       const name = (body.name || "").trim();
       const shortCode = (body.shortCode || "").trim().toUpperCase();
+      const currency = (body.currency || "INR").trim().toUpperCase();
       const userId = body.userId ? String(body.userId) : authUser.id;
+      const allowedCurrencies = ["INR", "USD", "AED", "GBP", "EUR"];
 
       if (!name || !shortCode) {
         return c.json({ success: false, message: "Organization name and shortCode are required" }, 400);
+      }
+
+      if (!allowedCurrencies.includes(currency)) {
+        return c.json(
+          { success: false, message: "Invalid currency" },
+          400
+        );
       }
 
       const db = getUniversalDb(c.env?.DB);
@@ -70,10 +80,10 @@ export const organizationController = {
       try {
         await db
           .prepare(
-            `INSERT INTO organizations (id, display_id, name, short_code, owner_user_id, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)`
+            `INSERT INTO organizations (id, display_id, name, short_code, currency, owner_user_id, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`
           )
-          .run(orgId, displayId, name, shortCode, userId || null, now);
+          .run(orgId, displayId, name, shortCode, currency, userId || null, now);
 
         if (userId) {
           await db
@@ -85,9 +95,24 @@ export const organizationController = {
         }
       } catch (dbErr: any) {
         if (dbErr.message && dbErr.message.includes("UNIQUE")) {
-          return c.json({ success: false, message: "Organization with this shortCode already exists" }, 409);
+          return c.json(
+            {
+              success: false,
+              message: "Organization with this shortCode already exists",
+            },
+            409
+          );
         }
-        console.warn("DB insert error:", dbErr);
+
+        console.error("DB insert error:", dbErr);
+
+        return c.json(
+          {
+            success: false,
+            message: "Failed to create organization",
+          },
+          500
+        );
       }
 
       const newOrg: OrganizationModel = {
@@ -95,6 +120,7 @@ export const organizationController = {
         displayId,
         name,
         shortCode,
+        currency,
         ownerUserId: userId || undefined,
         createdAt: now,
       };

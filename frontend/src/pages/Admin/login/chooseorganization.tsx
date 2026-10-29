@@ -17,6 +17,7 @@ export default function ChooseOrganizationPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [orgName, setOrgName] = useState("");
   const [shortCode, setShortCode] = useState("");
+  const [currency, setCurrency] = useState("INR");
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState("");
 
@@ -57,6 +58,7 @@ export default function ChooseOrganizationPage() {
           id: user.organizationId || "org_1",
           name: user.organization,
           shortCode: user.shortCode || "ORG",
+          currency: user.currency || "INR",
         },
       ]);
     } else {
@@ -90,6 +92,7 @@ export default function ChooseOrganizationPage() {
       const created = await organizationApi.createOrganization({
         name: orgName.trim(),
         shortCode: cleanShort,
+        currency,
         userId: currentUser?.id,
       });
 
@@ -112,6 +115,7 @@ export default function ChooseOrganizationPage() {
         id: `org_${cleanShort.toLowerCase()}_${Date.now()}`,
         name: orgName.trim(),
         shortCode: cleanShort,
+        currency,
         ownerUserId: currentUser?.id,
       };
       const updatedOrgs = [newOrg, ...organizations];
@@ -266,6 +270,22 @@ export default function ChooseOrganizationPage() {
             }
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm uppercase outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
           />
+        </FormRow>
+
+        <FormRow label="currency" required>
+          <select
+            id="org-currency"
+            required
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+          >
+            <option value="INR">INR - Indian Rupee (₹)</option>
+            <option value="USD">USD - US Dollar ($)</option>
+            <option value="AED">AED - UAE Dirham (د.إ)</option>
+            <option value="GBP">GBP - British Pound (£)</option>
+            <option value="EUR">EUR - Euro (€)</option>
+          </select>
         </FormRow>
       </CreateFormModal>
 

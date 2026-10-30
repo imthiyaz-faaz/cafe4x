@@ -17,6 +17,7 @@ import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import { itemsApi, type MenuItem } from "../../services/itemsApi";
 import CreateFormModal, { FormRow } from "../../components/common/CreateFormModal";
+import { organizationApi } from "../../services/organizationApi";
 
 export interface PreferenceKeyOption {
   title: string; // Key, e.g. "Sugar"
@@ -33,6 +34,42 @@ export default function Itemspage() {
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
   const storageKey = currentShortCode ? `cafe4x_items_${currentShortCode}` : "cafe4x_items";
+const [currency, setCurrency] = useState<string | null>(null);
+useEffect(() => {
+  let isMounted = true;
+
+  organizationApi
+    .getOrganizations()
+    .then((organizations) => {
+      if (!isMounted) return;
+
+      const currentOrganization = organizations.find(
+        (org) =>
+          org.shortCode.toUpperCase() === currentShortCode
+      );
+
+      if (currentOrganization?.currency) {
+        setCurrency(currentOrganization.currency);
+      }
+    })
+    .catch((err) => {
+      console.error("Could not fetch organization currency:", err);
+    });
+
+  return () => {
+    isMounted = false;
+  };
+}, [currentShortCode]);
+
+  // Format item price based on organization currency
+const formatPrice = (amount: number) => {
+  if (!currency) return "";
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+  }).format(amount);
+};
 
   const [items, setItems] = useState<MenuItem[]>(() => {
     try {
@@ -457,7 +494,7 @@ export default function Itemspage() {
                         <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#F5EFE8]">
                           <div className="flex items-baseline">
                             <span className="text-base font-extrabold text-[#2A1C14]">
-                              ₹{item.amount}
+                              {formatPrice(item.amount)}
                             </span>
                           </div>
                           <span className="text-[11px] font-medium text-stone-500">

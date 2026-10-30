@@ -29,6 +29,7 @@ import {
   getTimeInTimezone,
   type OrderPeriodConfig,
 } from "../../utils/orderTimeClassification";
+import { organizationApi } from "../../services/organizations";
 
 // Order item detail with preference & seat
 export interface DailyOrderItemDetail {
@@ -68,6 +69,43 @@ export interface DayReportRecord {
 export default function AdminReportPage() {
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
+  const [currency, setCurrency] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    organizationApi
+      .getOrganizations()
+      .then((organizations) => {
+        if (!isMounted) return;
+
+        const currentOrganization = organizations.find(
+          (org) => org.shortCode.toUpperCase() === currentShortCode
+        );
+
+        if (currentOrganization?.currency) {
+          setCurrency(currentOrganization.currency);
+        } else {
+          setCurrency(null);
+        }
+      })
+      .catch((error) => {
+        console.error("Could not fetch organization currency:", error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentShortCode]);
+
+  const formatPrice = (amount: number) => {
+    if (!currency) return "";
+
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+    }).format(amount);
+  };
 
   // Timezone & working period config
   const [orgTimezone, setOrgTimezone] = useState<string>("Asia/Dubai");
@@ -123,7 +161,7 @@ export default function AdminReportPage() {
           });
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [currentShortCode]);
 
   // 2. Fetch Menu Items to get images
@@ -141,7 +179,7 @@ export default function AdminReportPage() {
           setItemsByName(map);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [currentShortCode]);
 
   // 3. Compute Start Date & End Date for selected month
@@ -276,7 +314,7 @@ export default function AdminReportPage() {
       } else if ((o as any).itemsJson) {
         try {
           itemsList = JSON.parse((o as any).itemsJson);
-        } catch {}
+        } catch { }
       }
 
       itemsList.forEach((it) => {
@@ -435,9 +473,8 @@ export default function AdminReportPage() {
             <div className="flex flex-col gap-6 lg:flex-row items-start">
               {/* LEFT COLUMN: Daily Reports Table */}
               <div
-                className={`transition-all duration-300 w-full ${
-                  selectedDayRecord ? "lg:w-[63%] xl:w-[65%]" : "lg:w-full"
-                }`}
+                className={`transition-all duration-300 w-full ${selectedDayRecord ? "lg:w-[63%] xl:w-[65%]" : "lg:w-full"
+                  }`}
               >
                 {/* Header Title + Month Selector */}
                 <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -484,8 +521,7 @@ export default function AdminReportPage() {
                       </div>
                     </div>
                     <div className="text-2xl font-black text-[#1E140E]">
-                      ₹ {monthlySpendingSummary.totalSpending.toLocaleString("en-IN")}
-                    </div>
+                      {formatPrice(monthlySpendingSummary.totalSpending)}                    </div>
                     <p className="mt-1 text-[11px] text-[#8A7667]">
                       Office cafe expense across {monthlySpendingSummary.totalDaysActive} active days
                     </p>
@@ -506,15 +542,13 @@ export default function AdminReportPage() {
                       <div>
                         <span className="text-[10px] font-semibold text-[#8A7667] block">Morning</span>
                         <span className="text-sm font-extrabold text-[#1E140E]">
-                          ₹ {monthlySpendingSummary.morningSpending.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(monthlySpendingSummary.morningSpending)}                           </span>
                       </div>
                       <div className="h-7 w-[1px] bg-[#EEE5DC]"></div>
                       <div>
                         <span className="text-[10px] font-semibold text-[#8A7667] block">Evening</span>
                         <span className="text-sm font-extrabold text-[#1E140E]">
-                          ₹ {monthlySpendingSummary.eveningSpending.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(monthlySpendingSummary.eveningSpending)}                        </span>
                       </div>
                     </div>
                   </div>
@@ -602,11 +636,10 @@ export default function AdminReportPage() {
                               <tr
                                 key={row.dateStr}
                                 onClick={() => setSelectedDayRecord(row)}
-                                className={`group cursor-pointer transition-colors duration-150 ${
-                                  isSelected
-                                    ? "bg-[#FBF1E6]"
-                                    : "hover:bg-[#FAF8F5]"
-                                }`}
+                                className={`group cursor-pointer transition-colors duration-150 ${isSelected
+                                  ? "bg-[#FBF1E6]"
+                                  : "hover:bg-[#FAF8F5]"
+                                  }`}
                               >
                                 <td className="py-4 pl-6 pr-4">
                                   <div className="font-bold text-[#231812] text-sm">
@@ -616,32 +649,26 @@ export default function AdminReportPage() {
                                 </td>
 
                                 <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  ₹ {row.morningSubtotal.toLocaleString("en-IN")}
-                                </td>
+                                  {formatPrice(row.morningSubtotal)}                                </td>
 
                                 <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  ₹ {row.eveningSubtotal.toLocaleString("en-IN")}
-                                </td>
+                                  {formatPrice(row.eveningSubtotal)}                                </td>
 
                                 <td className="px-4 py-4 text-[#342219]">
-                                  ₹ {row.adjustment.toLocaleString("en-IN")}
-                                </td>
+                                  {formatPrice(row.adjustment)}                                </td>
 
                                 <td className="px-4 py-4 text-[#342219]">
-                                  ₹ {row.discount.toLocaleString("en-IN")}
-                                </td>
+                                  {formatPrice(row.discount)}                                </td>
 
                                 <td className="px-4 py-4 font-bold text-[#1E140E]">
-                                  ₹ {row.netAmount.toLocaleString("en-IN")}
-                                </td>
+                                  {formatPrice(row.netAmount)}                                </td>
 
                                 <td className="py-4 pl-2 pr-6 text-right">
                                   <div
-                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border transition ${
-                                      isSelected
-                                        ? "border-[#DEC5B0] bg-white text-[#75472D]"
-                                        : "border-[#E8DED4] bg-white text-[#9A8778] group-hover:border-[#DEC5B0] group-hover:text-[#75472D]"
-                                    }`}
+                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border transition ${isSelected
+                                      ? "border-[#DEC5B0] bg-white text-[#75472D]"
+                                      : "border-[#E8DED4] bg-white text-[#9A8778] group-hover:border-[#DEC5B0] group-hover:text-[#75472D]"
+                                      }`}
                                   >
                                     <ChevronRight size={16} />
                                   </div>
@@ -679,11 +706,10 @@ export default function AdminReportPage() {
                             key={pageNum}
                             type="button"
                             onClick={() => setCurrentPage(pageNum)}
-                            className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${
-                              isActive
-                                ? "bg-[#75472D] text-white shadow-sm"
-                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
-                            }`}
+                            className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${isActive
+                              ? "bg-[#75472D] text-white shadow-sm"
+                              : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
+                              }`}
                           >
                             {pageNum}
                           </button>
@@ -733,8 +759,7 @@ export default function AdminReportPage() {
                       <Sun size={16} className="mx-auto mb-1 text-amber-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Morning</span>
                       <span className="block text-xs font-black text-[#1E140E]">
-                        ₹ {selectedDayRecord.morningSubtotal.toLocaleString("en-IN")}
-                      </span>
+                        {formatPrice(selectedDayRecord.morningSubtotal)}                      </span>
                       <span className="block text-[9px] text-[#A08C7D]">
                         ({selectedDayRecord.morningOrdersCount} orders)
                       </span>
@@ -745,8 +770,7 @@ export default function AdminReportPage() {
                       <Moon size={16} className="mx-auto mb-1 text-orange-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Evening</span>
                       <span className="block text-xs font-black text-[#1E140E]">
-                        ₹ {selectedDayRecord.eveningSubtotal.toLocaleString("en-IN")}
-                      </span>
+                        {formatPrice(selectedDayRecord.eveningSubtotal)}                      </span>
                       <span className="block text-[9px] text-[#A08C7D]">
                         ({selectedDayRecord.eveningOrdersCount} orders)
                       </span>
@@ -757,8 +781,7 @@ export default function AdminReportPage() {
                       <Receipt size={16} className="mx-auto mb-1 text-red-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Adjustment</span>
                       <span className="mt-1 block text-xs font-black text-[#1E140E]">
-                        ₹ {selectedDayRecord.adjustment.toLocaleString("en-IN")}
-                      </span>
+                        {formatPrice(selectedDayRecord.adjustment)}                      </span>
                     </div>
 
                     {/* Discount */}
@@ -766,8 +789,7 @@ export default function AdminReportPage() {
                       <Percent size={16} className="mx-auto mb-1 text-rose-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Discount</span>
                       <span className="mt-1 block text-xs font-black text-[#1E140E]">
-                        ₹ {selectedDayRecord.discount.toLocaleString("en-IN")}
-                      </span>
+                        {formatPrice(selectedDayRecord.discount)}                      </span>
                     </div>
                   </div>
 
@@ -775,8 +797,7 @@ export default function AdminReportPage() {
                   <div className="mb-5 flex items-center justify-between rounded-2xl bg-[#FBF1E6] px-5 py-3.5 border border-[#DEC5B0]/50">
                     <span className="text-xs font-black text-[#6F4228]">Day Total (Net Amount)</span>
                     <span className="text-xl font-black text-[#1E140E]">
-                      ₹ {selectedDayRecord.netAmount.toLocaleString("en-IN")}
-                    </span>
+                      {formatPrice(selectedDayRecord.netAmount)}                    </span>
                   </div>
 
                   {/* SESSIONS BREAKDOWN */}
@@ -793,8 +814,7 @@ export default function AdminReportPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-xs font-bold text-[#75472D]">
-                            Subtotal: ₹ {selectedDayRecord.morningSubtotal.toLocaleString("en-IN")}
-                          </span>
+                            Subtotal: {formatPrice(selectedDayRecord.morningSubtotal)}                          </span>
                           <ChevronUp size={15} className="text-[#8A7667]" />
                         </div>
                       </div>
@@ -850,8 +870,7 @@ export default function AdminReportPage() {
                                     </span>
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs font-black text-[#1E140E]">
-                                        ₹ {item.totalAmount.toLocaleString("en-IN")}
-                                      </span>
+                                        {formatPrice(item.totalAmount)}                                      </span>
                                       {isExpanded ? (
                                         <ChevronUp size={15} className="text-[#8A7667]" />
                                       ) : (
@@ -884,8 +903,7 @@ export default function AdminReportPage() {
                                             <td className="py-1.5">{ord.qty}</td>
                                             <td className="py-1.5 text-[#6B574B]">{ord.preferences}</td>
                                             <td className="py-1.5 pr-1 text-right font-bold text-[#1E140E]">
-                                              ₹ {ord.amount.toLocaleString("en-IN")}
-                                            </td>
+                                              {formatPrice(ord.amount)}                                            </td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -911,8 +929,7 @@ export default function AdminReportPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-xs font-bold text-[#75472D]">
-                            Subtotal: ₹ {selectedDayRecord.eveningSubtotal.toLocaleString("en-IN")}
-                          </span>
+                            Subtotal: {formatPrice(selectedDayRecord.eveningSubtotal)}                          </span>
                           <ChevronUp size={15} className="text-[#8A7667]" />
                         </div>
                       </div>
@@ -967,8 +984,7 @@ export default function AdminReportPage() {
                                     </span>
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs font-black text-[#1E140E]">
-                                        ₹ {item.totalAmount.toLocaleString("en-IN")}
-                                      </span>
+                                        {formatPrice(item.totalAmount)}                                      </span>
                                       {isExpanded ? (
                                         <ChevronUp size={15} className="text-[#8A7667]" />
                                       ) : (
@@ -1000,8 +1016,7 @@ export default function AdminReportPage() {
                                             <td className="py-1.5">{ord.qty}</td>
                                             <td className="py-1.5 text-[#6B574B]">{ord.preferences}</td>
                                             <td className="py-1.5 pr-1 text-right font-bold text-[#1E140E]">
-                                              ₹ {ord.amount.toLocaleString("en-IN")}
-                                            </td>
+                                              {formatPrice(ord.amount)}                                            </td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -1023,26 +1038,22 @@ export default function AdminReportPage() {
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Day Total</span>
                         <span className="block text-xs font-black text-[#1E140E]">
-                          ₹ {selectedDayRecord.dayTotal.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(selectedDayRecord.dayTotal)}                        </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Total Adjustment</span>
                         <span className="block text-xs font-bold text-[#1E140E]">
-                          ₹ {selectedDayRecord.adjustment.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(selectedDayRecord.adjustment)}                        </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Total Discount</span>
                         <span className="block text-xs font-bold text-[#1E140E]">
-                          ₹ {selectedDayRecord.discount.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(selectedDayRecord.discount)}                        </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Net Amount</span>
                         <span className="block text-xs font-black text-[#75472D]">
-                          ₹ {selectedDayRecord.netAmount.toLocaleString("en-IN")}
-                        </span>
+                          {formatPrice(selectedDayRecord.netAmount)}                        </span>
                       </div>
                     </div>
                   </div>

@@ -1,3 +1,4 @@
+import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import {
@@ -1083,7 +1084,7 @@ export default function ProviderPage() {
                     if (categorySearch.trim()) {
                       const q = categorySearch.toLowerCase();
                       const matchName = order.employeeName.toLowerCase().includes(q);
-                      const matchId = order.id.toLowerCase().includes(q);
+                      const matchId = order.id.toLowerCase().includes(q) || formatProviderOrderId(order).toLowerCase().includes(q);
                       const matchSeat = order.seat.toLowerCase().includes(q);
                       const matchItem = order.items.some((i) => i.name.toLowerCase().includes(q));
                       return matchName || matchId || matchSeat || matchItem;
@@ -1188,7 +1189,7 @@ export default function ProviderPage() {
                                     }}
                                     className="mt-0.5 text-xs font-mono font-semibold text-blue-600 hover:underline cursor-pointer"
                                   >
-                                    {order.id.replace("#ORD-", "0000")}
+                                    {formatProviderOrderId(order)}
                                   </span>
 
                                   {/* Date & Time + New Status Badge */}
@@ -1303,7 +1304,7 @@ export default function ProviderPage() {
                                 <div>
                                   <div className="flex items-center gap-2">
                                     <h3 className="text-lg font-bold text-[#342219]">
-                                      Order {activeOrder.id}
+                                      Order #{formatProviderOrderId(activeOrder)}
                                     </h3>
                                     <span
                                       className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${activeOrder.status === "Pending"
@@ -1758,7 +1759,7 @@ export default function ProviderPage() {
                                 <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
                                   <div className="flex items-center gap-2">
                                     <span className="font-mono text-sm font-bold text-[#70452D]">
-                                      {order.id}
+                                      {formatProviderOrderId(order)}
                                     </span>
                                     <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
                                       {order.locationName} &bull; Seat {order.seat}
@@ -2568,7 +2569,7 @@ export default function ProviderPage() {
                                                 Seat: {sub.order.employeeName ? sub.order.employeeName.split("@")[0] : `Seat ${sub.order.seat}`}
                                               </span>
                                               <span className="font-mono text-[11px] text-blue-600 font-bold">
-                                                {sub.order.id}
+                                                {formatProviderOrderId(sub.order)}
                                               </span>
                                               <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-800">
                                                 {sub.preferenceText}
@@ -2646,7 +2647,7 @@ export default function ProviderPage() {
                 <div className="flex items-center gap-2">
                   <Edit3 size={18} />
                   <h3 className="text-base font-bold text-white">
-                    Update Order #{editingOrder.id}
+                    Update Order #{formatProviderOrderId(editingOrder)}
                   </h3>
                 </div>
                 <button
@@ -2800,7 +2801,7 @@ export default function ProviderPage() {
                 <AlertCircle size={24} />
               </div>
               <h3 className="text-base font-bold text-stone-900">
-                Cancel Order #{cancelConfirmOrder.id}?
+                Cancel Order #{formatProviderOrderId(cancelConfirmOrder)}?
               </h3>
               <p className="mt-2 text-xs text-stone-600">
                 Are you sure you want to cancel the order for{" "}

@@ -29,7 +29,8 @@ export const itemsApi = {
   async getItems(
     paramsOrShortCode?: GetItemsParams | string,
     organizationId?: string,
-    type?: string
+    type?: string,
+    options?: { signal?: AbortSignal }
   ): Promise<MenuItem[]> {
     let params: Record<string, any> = {};
 
@@ -42,7 +43,7 @@ export const itemsApi = {
       if (params.type === "All") delete params.type;
     }
 
-    const res = await api.get<{ success: boolean; items: MenuItem[] }>("/api/items", params);
+    const res = await api.get<{ success: boolean; items: MenuItem[] }>("/api/items", params, { signal: options?.signal });
     return res.items || [];
   },
 

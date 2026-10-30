@@ -1,3 +1,4 @@
+import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -571,7 +572,7 @@ export default function ProviderPendingOrdersPage() {
                             <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-3">
                               <div className="flex items-center gap-2">
                                 <span className="font-mono text-sm font-bold text-[#70452D]">
-                                  {order.displayId || order.id}
+                                  {formatProviderOrderId(order)}
                                 </span>
                                 <span
                                   className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-bold ${
@@ -1092,7 +1093,7 @@ export default function ProviderPendingOrdersPage() {
                                                 : `Seat ${sub.order.seat}`}
                                             </span>
                                             <span className="font-mono text-[11px] text-blue-600 font-bold">
-                                              {sub.order.displayId || sub.order.id}
+                                              {formatProviderOrderId(sub.order)}
                                             </span>
                                             <span className="rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-800">
                                               {sub.preferenceText}
@@ -1196,7 +1197,7 @@ export default function ProviderPendingOrdersPage() {
             <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
               <div className="flex items-center justify-between border-b border-gray-200 pb-3">
                 <h3 className="text-base font-bold text-gray-900">
-                  Edit Order #{editingOrder.displayId || editingOrder.id}
+                  Edit Order #{formatProviderOrderId(editingOrder)}
                 </h3>
                 <button
                   type="button"
@@ -1305,7 +1306,7 @@ export default function ProviderPendingOrdersPage() {
               </div>
               <h3 className="text-base font-bold text-stone-900">Cancel this order?</h3>
               <p className="mt-2 text-xs text-stone-600">
-                Are you sure you want to cancel order #{cancelConfirmOrder.displayId || cancelConfirmOrder.id}? This will remove it from the active queue.
+                Are you sure you want to cancel order #{formatProviderOrderId(cancelConfirmOrder)}? This will remove it from the active queue.
               </p>
               <div className="mt-5 flex items-center justify-center gap-3">
                 <button

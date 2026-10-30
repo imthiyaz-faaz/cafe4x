@@ -11,6 +11,7 @@ import {
   GripVertical,
   Coffee,
   Info,
+  RotateCw,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
@@ -85,6 +86,7 @@ export default function WorkingHoursPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [currentTime, setCurrentTime] = useState<Date>(new Date());
 
@@ -98,8 +100,11 @@ export default function WorkingHoursPage() {
 
   // Load configured working hours on mount
   useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
+
     workingHoursService
-      .getWorkingHours()
+      .getWorkingHours({ signal: controller.signal })
       .then((res) => {
         if (res && res.workingHours) {
           const wh = res.workingHours;
@@ -115,8 +120,19 @@ export default function WorkingHoursPage() {
         }
       })
       .catch((err) => {
-        console.warn("Could not load working hours:", err);
+        if (err.name !== "AbortError") {
+          console.warn("Could not load working hours:", err);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIsLoading(false);
+        }
       });
+
+    return () => {
+      controller.abort();
+    };
   }, []);
 
   // Break session modifications
@@ -345,6 +361,13 @@ export default function WorkingHoursPage() {
                 </div>
 
                 {/* Form Body */}
+                {isLoading ? (
+                  <div className="flex flex-col items-center justify-center py-24 text-center">
+                    <RotateCw size={28} className="animate-spin text-[#8E6548] mb-3" />
+                    <p className="text-sm font-semibold text-gray-700">Loading working hours...</p>
+                    <p className="text-xs text-gray-400 mt-1">Fetching cafe schedules and break sessions</p>
+                  </div>
+                ) : (
                 <form onSubmit={handleSave} className="p-6 sm:p-7 space-y-7">
                   
                   {/* Success Alert */}
@@ -619,6 +642,7 @@ export default function WorkingHoursPage() {
                     </div>
                   </div>
                 </form>
+                )}
               </div>
 
               {/* Bottom Card: Visual Cafe Ordering Timeline (matching screenshot) */}

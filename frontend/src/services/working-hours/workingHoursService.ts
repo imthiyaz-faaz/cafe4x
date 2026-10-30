@@ -40,7 +40,7 @@ export const DEFAULT_BREAK_SESSIONS: BreakSession[] = [
 ];
 
 export const workingHoursApi = {
-  async getWorkingHours(): Promise<{
+  async getWorkingHours(options?: { signal?: AbortSignal }): Promise<{
     workingHours: WorkingHoursModel;
     windowStatus?: OrderingWindowStatus;
   }> {
@@ -48,7 +48,7 @@ export const workingHoursApi = {
       success: boolean;
       workingHours: WorkingHoursModel;
       windowStatus?: OrderingWindowStatus;
-    }>("/api/working-hours");
+    }>("/api/working-hours", undefined, { signal: options?.signal });
 
     // Guarantee complete working hours with default breaks if missing
     const defaultWH: WorkingHoursModel = {

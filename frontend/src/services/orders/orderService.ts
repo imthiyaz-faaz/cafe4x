@@ -55,13 +55,13 @@ export interface EmployeeOrderSummary {
 }
 
 export const orderApi = {
-  async getOrders(params?: GetOrdersParams): Promise<ProviderOrder[]> {
-    const res = await api.get<{ success: boolean; orders: ProviderOrder[] }>("/api/orders", params);
+  async getOrders(params?: GetOrdersParams, options?: { signal?: AbortSignal }): Promise<ProviderOrder[]> {
+    const res = await api.get<{ success: boolean; orders: ProviderOrder[] }>("/api/orders", params, { signal: options?.signal });
     return res.orders || [];
   },
 
-  async getOrderEmployees(params?: { startDate?: string; endDate?: string }): Promise<EmployeeOrderSummary[]> {
-    const res = await api.get<{ success: boolean; employees: EmployeeOrderSummary[] }>("/api/orders/employees", params);
+  async getOrderEmployees(params?: { startDate?: string; endDate?: string }, options?: { signal?: AbortSignal }): Promise<EmployeeOrderSummary[]> {
+    const res = await api.get<{ success: boolean; employees: EmployeeOrderSummary[] }>("/api/orders/employees", params, { signal: options?.signal });
     return res.employees || [];
   },
 

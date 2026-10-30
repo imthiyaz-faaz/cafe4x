@@ -385,9 +385,9 @@ export const orderController = {
       const now = new Date();
       const db = getUniversalDb(c.env?.DB);
 
-      // Generate readable display ID e.g. ORD-FTS-2026-000001
+      // Generate sequential order ID e.g. ORD-0001 (authoritative from D1 sequence)
       const { displayId } = await getNextId(db, "ORD", org.shortCode);
-      const orderId = body.id || displayId;
+      const orderId = displayId;
 
       let employeeId: string | null = null;
       let employeeName = body.employeeName || "Guest";

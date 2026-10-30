@@ -544,7 +544,7 @@ export default function UserOrderPage() {
 
     // 2. Sync to backend API
     try {
-      await orderApi.createOrder({
+      const created = await orderApi.createOrder({
         id: orderData.id,
         seat: orderData.seat,
         locationName: orderData.locationName,
@@ -557,6 +557,10 @@ export default function UserOrderPage() {
         time: orderData.time,
         createdAt: orderData.createdAt,
       });
+      if (created?.id) {
+        orderData.id = created.id;
+        if (created.displayId) (orderData as any).displayId = created.displayId;
+      }
     } catch (err: any) {
       console.warn("Could not sync order to backend:", err);
       if (err?.response?.data?.message) {

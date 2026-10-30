@@ -1,3 +1,4 @@
+import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -306,7 +307,7 @@ export default function ProviderReportPage() {
         targetMap[itemKey].quantitySold += itQty;
         targetMap[itemKey].totalAmount += itTotal;
         targetMap[itemKey].orders.push({
-          orderId: o.displayId || o.id,
+          orderId: formatProviderOrderId(o),
           seatId: o.seat || o.locationName || "-",
           orderTime: displayTime || o.time || "-",
           qty: itQty,

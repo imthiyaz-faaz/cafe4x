@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   Search,
@@ -21,6 +21,7 @@ import {
   Filter,
   Layers,
   ChevronDown,
+  RotateCw,
 } from "lucide-react";
 
 import Background from "../../components/background";
@@ -102,6 +103,7 @@ export default function OrdersPage() {
 
   // Orders State
   const [orders, setOrders] = useState<OrderRecord[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
 
   // Selected Employee Key for Inspection/Filter
   const [selectedEmployeeKey, setSelectedEmployeeKey] = useState<string | null>(null);
@@ -116,6 +118,10 @@ export default function OrdersPage() {
   // Maintain item lookup maps from menu items database
   const [itemsById, setItemsById] = useState<Record<string, MenuItem>>({});
   const [itemsByName, setItemsByName] = useState<Record<string, MenuItem>>({});
+  const itemsByIdRef = useRef<Record<string, MenuItem>>({});
+  const itemsByNameRef = useRef<Record<string, MenuItem>>({});
+  itemsByIdRef.current = itemsById;
+  itemsByNameRef.current = itemsByName;
 
   // Available employees with orders in the current date range
   const [availableEmployees, setAvailableEmployees] = useState<EmployeeOrderSummary[]>([]);
@@ -182,115 +188,148 @@ export default function OrdersPage() {
 
   // 4. Fetch available employees who have orders in this date range
   useEffect(() => {
+    const controller = new AbortController();
     orderApi
-      .getOrderEmployees({
-        startDate: activeDateRange.startDate,
-        endDate: activeDateRange.endDate,
-      })
+      .getOrderEmployees(
+        {
+          startDate: activeDateRange.startDate,
+          endDate: activeDateRange.endDate,
+        },
+        { signal: controller.signal }
+      )
       .then((list) => {
         setAvailableEmployees(list || []);
       })
-      .catch(() => {
-        setAvailableEmployees([]);
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          setAvailableEmployees([]);
+        }
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [activeDateRange, currentShortCode]);
 
   // 5. Fetch real employee orders from backend with date & employee parameters
-  const fetchOrders = () => {
-    orderApi
-      .getOrders({
-        startDate: activeDateRange.startDate,
-        endDate: activeDateRange.endDate,
-      })
-      .then((serverOrders) => {
-        if (Array.isArray(serverOrders) && serverOrders.length > 0) {
-          const mapped: OrderRecord[] = serverOrders.map((so: ProviderOrder) => {
-            const initials = so.employeeName
-              ? so.employeeName
-                  .split(" ")
-                  .map((p) => p[0])
-                  .join("")
-                  .slice(0, 2)
-                  .toUpperCase()
-              : "EM";
+  useEffect(() => {
+    const controller = new AbortController();
+    setIsLoading(true);
 
-            const itemsMapped = (so.items || []).map((it) => {
-              const fullName = (it.name || "").trim();
-              const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
-              const fullKey = fullName.toLowerCase();
+    const loadOrders = (signal?: AbortSignal) => {
+      orderApi
+        .getOrders(
+          {
+            startDate: activeDateRange.startDate,
+            endDate: activeDateRange.endDate,
+          },
+          { signal }
+        )
+        .then((serverOrders) => {
+          if (Array.isArray(serverOrders) && serverOrders.length > 0) {
+            const currentItemsById = itemsByIdRef.current;
+            const currentItemsByName = itemsByNameRef.current;
 
-              let exactImage = "";
-              if (it.itemId && itemsById[it.itemId]?.image) {
-                exactImage = itemsById[it.itemId].image;
-              } else if (it.image) {
-                exactImage = it.image;
-              } else if (itemsByName[fullKey]?.image) {
-                exactImage = itemsByName[fullKey].image;
-              } else if (itemsByName[baseName]?.image) {
-                exactImage = itemsByName[baseName].image;
-              }
+            const mapped: OrderRecord[] = serverOrders.map((so: ProviderOrder) => {
+              const initials = so.employeeName
+                ? so.employeeName
+                    .split(" ")
+                    .map((p) => p[0])
+                    .join("")
+                    .slice(0, 2)
+                    .toUpperCase()
+                : "EM";
+
+              const itemsMapped = (so.items || []).map((it) => {
+                const fullName = (it.name || "").trim();
+                const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
+                const fullKey = fullName.toLowerCase();
+
+                let exactImage = "";
+                if (it.itemId && currentItemsById[it.itemId]?.image) {
+                  exactImage = currentItemsById[it.itemId].image;
+                } else if (it.image) {
+                  exactImage = it.image;
+                } else if (currentItemsByName[fullKey]?.image) {
+                  exactImage = currentItemsByName[fullKey].image;
+                } else if (currentItemsByName[baseName]?.image) {
+                  exactImage = currentItemsByName[baseName].image;
+                }
+
+                return {
+                  itemId: it.itemId,
+                  name: it.name,
+                  price: it.price,
+                  qty: it.qty,
+                  image: exactImage,
+                  preference: it.preference,
+                };
+              });
+
+              const summary = itemsMapped.map((i) => `${i.name} x${i.qty}`).join(", ");
+              const createdAtStr = so.createdAt || new Date().toISOString();
+              const { displayTime } = getTimeInTimezone(createdAtStr, orgTimezone);
+              const period = classifyOrderPeriod(createdAtStr, orgTimezone, periodConfig);
 
               return {
-                itemId: it.itemId,
-                name: it.name,
-                price: it.price,
-                qty: it.qty,
-                image: exactImage,
-                preference: it.preference,
+                id: so.displayId || so.id,
+                displayId: so.displayId,
+                employeeName: so.employeeName,
+                employeeId: so.employeeId,
+                employeeEmail: (so as any).employeeEmail || null,
+                department: so.locationName || "Office Team",
+                avatarInitials: initials,
+                avatarBg: "bg-[#754329]",
+                items: itemsMapped,
+                itemSummary: summary || "No items",
+                seat: so.seat?.startsWith("Seat ") ? so.seat : `Seat ${so.seat || "—"}`,
+                subtotal: so.subtotal ?? so.total,
+                adjustmentAmount: so.adjustmentAmount ?? 0,
+                discount: so.discount ?? 0,
+                total: so.total,
+                orderTime: displayTime || so.time || "Recent",
+                createdAt: createdAtStr,
+                status: (so.status as any) || "Pending",
+                notes: so.notes,
+                locationName: so.locationName,
+                period,
               };
             });
 
-            const summary = itemsMapped.map((i) => `${i.name} x${i.qty}`).join(", ");
-            const createdAtStr = so.createdAt || new Date().toISOString();
-            const { displayTime } = getTimeInTimezone(createdAtStr, orgTimezone);
-            const period = classifyOrderPeriod(createdAtStr, orgTimezone, periodConfig);
+            setOrders(mapped);
+            try {
+              localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
+            } catch {}
+          } else {
+            setOrders([]);
+            try {
+              localStorage.removeItem(ordersStorageKey);
+            } catch {}
+          }
+        })
+        .catch((err) => {
+          if (err.name !== "AbortError") {
+            setOrders([]);
+          }
+        })
+        .finally(() => {
+          if (!signal || !signal.aborted) {
+            setIsLoading(false);
+          }
+        });
+    };
 
-            return {
-              id: so.displayId || so.id,
-              displayId: so.displayId,
-              employeeName: so.employeeName,
-              employeeId: so.employeeId,
-              employeeEmail: (so as any).employeeEmail || null,
-              department: so.locationName || "Office Team",
-              avatarInitials: initials,
-              avatarBg: "bg-[#754329]",
-              items: itemsMapped,
-              itemSummary: summary || "No items",
-              seat: so.seat?.startsWith("Seat ") ? so.seat : `Seat ${so.seat || "—"}`,
-              subtotal: so.subtotal ?? so.total,
-              adjustmentAmount: so.adjustmentAmount ?? 0,
-              discount: so.discount ?? 0,
-              total: so.total,
-              orderTime: displayTime || so.time || "Recent",
-              createdAt: createdAtStr,
-              status: (so.status as any) || "Pending",
-              notes: so.notes,
-              locationName: so.locationName,
-              period,
-            };
-          });
+    loadOrders(controller.signal);
 
-          setOrders(mapped);
-          try {
-            localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
-          } catch {}
-        } else {
-          setOrders([]);
-          try {
-            localStorage.removeItem(ordersStorageKey);
-          } catch {}
-        }
-      })
-      .catch(() => {
-        setOrders([]);
-      });
-  };
+    const interval = setInterval(() => {
+      loadOrders(controller.signal);
+    }, 10000);
 
-  useEffect(() => {
-    fetchOrders();
-    const interval = setInterval(fetchOrders, 4000);
-    return () => clearInterval(interval);
-  }, [activeDateRange, orgTimezone, itemsById, itemsByName]);
+    return () => {
+      controller.abort();
+      clearInterval(interval);
+    };
+  }, [activeDateRange, orgTimezone]);
 
   // Group Orders by Employee
   const employeeGroups: EmployeeGroup[] = useMemo(() => {
@@ -887,7 +926,17 @@ export default function OrdersPage() {
                     </thead>
 
                     <tbody className="divide-y divide-[#F5EFE8] text-gray-700">
-                      {paginatedEmployees.length === 0 ? (
+                      {isLoading ? (
+                        <tr>
+                          <td colSpan={7} className="py-14 text-center text-xs text-gray-500">
+                            <RotateCw className="mx-auto mb-2 h-7 w-7 text-[#8E6548] animate-spin" />
+                            <p className="font-semibold text-gray-700">Loading orders...</p>
+                            <p className="text-[11px] text-gray-400 mt-0.5">
+                              Fetching employee order records for the selected period.
+                            </p>
+                          </td>
+                        </tr>
+                      ) : paginatedEmployees.length === 0 ? (
                         <tr>
                           <td colSpan={7} className="py-14 text-center text-xs text-gray-500">
                             <Sparkles className="mx-auto mb-2 h-8 w-8 text-[#A08C7D]" />

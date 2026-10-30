@@ -167,7 +167,10 @@ export default function AdminReportPage() {
   const fetchMonthOrders = () => {
     setIsLoading(true);
     reportApi
-      .getReportOrders()
+      .getReportOrders({
+        startDate: activeDateRange.startDate,
+        endDate: activeDateRange.endDate,
+      })
       .then((data) => {
         if (Array.isArray(data)) {
           setOrders(data);
@@ -396,17 +399,29 @@ export default function AdminReportPage() {
     }
   }, [dailyRecords]);
 
-  // Filter records by search input
+  // Filter records by search input (day number, weekday, full date, or items sold)
   const filteredRecords = useMemo(() => {
-    if (!searchDateQuery.trim()) return dailyRecords;
-    const q = searchDateQuery.toLowerCase();
-    return dailyRecords.filter(
-      (r) =>
+    const rawQ = searchDateQuery.trim();
+    if (!rawQ) return dailyRecords;
+    const q = rawQ.toLowerCase();
+    const numMatch = rawQ.match(/^\d{1,2}$/);
+    const dayNum = numMatch ? String(parseInt(numMatch[0], 10)).padStart(2, "0") : null;
+
+    return dailyRecords.filter((r) => {
+      if (dayNum && r.dateStr.endsWith("-" + dayNum)) return true;
+      if (
         r.displayDate.toLowerCase().includes(q) ||
         r.dayOfWeek.toLowerCase().includes(q) ||
         r.fullDayOfWeek.toLowerCase().includes(q) ||
         r.dateStr.includes(q)
-    );
+      ) {
+        return true;
+      }
+      const hasItem = [...r.morningItems, ...r.eveningItems].some((it) =>
+        it.name.toLowerCase().includes(q)
+      );
+      return hasItem;
+    });
   }, [dailyRecords, searchDateQuery]);
 
   // Pagination
@@ -452,9 +467,9 @@ export default function AdminReportPage() {
 
                   {/* Date Range Picker Input */}
                   <div className="relative flex items-center">
-                    <div className="flex items-center gap-2 rounded-2xl border border-[#DEC5B0] bg-white px-4 py-2.5 text-xs font-bold text-[#342219] shadow-sm">
-                      <Calendar size={16} className="text-[#75472D]" />
-                      <span>{activeDateRange.formattedRangeDisplay}</span>
+                    <label className="relative flex items-center gap-2 cursor-pointer rounded-2xl border border-[#DEC5B0] bg-white hover:bg-[#FAF8F5] transition-colors px-4 py-2.5 text-xs font-bold text-[#342219] shadow-sm">
+                      <Calendar size={16} className="text-[#75472D] pointer-events-none" />
+                      <span className="pointer-events-none">{activeDateRange.formattedRangeDisplay}</span>
                       <input
                         type="month"
                         value={selectedMonth}
@@ -464,10 +479,15 @@ export default function AdminReportPage() {
                             setCurrentPage(1);
                           }
                         }}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                        onClick={(e) => {
+                          try {
+                            (e.currentTarget as any).showPicker?.();
+                          } catch {}
+                        }}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
                       />
-                      <ChevronDown size={15} className="ml-1 text-[#8A7667]" />
-                    </div>
+                      <ChevronDown size={15} className="ml-1 text-[#8A7667] pointer-events-none" />
+                    </label>
                   </div>
                 </div>
 
@@ -552,7 +572,7 @@ export default function AdminReportPage() {
                         setSearchDateQuery(e.target.value);
                         setCurrentPage(1);
                       }}
-                      placeholder="Search by date..."
+                      placeholder="Search by date (e.g. 22, Thu), or item name..."
                       className="w-full rounded-2xl border border-[#DEC5B0]/70 bg-white py-3 pl-11 pr-4 text-sm text-[#342219] placeholder:text-[#A8988B] outline-none transition focus:border-[#75472D] focus:ring-2 focus:ring-[#75472D]/15"
                     />
                   </div>

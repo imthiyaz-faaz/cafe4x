@@ -145,7 +145,7 @@ export async function apiRequest<T = any>(
 
 export const api = {
   get: <T = any>(endpoint: string, params?: Record<string, any>, options?: RequestInit) =>
-    apiRequest<T>(endpoint, { ...options, method: "GET", params }),
+    apiRequest<T>(endpoint, { ...options, method: "GET", params, signal: options?.signal }),
 
   post: <T = any>(endpoint: string, body?: any, options?: RequestInit) =>
     apiRequest<T>(endpoint, {

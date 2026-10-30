@@ -110,9 +110,9 @@ export async function getNextId(
       padLen = 4;
       break;
     case "ORD":
-      scope = `ORD_${code}_${year}`;
-      prefix = `ORD-${code}-${year}`;
-      padLen = 6;
+      scope = `ORD_${code}`;
+      prefix = "ORD";
+      padLen = 4;
       break;
   }
 

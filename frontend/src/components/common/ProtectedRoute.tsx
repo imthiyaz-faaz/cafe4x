@@ -42,11 +42,11 @@ export default function ProtectedRoute({
     const userRole = user.userType || "Admin";
     if (!allowedRoles.includes(userRole)) {
       // If a Provider tries to enter Admin routes or vice versa, redirect them to their home
+      const short = (user.shortCode || params.shortCode || "").toUpperCase();
       if (userRole === "Provider") {
-        const short = user.shortCode ? user.shortCode.toUpperCase() : "";
         return <Navigate to={short ? `/${short}/provider` : "/provider"} replace />;
       }
-      return <Navigate to="/home" replace />;
+      return <Navigate to={short ? `/${short}/landing` : "/home"} replace />;
     }
   }
 

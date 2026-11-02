@@ -67,13 +67,23 @@ export default function ChooseOrganizationPage() {
   };
 
   const handleSelectOrg = (org: Organization) => {
+    const isProvider = currentUser?.userType === "Provider";
     // Update active organization in AuthContext and localStorage
-    switchOrganization({
-      id: org.id,
-      name: org.name,
-      shortCode: org.shortCode.toUpperCase(),
-    });
-    navigate(`/${org.shortCode.toUpperCase()}/landing`);
+    switchOrganization(
+      {
+        id: org.id,
+        name: org.name,
+        shortCode: org.shortCode.toUpperCase(),
+        currency: org.currency,
+      },
+      isProvider ? "Provider" : "Admin"
+    );
+
+    if (isProvider) {
+      navigate(`/${org.shortCode.toUpperCase()}/provider`, { replace: true });
+    } else {
+      navigate(`/${org.shortCode.toUpperCase()}/landing`, { replace: true });
+    }
   };
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
@@ -201,32 +211,34 @@ export default function ChooseOrganizationPage() {
               </div>
             )}
 
-            {/* Section: Create a new organization */}
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wider text-[#80563C] mb-3.5">
-                Create a new organization
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <button
-                  onClick={() => setIsModalOpen(true)}
-                  type="button"
-                  className="group flex items-center gap-4 bg-white/95 hover:bg-white p-5 rounded-2xl shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-[#EEE5DC] text-left cursor-pointer"
-                >
-                  {/* Dark silhouette avatar box */}
-                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[#32454E] text-white shadow-sm overflow-hidden">
-                    <User size={36} className="text-white fill-white translate-y-1" />
-                  </div>
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#009FB7] text-white font-bold text-lg leading-none shadow-sm">
-                      <Plus size={18} strokeWidth={3} />
-                    </span>
-                    <span className="text-lg font-bold text-[#342219] group-hover:text-[#8B5738] transition-colors">
-                      New Organization
-                    </span>
-                  </div>
-                </button>
+            {/* Section: Create a new organization - only accessible to Admins */}
+            {currentUser?.userType !== "Provider" && (
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wider text-[#80563C] mb-3.5">
+                  Create a new organization
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <button
+                    onClick={() => setIsModalOpen(true)}
+                    type="button"
+                    className="group flex items-center gap-4 bg-white/95 hover:bg-white p-5 rounded-2xl shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-[#EEE5DC] text-left cursor-pointer"
+                  >
+                    {/* Dark silhouette avatar box */}
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[#32454E] text-white shadow-sm overflow-hidden">
+                      <User size={36} className="text-white fill-white translate-y-1" />
+                    </div>
+                    <div className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[#009FB7] text-white font-bold text-lg leading-none shadow-sm">
+                        <Plus size={18} strokeWidth={3} />
+                      </span>
+                      <span className="text-lg font-bold text-[#342219] group-hover:text-[#8B5738] transition-colors">
+                        New Organization
+                      </span>
+                    </div>
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         )}
       </div>

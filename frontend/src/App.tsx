@@ -47,7 +47,7 @@ export default function App() {
       <Route
         path="/landing"
         element={
-          <ProtectedRoute>
+          <ProtectedRoute allowedRoles={['Admin']}>
             <LandingPage />
           </ProtectedRoute>
         }
@@ -79,7 +79,7 @@ export default function App() {
       <Route
         path="/orders"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+          <ProtectedRoute allowedRoles={['Admin']}>
             <OrdersPage />
           </ProtectedRoute>
         }
@@ -103,7 +103,7 @@ export default function App() {
       <Route
         path="/provider/reports"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+          <ProtectedRoute allowedRoles={['Provider']}>
             <ProviderReportPage />
           </ProtectedRoute>
         }
@@ -111,7 +111,7 @@ export default function App() {
       <Route
         path="/provider/pending-orders"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+          <ProtectedRoute allowedRoles={['Provider']}>
             <ProviderPendingOrdersPage />
           </ProtectedRoute>
         }
@@ -119,7 +119,7 @@ export default function App() {
       <Route
         path="/provider"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']}>
+          <ProtectedRoute allowedRoles={['Provider']}>
             <ProviderPage />
           </ProtectedRoute>
         }
@@ -129,7 +129,7 @@ export default function App() {
       <Route
         path="/:shortCode/landing"
         element={
-          <ProtectedRoute requireOrgMatch>
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
             <LandingPage />
           </ProtectedRoute>
         }
@@ -161,7 +161,7 @@ export default function App() {
       <Route
         path="/:shortCode/orders"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
             <OrdersPage />
           </ProtectedRoute>
         }
@@ -185,7 +185,7 @@ export default function App() {
       <Route
         path="/:shortCode/provider/reports"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+          <ProtectedRoute allowedRoles={['Provider']} requireOrgMatch>
             <ProviderReportPage />
           </ProtectedRoute>
         }
@@ -193,7 +193,7 @@ export default function App() {
       <Route
         path="/:shortCode/provider/pending-orders"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+          <ProtectedRoute allowedRoles={['Provider']} requireOrgMatch>
             <ProviderPendingOrdersPage />
           </ProtectedRoute>
         }
@@ -201,7 +201,7 @@ export default function App() {
       <Route
         path="/:shortCode/provider"
         element={
-          <ProtectedRoute allowedRoles={['Admin', 'Provider']} requireOrgMatch>
+          <ProtectedRoute allowedRoles={['Provider']} requireOrgMatch>
             <ProviderPage />
           </ProtectedRoute>
         }

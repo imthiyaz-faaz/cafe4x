@@ -47,14 +47,8 @@ export default function Login() {
       if (res.success && res.user && res.token) {
         login(res.token, res.user, res.organizations);
 
-        if (res.user.userType === "Provider") {
-          const userShortCode = res.user.shortCode ? res.user.shortCode.toUpperCase() : "";
-          navigate(userShortCode ? `/${userShortCode}/provider` : "/provider");
-          return;
-        }
-
-        // Navigate to Choose Organization page
-        navigate("/home");
+        // Transition to STATE 2: Authenticated – Organization Not Selected
+        navigate("/choose-organization", { replace: true });
         return;
       }
     } catch (apiErr: any) {

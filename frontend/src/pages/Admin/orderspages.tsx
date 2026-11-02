@@ -1313,7 +1313,7 @@ function OrderCard({
           <span className="font-bold text-gray-600">Order Total</span>
           <span className="text-sm font-black text-[#754329]">
             {formatPrice(order.total)}
-          </span>
+            </span>
         </div>
       </div>
     </div>

@@ -30,23 +30,11 @@ export const organizationController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const existing = (await db
-        .prepare(`SELECT id, name FROM organizations WHERE LOWER(TRIM(name)) = LOWER(?)`)
-        .bind(normalizedName)
-        .get()) as any;
-
-      if (existing) {
-        return c.json({
-          success: true,
-          available: false,
-          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
-        });
-      }
-
+      // Organization names do not need to be unique
       return c.json({
         success: true,
         available: true,
-        message: "Organization name is available.",
+        message: "Organization name is valid.",
       });
     } catch (err: any) {
       console.error("checkName error:", err);
@@ -70,7 +58,7 @@ export const organizationController = {
 
       const db = getUniversalDb(c.env?.DB);
       const existing = (await db
-        .prepare(`SELECT id, short_code FROM organizations WHERE UPPER(TRIM(short_code)) = ?`)
+        .prepare(`SELECT id, short_code FROM organizations WHERE LOWER(TRIM(short_code)) = LOWER(?)`)
         .bind(normalizedCode)
         .get()) as any;
 

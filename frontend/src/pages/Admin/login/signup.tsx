@@ -125,6 +125,69 @@ export default function Signup() {
     }
   }, [data.mobile, selectedCountry])
 
+  // Real-time username validation state (usernames must be unique)
+  const [usernameStatus, setUsernameStatus] = useState<
+    'idle' | 'checking' | 'valid' | 'invalid'
+  >('idle')
+  const [usernameMessage, setUsernameMessage] = useState('')
+  const usernameAbortRef = useRef<AbortController | null>(null)
+
+  // Debounced Username Validation
+  useEffect(() => {
+    const trimmed = data.username.trim()
+
+    if (usernameAbortRef.current) {
+      usernameAbortRef.current.abort()
+      usernameAbortRef.current = null
+    }
+
+    if (!trimmed) {
+      setUsernameStatus('idle')
+      setUsernameMessage('')
+      return
+    }
+
+    if (trimmed.length < 3) {
+      setUsernameStatus('invalid')
+      setUsernameMessage('Username must be at least 3 characters long.')
+      return
+    }
+
+    setUsernameStatus('checking')
+    setUsernameMessage('Checking availability...')
+
+    const controller = new AbortController()
+    usernameAbortRef.current = controller
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await authApi.checkUsername(trimmed, controller.signal)
+        if (controller.signal.aborted) return
+
+        if (res.available) {
+          setUsernameStatus('valid')
+          setUsernameMessage(res.message || 'Username is available.')
+        } else {
+          setUsernameStatus('invalid')
+          setUsernameMessage(
+            res.message || 'This username is already taken. Please choose another username.'
+          )
+        }
+      } catch (err: any) {
+        if (controller.signal.aborted) return
+        setUsernameStatus('invalid')
+        setUsernameMessage(
+          err.message || 'Error checking username availability.'
+        )
+      }
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [data.username])
+
   // Real-time email validation state (emails must be unique)
   const [emailStatus, setEmailStatus] = useState<
     'idle' | 'checking' | 'valid' | 'invalid'
@@ -192,76 +255,12 @@ export default function Signup() {
     }
   }, [data.email])
 
-  // Real-time Organization Name validation state
-  const [orgNameStatus, setOrgNameStatus] = useState<
-    'idle' | 'checking' | 'valid' | 'invalid'
-  >('idle')
-  const [orgNameMessage, setOrgNameMessage] = useState('')
-  const orgNameAbortRef = useRef<AbortController | null>(null)
-
-  // Real-time Organization Short Code validation state
+  // Real-time Organization Short Code validation state (short codes must be globally unique)
   const [orgCodeStatus, setOrgCodeStatus] = useState<
     'idle' | 'checking' | 'valid' | 'invalid'
   >('idle')
   const [orgCodeMessage, setOrgCodeMessage] = useState('')
   const orgCodeAbortRef = useRef<AbortController | null>(null)
-
-  // Debounced Organization Name Validation
-  useEffect(() => {
-    const trimmed = data.organization.trim().replace(/\s+/g, ' ')
-
-    if (orgNameAbortRef.current) {
-      orgNameAbortRef.current.abort()
-      orgNameAbortRef.current = null
-    }
-
-    if (!trimmed) {
-      setOrgNameStatus('idle')
-      setOrgNameMessage('')
-      return
-    }
-
-    if (trimmed.length < 2) {
-      setOrgNameStatus('invalid')
-      setOrgNameMessage('Organization name must be at least 2 characters.')
-      return
-    }
-
-    setOrgNameStatus('checking')
-    setOrgNameMessage('Checking availability...')
-
-    const controller = new AbortController()
-    orgNameAbortRef.current = controller
-
-    const timer = setTimeout(async () => {
-      try {
-        const res = await organizationApi.checkName(trimmed, controller.signal)
-        if (controller.signal.aborted) return
-
-        if (res.available) {
-          setOrgNameStatus('valid')
-          setOrgNameMessage(res.message || 'Organization name is available.')
-        } else {
-          setOrgNameStatus('invalid')
-          setOrgNameMessage(
-            res.message ||
-              'This organization is already registered with Cafe4x. Please contact your organization administrator.'
-          )
-        }
-      } catch (err: any) {
-        if (controller.signal.aborted) return
-        setOrgNameStatus('invalid')
-        setOrgNameMessage(
-          err.message || 'Error checking organization availability.'
-        )
-      }
-    }, 500)
-
-    return () => {
-      clearTimeout(timer)
-      controller.abort()
-    }
-  }, [data.organization])
 
   // Debounced Organization Short Code Validation
   useEffect(() => {
@@ -349,6 +348,16 @@ export default function Signup() {
         return
       }
 
+      if (usernameStatus === 'checking') {
+        setError('Please wait while we verify your username availability.')
+        return
+      }
+
+      if (usernameStatus === 'invalid' || usernameStatus === 'idle') {
+        setError(usernameMessage || 'Please provide an available username.')
+        return
+      }
+
       if (!validateEmailFormat(data.email.trim())) {
         setError('Please enter a valid email address.')
         return
@@ -382,17 +391,12 @@ export default function Signup() {
         return
       }
 
-      if (orgNameStatus === 'checking' || orgCodeStatus === 'checking') {
-        setError('Please wait while we verify organization details.')
+      if (orgCodeStatus === 'checking') {
+        setError('Please wait while we verify organization short code availability.')
         return
       }
 
-      if (orgNameStatus === 'invalid') {
-        setError(orgNameMessage || 'This organization is already registered with Cafe4x.')
-        return
-      }
-
-      if (orgCodeStatus === 'invalid') {
+      if (orgCodeStatus === 'invalid' || orgCodeStatus === 'idle') {
         setError(orgCodeMessage || 'This organization code is already taken. Please choose another code.')
         return
       }
@@ -634,9 +638,41 @@ export default function Signup() {
                         onChange={(event) =>
                           updateField('username', event.target.value)
                         }
-                        className={inputClass}
+                        className={`${inputClass} pr-10`}
                       />
+
+                      {/* Username Status Indicator inside Input */}
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
+                        {usernameStatus === 'checking' && (
+                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
+                        )}
+                        {usernameStatus === 'valid' && (
+                          <CheckCircle2 size={18} className="text-emerald-600" />
+                        )}
+                        {usernameStatus === 'invalid' && (
+                          <AlertCircle size={18} className="text-rose-600" />
+                        )}
+                      </div>
                     </div>
+
+                    {/* Username feedback message */}
+                    {usernameStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        Checking availability...
+                      </p>
+                    )}
+                    {usernameStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {usernameMessage}
+                      </p>
+                    )}
+                    {usernameStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {usernameMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Name */}
@@ -923,6 +959,9 @@ export default function Signup() {
                       !data.email.trim() ||
                       !data.password.trim() ||
                       !data.mobile.trim() ||
+                      usernameStatus === 'checking' ||
+                      usernameStatus === 'invalid' ||
+                      usernameStatus === 'idle' ||
                       emailStatus === 'checking' ||
                       emailStatus === 'invalid' ||
                       emailStatus === 'idle' ||
@@ -990,41 +1029,9 @@ export default function Signup() {
                         onChange={(event) =>
                           updateField('organization', event.target.value)
                         }
-                        className={`${inputClass} pr-10`}
+                        className={inputClass}
                       />
-
-                      {/* Org Name Status Indicator inside Input */}
-                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
-                        {orgNameStatus === 'checking' && (
-                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
-                        )}
-                        {orgNameStatus === 'valid' && (
-                          <CheckCircle2 size={18} className="text-emerald-600" />
-                        )}
-                        {orgNameStatus === 'invalid' && (
-                          <AlertCircle size={18} className="text-rose-600" />
-                        )}
-                      </div>
                     </div>
-
-                    {/* Org Name feedback message */}
-                    {orgNameStatus === 'checking' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
-                        Checking availability...
-                      </p>
-                    )}
-                    {orgNameStatus === 'valid' && (
-                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
-                        <Check size={14} className="stroke-[2.5]" />
-                        {orgNameMessage}
-                      </p>
-                    )}
-                    {orgNameStatus === 'invalid' && (
-                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
-                        <AlertCircle size={14} className="shrink-0" />
-                        {orgNameMessage}
-                      </p>
-                    )}
                   </div>
 
                   {/* Short code */}
@@ -1116,11 +1123,8 @@ export default function Signup() {
                         isLoading ||
                         !data.organization.trim() ||
                         !data.shortCode.trim() ||
-                        orgNameStatus === 'checking' ||
                         orgCodeStatus === 'checking' ||
-                        orgNameStatus === 'invalid' ||
                         orgCodeStatus === 'invalid' ||
-                        orgNameStatus === 'idle' ||
                         orgCodeStatus === 'idle'
                       }
                       className="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
@@ -1130,7 +1134,7 @@ export default function Signup() {
                           <Loader2 size={18} className="animate-spin" />
                           Creating Organization...
                         </>
-                      ) : (orgNameStatus === 'checking' || orgCodeStatus === 'checking') ? (
+                      ) : orgCodeStatus === 'checking' ? (
                         <>
                           <Loader2 size={18} className="animate-spin" />
                           Verifying details...

@@ -165,7 +165,7 @@ export const authController = {
 
       const db = getUniversalDb(c.env?.DB);
       const existing = (await db
-        .prepare(`SELECT id FROM users WHERE LOWER(user_name) = ?`)
+        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
         .bind(username)
         .get()) as any;
 
@@ -260,9 +260,23 @@ export const authController = {
 
       const db = getUniversalDb(c.env?.DB);
 
+      // Check specifically if username already exists (usernames must be globally unique)
+      const usernameExists = (await db
+        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
+        .bind(userName)
+        .get()) as any;
+
+      if (usernameExists) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_EXISTS",
+          message: "This username is already taken. Please choose another username.",
+        }, 409);
+      }
+
       // Check specifically if email already exists (emails must be globally unique)
       const emailExists = (await db
-        .prepare(`SELECT id FROM users WHERE LOWER(email) = ?`)
+        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(?)`)
         .bind(email)
         .get()) as any;
 
@@ -278,21 +292,9 @@ export const authController = {
         return c.json({ success: false, message: "Organization name and short code are required" }, 400);
       }
 
-      // Check organization uniqueness before inserting user or organization
-      const orgNameExists = (await db
-        .prepare(`SELECT id FROM organizations WHERE LOWER(TRIM(name)) = LOWER(?)`)
-        .bind(orgName)
-        .get()) as any;
-
-      if (orgNameExists) {
-        return c.json({
-          success: false,
-          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
-        }, 409);
-      }
-
+      // Check organization short code uniqueness before inserting user or organization (org names can be duplicate, short codes must be unique)
       const orgCodeExists = (await db
-        .prepare(`SELECT id FROM organizations WHERE UPPER(TRIM(short_code)) = ?`)
+        .prepare(`SELECT id FROM organizations WHERE LOWER(TRIM(short_code)) = LOWER(?)`)
         .bind(orgShort)
         .get()) as any;
 
@@ -397,22 +399,27 @@ export const authController = {
       }, 201);
     } catch (err: any) {
       const errMsg = err?.message || "";
-      if (errMsg.includes("organizations.name") || errMsg.includes("idx_organizations_name_nocase")) {
-        return c.json({
-          success: false,
-          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
-        }, 409);
-      }
       if (errMsg.includes("organizations.short_code") || errMsg.includes("idx_organizations_short_code_nocase")) {
         return c.json({
           success: false,
           message: "This organization code is already taken. Please choose another code.",
         }, 409);
       }
-      if (errMsg.includes("UNIQUE constraint failed: users.email") || errMsg.includes("idx_users_email_nocase")) {
-        return c.json({ success: false, message: "This email address is already registered. Please use another email." }, 409);
+      if (errMsg.includes("users.user_name") || errMsg.includes("idx_users_username_nocase")) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_EXISTS",
+          message: "This username is already taken. Please choose another username.",
+        }, 409);
       }
-      return c.json({ success: false, message: err.message || "Invalid request" }, 400);
+      if (errMsg.includes("users.email") || errMsg.includes("idx_users_email_nocase")) {
+        return c.json({
+          success: false,
+          code: "EMAIL_ALREADY_EXISTS",
+          message: "This email address is already registered. Please use another email.",
+        }, 409);
+      }
+      return c.json({ success: false, message: err.message || "Registration failed. Please check your information." }, 400);
     }
   },
 

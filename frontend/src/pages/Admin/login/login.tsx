@@ -72,7 +72,7 @@ export default function Login() {
           {/* LEFT: CAFE IMAGE */}
           <section className="relative hidden w-1/2 overflow-hidden lg:block">
             <img
-              src="/src/assets/images/hero.png"
+              src="src/assets/images/hero.png"
               alt="Cafe4X coffee experience"
               className="absolute inset-0 h-full w-full object-cover"
             />

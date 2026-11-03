@@ -1,8 +1,7 @@
 export const API_BASE_URL: string =
-  (import.meta as any).env?.VITE_API_BASE_URL ||
-  ((import.meta as any).env?.DEV
-    ? "http://localhost:8787"
-    : "https://cafe4x-api.m-imthiyaz.workers.dev");
+  (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1")
+    ? "https://cafe4x-api.m-imthiyaz.workers.dev"
+    : ((import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8787");
 
 export interface ApiRequestOptions extends RequestInit {
   params?: Record<string, string | number | boolean | undefined | null>;

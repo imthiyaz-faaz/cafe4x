@@ -17,7 +17,29 @@ export interface CreateOrganizationPayload {
   userId?: string;
 }
 
+export interface CheckOrgAvailabilityResponse {
+  success: boolean;
+  available: boolean;
+  message: string;
+}
+
 export const organizationApi = {
+  async checkName(name: string, signal?: AbortSignal): Promise<CheckOrgAvailabilityResponse> {
+    return api.get<CheckOrgAvailabilityResponse>(
+      "/api/organizations/check-name",
+      { name: name.trim() },
+      { signal }
+    );
+  },
+
+  async checkCode(code: string, signal?: AbortSignal): Promise<CheckOrgAvailabilityResponse> {
+    return api.get<CheckOrgAvailabilityResponse>(
+      "/api/organizations/check-code",
+      { code: code.trim().toUpperCase() },
+      { signal }
+    );
+  },
+
   async getOrganizations(userId?: string): Promise<Organization[]> {
     const params = userId ? { userId } : undefined;
     const res = await api.get<{ success: boolean; organizations: Organization[] }>(

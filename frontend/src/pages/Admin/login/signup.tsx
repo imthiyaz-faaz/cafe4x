@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useEffect, useRef, useMemo, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Coffee,
@@ -16,9 +16,16 @@ import {
   Sparkles,
   ShieldCheck,
   Loader2,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  Search,
 } from 'lucide-react'
 import Background from '../../../components/background'
 import { authApi } from '../../../services/auth'
+import { organizationApi } from '../../../services/organizations'
+import { getAllCountries, type CountryInfo } from '../../../utils/countries'
+import { validateEmailFormat, validateMobileNumber } from '../../../utils/validation'
 
 interface SignupData {
   username: string
@@ -53,6 +60,264 @@ export default function Signup() {
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
+  // Countries and selection
+  const countries = useMemo(() => getAllCountries(), [])
+  const [selectedCountry, setSelectedCountry] = useState<CountryInfo>(() => {
+    return countries.find((c) => c.code === 'IN') || countries[0]
+  })
+  const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false)
+  const [countrySearch, setCountrySearch] = useState('')
+  const countryDropdownRef = useRef<HTMLDivElement | null>(null)
+
+  // Mobile validation state
+  const [mobileStatus, setMobileStatus] = useState<
+    'idle' | 'incomplete' | 'invalid' | 'valid'
+  >('idle')
+  const [mobileMessage, setMobileMessage] = useState('')
+  const [normalizedMobileE164, setNormalizedMobileE164] = useState('')
+
+  // Filtered countries based on search query
+  const filteredCountries = useMemo(() => {
+    const q = countrySearch.trim().toLowerCase()
+    if (!q) return countries
+    return countries.filter(
+      (c) =>
+        c.name.toLowerCase().includes(q) ||
+        c.dialCode.includes(q) ||
+        c.code.toLowerCase().includes(q)
+    )
+  }, [countries, countrySearch])
+
+  // Close country dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        countryDropdownRef.current &&
+        !countryDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsCountryDropdownOpen(false)
+      }
+    }
+    if (isCountryDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isCountryDropdownOpen])
+
+  // Real-time mobile number validation when input or selected country changes
+  useEffect(() => {
+    if (!data.mobile) {
+      setMobileStatus('idle')
+      setMobileMessage('')
+      setNormalizedMobileE164('')
+      return
+    }
+
+    const res = validateMobileNumber(data.mobile, selectedCountry.code)
+    setMobileStatus(res.status)
+    setMobileMessage(res.message)
+    if (res.status === 'valid' && res.e164Number) {
+      setNormalizedMobileE164(res.e164Number)
+    } else {
+      setNormalizedMobileE164('')
+    }
+  }, [data.mobile, selectedCountry])
+
+  // Real-time email validation state (emails must be unique)
+  const [emailStatus, setEmailStatus] = useState<
+    'idle' | 'checking' | 'valid' | 'invalid'
+  >('idle')
+  const [emailMessage, setEmailMessage] = useState('')
+
+  // AbortController to cancel outdated in-flight email validation requests
+  const emailAbortRef = useRef<AbortController | null>(null)
+
+  // Debounced Email Validation
+  useEffect(() => {
+    const trimmed = data.email.trim()
+
+    // Cancel any previous in-flight request
+    if (emailAbortRef.current) {
+      emailAbortRef.current.abort()
+      emailAbortRef.current = null
+    }
+
+    if (!trimmed) {
+      setEmailStatus('idle')
+      setEmailMessage('')
+      return
+    }
+
+    // Professional email format validation before network call
+    if (!validateEmailFormat(trimmed)) {
+      setEmailStatus('invalid')
+      setEmailMessage('Please enter a valid email address.')
+      return
+    }
+
+    setEmailStatus('checking')
+    setEmailMessage('Checking availability...')
+
+    const controller = new AbortController()
+    emailAbortRef.current = controller
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await authApi.checkEmail(trimmed, controller.signal)
+        if (controller.signal.aborted) return
+
+        if (res.available) {
+          setEmailStatus('valid')
+          setEmailMessage(res.message || 'Email address is available.')
+        } else {
+          setEmailStatus('invalid')
+          setEmailMessage(
+            res.message || 'This email address is already registered.'
+          )
+        }
+      } catch (err: any) {
+        if (controller.signal.aborted) return
+        setEmailStatus('invalid')
+        setEmailMessage(
+          err.message || 'Error checking email availability.'
+        )
+      }
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [data.email])
+
+  // Real-time Organization Name validation state
+  const [orgNameStatus, setOrgNameStatus] = useState<
+    'idle' | 'checking' | 'valid' | 'invalid'
+  >('idle')
+  const [orgNameMessage, setOrgNameMessage] = useState('')
+  const orgNameAbortRef = useRef<AbortController | null>(null)
+
+  // Real-time Organization Short Code validation state
+  const [orgCodeStatus, setOrgCodeStatus] = useState<
+    'idle' | 'checking' | 'valid' | 'invalid'
+  >('idle')
+  const [orgCodeMessage, setOrgCodeMessage] = useState('')
+  const orgCodeAbortRef = useRef<AbortController | null>(null)
+
+  // Debounced Organization Name Validation
+  useEffect(() => {
+    const trimmed = data.organization.trim().replace(/\s+/g, ' ')
+
+    if (orgNameAbortRef.current) {
+      orgNameAbortRef.current.abort()
+      orgNameAbortRef.current = null
+    }
+
+    if (!trimmed) {
+      setOrgNameStatus('idle')
+      setOrgNameMessage('')
+      return
+    }
+
+    if (trimmed.length < 2) {
+      setOrgNameStatus('invalid')
+      setOrgNameMessage('Organization name must be at least 2 characters.')
+      return
+    }
+
+    setOrgNameStatus('checking')
+    setOrgNameMessage('Checking availability...')
+
+    const controller = new AbortController()
+    orgNameAbortRef.current = controller
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await organizationApi.checkName(trimmed, controller.signal)
+        if (controller.signal.aborted) return
+
+        if (res.available) {
+          setOrgNameStatus('valid')
+          setOrgNameMessage(res.message || 'Organization name is available.')
+        } else {
+          setOrgNameStatus('invalid')
+          setOrgNameMessage(
+            res.message ||
+              'This organization is already registered with Cafe4x. Please contact your organization administrator.'
+          )
+        }
+      } catch (err: any) {
+        if (controller.signal.aborted) return
+        setOrgNameStatus('invalid')
+        setOrgNameMessage(
+          err.message || 'Error checking organization availability.'
+        )
+      }
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [data.organization])
+
+  // Debounced Organization Short Code Validation
+  useEffect(() => {
+    const trimmed = data.shortCode.trim().toUpperCase()
+
+    if (orgCodeAbortRef.current) {
+      orgCodeAbortRef.current.abort()
+      orgCodeAbortRef.current = null
+    }
+
+    if (!trimmed) {
+      setOrgCodeStatus('idle')
+      setOrgCodeMessage('')
+      return
+    }
+
+    if (trimmed.length < 2) {
+      setOrgCodeStatus('invalid')
+      setOrgCodeMessage('Short code must be at least 2 characters.')
+      return
+    }
+
+    setOrgCodeStatus('checking')
+    setOrgCodeMessage('Checking availability...')
+
+    const controller = new AbortController()
+    orgCodeAbortRef.current = controller
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await organizationApi.checkCode(trimmed, controller.signal)
+        if (controller.signal.aborted) return
+
+        if (res.available) {
+          setOrgCodeStatus('valid')
+          setOrgCodeMessage(res.message || 'Organization code is available.')
+        } else {
+          setOrgCodeStatus('invalid')
+          setOrgCodeMessage(
+            res.message ||
+              'This organization code is already taken. Please choose another code.'
+          )
+        }
+      } catch (err: any) {
+        if (controller.signal.aborted) return
+        setOrgCodeStatus('invalid')
+        setOrgCodeMessage(err.message || 'Error checking code availability.')
+      }
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [data.shortCode])
+
   function updateField(field: keyof SignupData, value: string) {
     setData((previous) => ({
       ...previous,
@@ -60,35 +325,92 @@ export default function Signup() {
     }))
   }
 
+  // Handle mobile number input: keep digits only, strip duplicate country codes if pasted
+  function handleMobileChange(val: string) {
+    // Strip non-digits
+    let cleaned = val.replace(/\D/g, '')
+
+    // If user pasted/entered the selected country dialing code at start, remove it
+    const dialDigits = selectedCountry.dialCode.replace(/\D/g, '')
+    if (cleaned.startsWith(dialDigits) && cleaned.length > dialDigits.length) {
+      cleaned = cleaned.substring(dialDigits.length)
+    }
+
+    updateField('mobile', cleaned)
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError('')
 
     if (step === 1) {
-      if (!data.username || !data.email || !data.password) {
-        setError('Please fill in username, email, and password.')
+      if (!data.username.trim() || !data.name.trim() || !data.email.trim() || !data.password.trim() || !data.mobile.trim()) {
+        setError('Please fill in all required fields.')
         return
       }
+
+      if (!validateEmailFormat(data.email.trim())) {
+        setError('Please enter a valid email address.')
+        return
+      }
+
+      if (emailStatus === 'checking') {
+        setError('Please wait while we verify your email address availability.')
+        return
+      }
+
+      if (emailStatus === 'invalid') {
+        setError(emailMessage || 'Please provide a valid, unregistered email address.')
+        return
+      }
+
+      if (mobileStatus !== 'valid') {
+        setError(mobileMessage || 'Please enter a valid mobile number.')
+        return
+      }
+
       setStep(2)
       return
     }
 
     if (step === 2) {
-      if (!data.organization.trim() || !data.shortCode.trim()) {
+      const cleanOrg = data.organization.trim().replace(/\s+/g, ' ')
+      const cleanShortCode = data.shortCode.trim().toUpperCase()
+
+      if (!cleanOrg || !cleanShortCode) {
         setError('Please provide both Organization Name and Short Code.')
         return
       }
 
+      if (orgNameStatus === 'checking' || orgCodeStatus === 'checking') {
+        setError('Please wait while we verify organization details.')
+        return
+      }
+
+      if (orgNameStatus === 'invalid') {
+        setError(orgNameMessage || 'This organization is already registered with Cafe4x.')
+        return
+      }
+
+      if (orgCodeStatus === 'invalid') {
+        setError(orgCodeMessage || 'This organization code is already taken. Please choose another code.')
+        return
+      }
+
       setIsLoading(true)
-      const cleanShortCode = data.shortCode.trim().toUpperCase()
+      const cleanNational = data.mobile.trim().replace(/\D/g, '')
+      const finalMobile = normalizedMobileE164 || `+${selectedCountry.dialCode.replace(/\D/g, '')}${cleanNational}`
 
       const payload = {
         name: data.name || data.username,
         userName: data.username.trim().toLowerCase(),
         email: data.email.trim().toLowerCase(),
         password: data.password.trim(),
-        mobileNumber: data.mobile.trim(),
-        organization: data.organization.trim(),
+        mobileNumber: finalMobile,
+        nationalNumber: cleanNational,
+        dialingCode: selectedCountry.dialCode,
+        countryCode: selectedCountry.code,
+        organization: cleanOrg,
         shortCode: cleanShortCode,
         userType: 'Admin',
       }
@@ -346,7 +668,7 @@ export default function Signup() {
                     </div>
                   </div>
 
-                  {/* Mobile */}
+                  {/* Mobile number with international country selector on the right */}
                   <div>
                     <label
                       htmlFor="mobile"
@@ -355,25 +677,126 @@ export default function Signup() {
                       Mobile number
                     </label>
 
-                    <div className="relative">
+                    <div className="relative flex items-center">
                       <Phone
                         size={18}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                        className="pointer-events-none absolute left-4 text-[#A08C7D] z-10"
                       />
 
                       <input
                         id="mobile"
                         required
                         type="tel"
-                        autoComplete="tel"
+                        inputMode="numeric"
+                        autoComplete="tel-national"
                         placeholder="Enter your mobile number"
                         value={data.mobile}
-                        onChange={(event) =>
-                          updateField('mobile', event.target.value)
-                        }
-                        className={inputClass}
+                        onChange={(event) => handleMobileChange(event.target.value)}
+                        className={`${inputClass} pr-32`}
                       />
+
+                      {/* Right-aligned Country Code Selector */}
+                      <div
+                        ref={countryDropdownRef}
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 z-20"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsCountryDropdownOpen((prev) => !prev)
+                            setCountrySearch('')
+                          }}
+                          className="flex h-10 items-center gap-1.5 rounded-lg border border-[#E8DED4] bg-[#FBF7F2] px-2.5 text-xs font-semibold text-[#45352B] transition hover:border-[#8B5738] hover:bg-white focus:outline-none focus:ring-2 focus:ring-[#8B5738]/20"
+                          title={`${selectedCountry.name} (${selectedCountry.dialCode})`}
+                        >
+                          <span className="text-base leading-none select-none">
+                            {selectedCountry.flag}
+                          </span>
+                          <span className="text-xs font-bold text-[#6F4228]">
+                            {selectedCountry.dialCode}
+                          </span>
+                          <ChevronDown size={14} className="text-[#8D7A6C]" />
+                        </button>
+
+                        {/* Searchable Country Dropdown */}
+                        {isCountryDropdownOpen && (
+                          <div className="absolute right-0 top-full mt-1.5 w-72 max-h-72 overflow-hidden rounded-xl border border-[#E8DED4] bg-white shadow-xl z-50 flex flex-col">
+                            {/* Search box inside dropdown */}
+                            <div className="p-2 border-b border-[#F0E6DC] bg-[#FAF6F2]">
+                              <div className="relative flex items-center">
+                                <Search size={14} className="absolute left-2.5 text-[#A08C7D]" />
+                                <input
+                                  type="text"
+                                  autoFocus
+                                  placeholder="Search country or code..."
+                                  value={countrySearch}
+                                  onChange={(e) => setCountrySearch(e.target.value)}
+                                  className="w-full rounded-lg border border-[#E8DED4] bg-white py-1.5 pl-8 pr-2 text-xs text-[#342219] outline-none focus:border-[#8B5738]"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Countries List */}
+                            <div className="overflow-y-auto max-h-56 divide-y divide-[#F5EBE1]">
+                              {filteredCountries.length === 0 ? (
+                                <div className="p-3 text-center text-xs text-[#897B71]">
+                                  No countries found
+                                </div>
+                              ) : (
+                                filteredCountries.map((c) => {
+                                  const isSelected = c.code === selectedCountry.code
+                                  return (
+                                    <button
+                                      key={`${c.code}-${c.dialCode}`}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedCountry(c)
+                                        setIsCountryDropdownOpen(false)
+                                      }}
+                                      className={`w-full flex items-center justify-between px-3 py-2 text-left text-xs transition hover:bg-[#F7F2EB] ${
+                                        isSelected
+                                          ? 'bg-[#F4ECE3] font-bold text-[#6F4228]'
+                                          : 'text-[#45352B]'
+                                      }`}
+                                    >
+                                      <div className="flex items-center gap-2 truncate">
+                                        <span className="text-base leading-none select-none">
+                                          {c.flag}
+                                        </span>
+                                        <span className="truncate">{c.name}</span>
+                                      </div>
+                                      <span className="shrink-0 text-xs font-semibold text-[#8B5738]">
+                                        {c.dialCode}
+                                      </span>
+                                    </button>
+                                  )
+                                })
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
+
+                    {/* Mobile feedback message */}
+                    {mobileStatus === 'incomplete' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        <AlertCircle size={14} className="shrink-0 text-[#8B5738]" />
+                        {mobileMessage}
+                      </p>
+                    )}
+                    {mobileStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {mobileMessage}
+                      </p>
+                    )}
+                    {mobileStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {mobileMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Email */}
@@ -401,9 +824,41 @@ export default function Signup() {
                         onChange={(event) =>
                           updateField('email', event.target.value)
                         }
-                        className={inputClass}
+                        className={`${inputClass} pr-10`}
                       />
+
+                      {/* Email Status Indicator inside Input */}
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
+                        {emailStatus === 'checking' && (
+                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
+                        )}
+                        {emailStatus === 'valid' && (
+                          <CheckCircle2 size={18} className="text-emerald-600" />
+                        )}
+                        {emailStatus === 'invalid' && (
+                          <AlertCircle size={18} className="text-rose-600" />
+                        )}
+                      </div>
                     </div>
+
+                    {/* Email feedback message */}
+                    {emailStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        Checking availability...
+                      </p>
+                    )}
+                    {emailStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {emailMessage}
+                      </p>
+                    )}
+                    {emailStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {emailMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Password */}
@@ -455,20 +910,40 @@ export default function Signup() {
                   </div>
 
                   {error && (
-                    <p role="alert" className="text-sm text-red-600">
+                    <p role="alert" className="text-sm font-medium text-red-600">
                       {error}
                     </p>
                   )}
 
                   <button
                     type="submit"
-                    className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl"
+                    disabled={
+                      !data.username.trim() ||
+                      !data.name.trim() ||
+                      !data.email.trim() ||
+                      !data.password.trim() ||
+                      !data.mobile.trim() ||
+                      emailStatus === 'checking' ||
+                      emailStatus === 'invalid' ||
+                      emailStatus === 'idle' ||
+                      mobileStatus !== 'valid'
+                    }
+                    className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
                   >
-                    Continue to Organization
-                    <ArrowRight
-                      size={18}
-                      className="transition-transform group-hover:translate-x-1"
-                    />
+                    {emailStatus === 'checking' ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Validating email...
+                      </>
+                    ) : (
+                      <>
+                        Continue to Organization
+                        <ArrowRight
+                          size={18}
+                          className="transition-transform group-hover:translate-x-1"
+                        />
+                      </>
+                    )}
                   </button>
                 </form>
               )}
@@ -515,9 +990,41 @@ export default function Signup() {
                         onChange={(event) =>
                           updateField('organization', event.target.value)
                         }
-                        className={inputClass}
+                        className={`${inputClass} pr-10`}
                       />
+
+                      {/* Org Name Status Indicator inside Input */}
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
+                        {orgNameStatus === 'checking' && (
+                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
+                        )}
+                        {orgNameStatus === 'valid' && (
+                          <CheckCircle2 size={18} className="text-emerald-600" />
+                        )}
+                        {orgNameStatus === 'invalid' && (
+                          <AlertCircle size={18} className="text-rose-600" />
+                        )}
+                      </div>
                     </div>
+
+                    {/* Org Name feedback message */}
+                    {orgNameStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        Checking availability...
+                      </p>
+                    )}
+                    {orgNameStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {orgNameMessage}
+                      </p>
+                    )}
+                    {orgNameStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {orgNameMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Short code */}
@@ -543,15 +1050,47 @@ export default function Signup() {
                       <input
                         id="shortCode"
                         required
-                        placeholder="e.g. ACME or FTS"
+                        placeholder="e.g. ACME or TCS"
                         maxLength={10}
                         value={data.shortCode}
                         onChange={(event) =>
                           updateField('shortCode', event.target.value.replace(/[^a-zA-Z0-9_-]/g, '').toUpperCase())
                         }
-                        className={`${inputClass} uppercase tracking-wider font-semibold`}
+                        className={`${inputClass} pr-10 uppercase tracking-wider font-semibold`}
                       />
+
+                      {/* Org Code Status Indicator inside Input */}
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
+                        {orgCodeStatus === 'checking' && (
+                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
+                        )}
+                        {orgCodeStatus === 'valid' && (
+                          <CheckCircle2 size={18} className="text-emerald-600" />
+                        )}
+                        {orgCodeStatus === 'invalid' && (
+                          <AlertCircle size={18} className="text-rose-600" />
+                        )}
+                      </div>
                     </div>
+
+                    {/* Org Code feedback message */}
+                    {orgCodeStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        Checking availability...
+                      </p>
+                    )}
+                    {orgCodeStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {orgCodeMessage}
+                      </p>
+                    )}
+                    {orgCodeStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {orgCodeMessage}
+                      </p>
+                    )}
                   </div>
 
                   {error && (
@@ -573,13 +1112,28 @@ export default function Signup() {
 
                     <button
                       type="submit"
-                      disabled={isLoading}
-                      className="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:opacity-70"
+                      disabled={
+                        isLoading ||
+                        !data.organization.trim() ||
+                        !data.shortCode.trim() ||
+                        orgNameStatus === 'checking' ||
+                        orgCodeStatus === 'checking' ||
+                        orgNameStatus === 'invalid' ||
+                        orgCodeStatus === 'invalid' ||
+                        orgNameStatus === 'idle' ||
+                        orgCodeStatus === 'idle'
+                      }
+                      className="group flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-3.5 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
                     >
                       {isLoading ? (
                         <>
                           <Loader2 size={18} className="animate-spin" />
                           Creating Organization...
+                        </>
+                      ) : (orgNameStatus === 'checking' || orgCodeStatus === 'checking') ? (
+                        <>
+                          <Loader2 size={18} className="animate-spin" />
+                          Verifying details...
                         </>
                       ) : (
                         <>

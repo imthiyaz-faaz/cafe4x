@@ -5,5 +5,7 @@ const organizationRoutes = new Hono();
 
 organizationRoutes.get("/", organizationController.getOrganizations);
 organizationRoutes.post("/", organizationController.createOrganization);
+organizationRoutes.get("/check-name", organizationController.checkName);
+organizationRoutes.get("/check-code", organizationController.checkCode);
 
 export default organizationRoutes;

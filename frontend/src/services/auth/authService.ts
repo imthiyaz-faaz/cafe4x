@@ -45,6 +45,9 @@ export interface SignupPayload {
   organization?: string;
   shortCode?: string;
   mobileNumber?: string;
+  nationalNumber?: string;
+  countryCode?: string;
+  dialingCode?: string;
   userType?: "Admin" | "Provider" | "Staff" | string;
   id?: string;
 }
@@ -56,7 +59,29 @@ export interface MeResponse {
   organizations?: UserOrganizationInfo[];
 }
 
+export interface CheckAvailabilityResponse {
+  success: boolean;
+  available: boolean;
+  message: string;
+}
+
 export const authApi = {
+  async checkUsername(username: string, signal?: AbortSignal): Promise<CheckAvailabilityResponse> {
+    return api.get<CheckAvailabilityResponse>(
+      "/api/auth/check-username",
+      { username: username.trim() },
+      { signal }
+    );
+  },
+
+  async checkEmail(email: string, signal?: AbortSignal): Promise<CheckAvailabilityResponse> {
+    return api.get<CheckAvailabilityResponse>(
+      "/api/auth/check-email",
+      { email: email.trim() },
+      { signal }
+    );
+  },
+
   async login(credentials: LoginCredentials): Promise<LoginResponse> {
     return api.post<LoginResponse>("/api/auth/login", credentials);
   },

@@ -15,6 +15,84 @@ export interface OrganizationModel {
 }
 
 export const organizationController = {
+  // GET /api/organizations/check-name?name=value
+  async checkName(c: Context<AppEnv>) {
+    try {
+      const rawName = c.req.query("name") || "";
+      const normalizedName = rawName.trim().replace(/\s+/g, " ");
+
+      if (!normalizedName) {
+        return c.json({ success: false, available: false, message: "Organization name is required" }, 400);
+      }
+
+      if (normalizedName.length < 2) {
+        return c.json({ success: false, available: false, message: "Organization name must be at least 2 characters" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const existing = (await db
+        .prepare(`SELECT id, name FROM organizations WHERE LOWER(TRIM(name)) = LOWER(?)`)
+        .bind(normalizedName)
+        .get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Organization name is available.",
+      });
+    } catch (err: any) {
+      console.error("checkName error:", err);
+      return c.json({ success: false, message: "Error checking organization name availability" }, 500);
+    }
+  },
+
+  // GET /api/organizations/check-code?code=value
+  async checkCode(c: Context<AppEnv>) {
+    try {
+      const rawCode = c.req.query("code") || "";
+      const normalizedCode = rawCode.trim().toUpperCase();
+
+      if (!normalizedCode) {
+        return c.json({ success: false, available: false, message: "Organization code is required" }, 400);
+      }
+
+      if (normalizedCode.length < 2) {
+        return c.json({ success: false, available: false, message: "Organization code must be at least 2 characters" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const existing = (await db
+        .prepare(`SELECT id, short_code FROM organizations WHERE UPPER(TRIM(short_code)) = ?`)
+        .bind(normalizedCode)
+        .get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This organization code is already taken. Please choose another code.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Organization code is available.",
+      });
+    } catch (err: any) {
+      console.error("checkCode error:", err);
+      return c.json({ success: false, message: "Error checking organization code availability" }, 500);
+    }
+  },
+
   // GET /api/organizations?userId=xxx
   async getOrganizations(c: Context<AppEnv>) {
     try {

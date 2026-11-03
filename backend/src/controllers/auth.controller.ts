@@ -3,6 +3,7 @@ import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { getNextId, hashPassword, verifyPassword, sha256Hex } from "../utils/id-generator";
 import { getAuthUser } from "../middleware/auth.middleware";
+import { validateEmailFormat, validateAndNormalizeMobile } from "../utils/validation";
 
 export interface UserModel {
   id: string;
@@ -35,8 +36,9 @@ export const authController = {
 
       const db = getUniversalDb(c.env?.DB);
 
-      // Query user by email or user_name
-      const row = (await db
+      // Query user(s) by email or user_name
+      // If multiple users share the same username, authenticate against the matched records
+      const candidates = (await db
         .prepare(
           `SELECT 
             u.id, 
@@ -53,19 +55,27 @@ export const authController = {
           WHERE LOWER(u.email) = ? OR LOWER(u.user_name) = ?`
         )
         .bind(identifier, identifier)
-        .get()) as any;
+        .all()) as any[];
 
-      if (!row) {
+      if (!candidates || candidates.length === 0) {
         return c.json({
           success: false,
           message: "Invalid username/email or password.",
         }, 401);
       }
 
-      // Verify password securely
-      const storedHash = row.passwordHash || row.password;
-      const isValid = await verifyPassword(password, storedHash);
-      if (!isValid) {
+      // Check passwords against candidate users until a valid match is found
+      let row: any = null;
+      for (const candidate of candidates) {
+        const storedHash = candidate.passwordHash || candidate.password;
+        const isValid = await verifyPassword(password, storedHash);
+        if (isValid) {
+          row = candidate;
+          break;
+        }
+      }
+
+      if (!row) {
         return c.json({
           success: false,
           message: "Invalid username/email or password.",
@@ -141,32 +151,157 @@ export const authController = {
     }
   },
 
+  async checkUsername(c: Context<AppEnv>) {
+    try {
+      const username = (c.req.query("username") || "").trim().toLowerCase();
+      if (!username) {
+        return c.json({ success: false, available: false, message: "Username is required" }, 400);
+      }
+
+      // Basic format check
+      if (username.length < 3) {
+        return c.json({ success: false, available: false, message: "Username must be at least 3 characters long" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const existing = (await db
+        .prepare(`SELECT id FROM users WHERE LOWER(user_name) = ?`)
+        .bind(username)
+        .get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This username is already taken. Please choose another username.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Username is available.",
+      });
+    } catch (err: any) {
+      console.error("checkUsername error:", err);
+      return c.json({ success: false, message: "Error checking username availability" }, 500);
+    }
+  },
+
+  async checkEmail(c: Context<AppEnv>) {
+    try {
+      const email = (c.req.query("email") || "").trim().toLowerCase();
+      if (!email) {
+        return c.json({ success: false, available: false, message: "Email is required" }, 400);
+      }
+
+      // Professional email format validation
+      if (!validateEmailFormat(email)) {
+        return c.json({ success: false, available: false, message: "Please enter a valid email address." }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const existing = (await db
+        .prepare(`SELECT id FROM users WHERE LOWER(email) = ?`)
+        .bind(email)
+        .get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This email address is already registered.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Email address is available.",
+      });
+    } catch (err: any) {
+      console.error("checkEmail error:", err);
+      return c.json({ success: false, message: "Error checking email availability" }, 500);
+    }
+  },
+
   async signup(c: Context<AppEnv>) {
     try {
       const body = await c.req.json();
       const email = (body.email || "").trim().toLowerCase();
       const userName = (body.userName || body.name || "").trim().toLowerCase();
       const password = (body.password || "").trim();
+      const rawMobile = (body.mobileNumber || body.mobile || "").trim();
+      const countryCode = (body.countryCode || "IN").trim().toUpperCase();
 
-      if (!email || !password) {
-        return c.json({ success: false, message: "Email and password are required" }, 400);
+      if (!email || !password || !userName) {
+        return c.json({ success: false, message: "Username, email, and password are required" }, 400);
+      }
+
+      // Professional email format validation
+      if (!validateEmailFormat(email)) {
+        return c.json({ success: false, message: "Please enter a valid email address." }, 400);
+      }
+
+      if (userName.length < 3) {
+        return c.json({ success: false, message: "Username must be at least 3 characters long" }, 400);
+      }
+
+      // International mobile number validation and E.164 normalization
+      let normalizedMobile = "";
+      const nationalInput = (body.nationalNumber || body.mobileNumber || body.mobile || "").trim();
+      if (nationalInput) {
+        const mobileCheck = validateAndNormalizeMobile(nationalInput, countryCode);
+        if (!mobileCheck.isValid) {
+          return c.json({ success: false, message: mobileCheck.message || "Please enter a valid mobile number." }, 400);
+        }
+        normalizedMobile = mobileCheck.e164 || nationalInput;
       }
 
       const db = getUniversalDb(c.env?.DB);
 
-      // Check if user already exists
-      const exists = (await db
-        .prepare(`SELECT id FROM users WHERE LOWER(email) = ? OR LOWER(user_name) = ?`)
-        .bind(email, userName)
+      // Check specifically if email already exists (emails must be globally unique)
+      const emailExists = (await db
+        .prepare(`SELECT id FROM users WHERE LOWER(email) = ?`)
+        .bind(email)
         .get()) as any;
 
-      if (exists) {
-        return c.json({ success: false, message: "User with this email or username already exists" }, 409);
+      if (emailExists) {
+        return c.json({ success: false, message: "This email address is already registered." }, 409);
       }
 
-      const orgName = (body.organization || "Default Org").trim();
-      const orgShort = (body.shortCode || "HQ").trim().toUpperCase();
+      const orgName = (body.organization || "").trim().replace(/\s+/g, " ");
+      const orgShort = (body.shortCode || "").trim().toUpperCase();
       const now = new Date().toISOString();
+
+      if (!orgName || !orgShort) {
+        return c.json({ success: false, message: "Organization name and short code are required" }, 400);
+      }
+
+      // Check organization uniqueness before inserting user or organization
+      const orgNameExists = (await db
+        .prepare(`SELECT id FROM organizations WHERE LOWER(TRIM(name)) = LOWER(?)`)
+        .bind(orgName)
+        .get()) as any;
+
+      if (orgNameExists) {
+        return c.json({
+          success: false,
+          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
+        }, 409);
+      }
+
+      const orgCodeExists = (await db
+        .prepare(`SELECT id FROM organizations WHERE UPPER(TRIM(short_code)) = ?`)
+        .bind(orgShort)
+        .get()) as any;
+
+      if (orgCodeExists) {
+        return c.json({
+          success: false,
+          message: "This organization code is already taken. Please choose another code.",
+        }, 409);
+      }
 
       // Generate meaningful sequential IDs
       const { displayId: userDisplayId } = await getNextId(db, "USER");
@@ -176,18 +311,17 @@ export const authController = {
       const orgId = `org_${orgShort.toLowerCase()}_${Date.now()}`;
       const hashedPassword = await hashPassword(password);
 
-      // 1. Insert organization
+      // Perform atomic insertion of Organization, User, and UserOrganization link
+      // Never use ON CONFLICT DO UPDATE on organizations here; public signup creates NEW organizations only
       await db
         .prepare(
           `INSERT INTO organizations (id, display_id, name, short_code, owner_user_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(short_code) DO UPDATE SET name = excluded.name`
+           VALUES (?, ?, ?, ?, ?, ?)`
         )
         .run(orgId, orgDisplayId, orgName, orgShort, newUserId, now);
 
-      const orgRow = (await db.prepare(`SELECT id, display_id as displayId FROM organizations WHERE short_code = ?`).bind(orgShort).get()) as any;
-      const actualOrgId = orgRow ? orgRow.id : orgId;
-      const actualOrgDisplayId = orgRow ? orgRow.displayId : orgDisplayId;
+      const actualOrgId = orgId;
+      const actualOrgDisplayId = orgDisplayId;
 
       // 2. Insert user with hashed password and readable display_id
       await db
@@ -203,7 +337,7 @@ export const authController = {
           password, // for backward-compatibility if referenced
           hashedPassword,
           email,
-          body.mobileNumber || "",
+          normalizedMobile || body.mobileNumber || "",
           body.userType || "Admin",
           now
         );
@@ -211,7 +345,7 @@ export const authController = {
       // 3. Link user as Owner in user_organizations
       await db
         .prepare(
-          `INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role, created_at)
+          `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
            VALUES (?, ?, ?, 'Owner', ?)`
         )
         .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, newUserId, actualOrgId, now);
@@ -222,7 +356,7 @@ export const authController = {
         name: body.name || userName || "User",
         userName: userName || email.split("@")[0],
         email,
-        mobileNumber: body.mobileNumber || "",
+        mobileNumber: normalizedMobile || body.mobileNumber || "",
         organization: orgName,
         shortCode: orgShort,
         organizationId: actualOrgId,
@@ -262,6 +396,22 @@ export const authController = {
         ],
       }, 201);
     } catch (err: any) {
+      const errMsg = err?.message || "";
+      if (errMsg.includes("organizations.name") || errMsg.includes("idx_organizations_name_nocase")) {
+        return c.json({
+          success: false,
+          message: "This organization is already registered with Cafe4x. Please contact your organization administrator.",
+        }, 409);
+      }
+      if (errMsg.includes("organizations.short_code") || errMsg.includes("idx_organizations_short_code_nocase")) {
+        return c.json({
+          success: false,
+          message: "This organization code is already taken. Please choose another code.",
+        }, 409);
+      }
+      if (errMsg.includes("UNIQUE constraint failed: users.email") || errMsg.includes("idx_users_email_nocase")) {
+        return c.json({ success: false, message: "This email address is already registered. Please use another email." }, 409);
+      }
       return c.json({ success: false, message: err.message || "Invalid request" }, 400);
     }
   },

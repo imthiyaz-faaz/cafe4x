@@ -158,33 +158,19 @@ export const authController = {
         return c.json({ success: false, available: false, message: "Username is required" }, 400);
       }
 
-      // Basic format check
       if (username.length < 3) {
         return c.json({ success: false, available: false, message: "Username must be at least 3 characters long" }, 400);
       }
 
-      const db = getUniversalDb(c.env?.DB);
-      const existing = (await db
-        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
-        .bind(username)
-        .get()) as any;
-
-      if (existing) {
-        return c.json({
-          success: true,
-          available: false,
-          message: "This username is already taken. Please choose another username.",
-        });
-      }
-
+      // Usernames do not need to be unique; duplicates are allowed
       return c.json({
         success: true,
         available: true,
-        message: "Username is available.",
+        message: "Username is valid.",
       });
     } catch (err: any) {
       console.error("checkUsername error:", err);
-      return c.json({ success: false, message: "Error checking username availability" }, 500);
+      return c.json({ success: false, message: "Error checking username" }, 500);
     }
   },
 
@@ -260,19 +246,7 @@ export const authController = {
 
       const db = getUniversalDb(c.env?.DB);
 
-      // Check specifically if username already exists (usernames must be globally unique)
-      const usernameExists = (await db
-        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
-        .bind(userName)
-        .get()) as any;
 
-      if (usernameExists) {
-        return c.json({
-          success: false,
-          code: "USERNAME_ALREADY_EXISTS",
-          message: "This username is already taken. Please choose another username.",
-        }, 409);
-      }
 
       // Check specifically if email already exists (emails must be globally unique)
       const emailExists = (await db
@@ -405,13 +379,7 @@ export const authController = {
           message: "This organization code is already taken. Please choose another code.",
         }, 409);
       }
-      if (errMsg.includes("users.user_name") || errMsg.includes("idx_users_username_nocase")) {
-        return c.json({
-          success: false,
-          code: "USERNAME_ALREADY_EXISTS",
-          message: "This username is already taken. Please choose another username.",
-        }, 409);
-      }
+
       if (errMsg.includes("users.email") || errMsg.includes("idx_users_email_nocase")) {
         return c.json({
           success: false,

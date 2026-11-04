@@ -55,6 +55,10 @@ export const userApi = {
     return res.users || [];
   },
 
+  async checkUsername(username: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {
+    return await api.get<{ success: boolean; available: boolean; message: string }>("/api/users/check-username", { username: username.trim() }, { signal });
+  },
+
   async getUserById(id: string): Promise<UserItem> {
     const res = await api.get<{ success: boolean; user: UserItem }>(`/api/users/${id}`);
     return res.user;

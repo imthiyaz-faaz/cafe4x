@@ -23,6 +23,66 @@ export interface UserModel {
 }
 
 export const userController = {
+  // GET /api/users/check-username?username=xyz
+  async checkUsername(c: Context<AppEnv>) {
+    try {
+      const username = (c.req.query("username") || "").trim().toLowerCase();
+      if (!username) {
+        return c.json({ success: false, available: false, message: "Username is required" }, 400);
+      }
+
+      if (username.length < 3) {
+        return c.json({ success: false, available: false, message: "Username must be at least 3 characters long" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      const org = await resolveAuthorizedOrg(c).catch(() => null);
+
+      if (org) {
+        // Check organization-level username duplicate
+        const existingInOrg = (await db
+          .prepare(
+            `SELECT u.id, u.user_name as userName
+             FROM users u
+             JOIN user_organizations uo ON u.id = uo.user_id
+             WHERE uo.organization_id = ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
+          )
+          .bind(org.organizationId, username)
+          .get()) as any;
+
+        if (existingInOrg) {
+          return c.json({
+            success: true,
+            available: false,
+            message: "This username already exists in this organization. Please choose another username.",
+          });
+        }
+      } else {
+        // Fallback to global user check
+        const existing = (await db
+          .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
+          .bind(username)
+          .get()) as any;
+
+        if (existing) {
+          return c.json({
+            success: true,
+            available: false,
+            message: "This username is already taken. Please choose another username.",
+          });
+        }
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Username is available.",
+      });
+    } catch (err: any) {
+      console.error("userController.checkUsername error:", err);
+      return c.json({ success: false, message: "Error checking username availability" }, 500);
+    }
+  },
   // GET /api/users
   async getUsers(c: Context<AppEnv>) {
     try {
@@ -87,6 +147,14 @@ export const userController = {
 
       return c.json({ success: true, users: safeUsers });
     } catch (err: any) {
+      const errMsg = err?.message || "";
+      if (errMsg.includes("USERNAME_ALREADY_EXISTS_IN_ORG") || errMsg.includes("trg_prevent_dup_username")) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_EXISTS_IN_ORG",
+          message: "This username already exists in this organization. Please choose another username.",
+        }, 409);
+      }
       return c.json({ success: false, message: err.message }, 500);
     }
   },
@@ -166,13 +234,44 @@ export const userController = {
 
       const db = getUniversalDb(c.env?.DB);
       const email = body.email.trim().toLowerCase();
-      const userName = body.userName.trim().toLowerCase();
+      const userName = body.userName.trim();
+
+      if (userName.length < 3) {
+        return c.json({ success: false, message: "Username must be at least 3 characters long" }, 400);
+      }
+
+      // Check if username already exists in this organization across both Admin and Provider roles
+      const usernameInOrg = (await db
+        .prepare(
+          `SELECT u.id, u.user_name as userName, u.user_type as userType
+           FROM users u
+           JOIN user_organizations uo ON u.id = uo.user_id
+           WHERE uo.organization_id = ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
+        )
+        .bind(org.organizationId, userName)
+        .get()) as any;
+
+      if (usernameInOrg) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_EXISTS_IN_ORG",
+          message: `Username "${userName}" is already taken in this organization by a ${usernameInOrg.userType || "user"}.`,
+        }, 409);
+      }
 
       // Check if user already exists
       let existingUser = (await db
-        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email FROM users WHERE LOWER(email) = ? OR LOWER(user_name) = ?`)
+        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email FROM users WHERE LOWER(TRIM(email)) = LOWER(?) OR LOWER(TRIM(user_name)) = LOWER(?)`)
         .bind(email, userName)
         .get()) as any;
+
+      if (existingUser && existingUser.userName.trim().toLowerCase() === userName.toLowerCase() && existingUser.email.trim().toLowerCase() !== email) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_TAKEN",
+          message: "This username is already taken. Please choose another username.",
+        }, 409);
+      }
 
       const newUserId = existingUser ? existingUser.id : await generateId(db, "USR");
       const displayId = newUserId;
@@ -284,6 +383,32 @@ const uorId = await generateId(db, "UOR");
       }
 
       const targetUserId = link.userId;
+      const newUserName = body.userName ? body.userName.trim() : null;
+
+      if (newUserName) {
+        if (newUserName.length < 3) {
+          return c.json({ success: false, message: "Username must be at least 3 characters long" }, 400);
+        }
+
+        const usernameInOrg = (await db
+          .prepare(
+            `SELECT u.id, u.user_name as userName, u.user_type as userType
+             FROM users u
+             JOIN user_organizations uo ON u.id = uo.user_id
+             WHERE uo.organization_id = ? AND u.id != ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
+          )
+          .bind(org.organizationId, targetUserId, newUserName)
+          .get()) as any;
+
+        if (usernameInOrg) {
+          return c.json({
+            success: false,
+            code: "USERNAME_ALREADY_EXISTS_IN_ORG",
+            message: `Username "${newUserName}" is already taken in this organization.`,
+          }, 409);
+        }
+      }
+
       const newHash = body.password ? await hashPassword(body.password.trim()) : null;
 
       await db
@@ -317,6 +442,14 @@ const uorId = await generateId(db, "UOR");
 
       return c.json({ success: true, user: updated });
     } catch (err: any) {
+      const errMsg = err?.message || "";
+      if (errMsg.includes("USERNAME_ALREADY_EXISTS_IN_ORG") || errMsg.includes("trg_prevent_dup_username")) {
+        return c.json({
+          success: false,
+          code: "USERNAME_ALREADY_EXISTS_IN_ORG",
+          message: "This username already exists in this organization. Please choose another username.",
+        }, 409);
+      }
       return c.json({ success: false, message: err.message }, 500);
     }
   },

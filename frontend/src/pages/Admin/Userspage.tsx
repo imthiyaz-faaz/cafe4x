@@ -108,7 +108,7 @@ export default function UsersPage() {
         u.name.toLowerCase().includes(q) ||
         u.userName.toLowerCase().includes(q) ||
         u.email.toLowerCase().includes(q) ||
-        u.mobileNumber.toLowerCase().includes(q) ||
+        (u.mobileNumber || "").toLowerCase().includes(q) ||
         u.userType.toLowerCase().includes(q)
     );
   }, [users, searchQuery]);
@@ -184,10 +184,6 @@ export default function UsersPage() {
 
     const updated = [userWithOrg, ...users];
     saveUsers(updated);
-
-    userApi.createUser(userWithOrg).catch((err) => {
-      console.warn("Could not sync user to backend:", err);
-    });
   };
 
   // Open Edit User Modal
@@ -201,10 +197,6 @@ export default function UsersPage() {
   const handleUserUpdated = (updatedUser: UserItem) => {
     const updated = users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
     saveUsers(updated);
-
-    userApi.updateUser(updatedUser.id, updatedUser).catch((err) => {
-      console.warn("Could not sync user update to backend:", err);
-    });
   };
 
   // Handle Delete User

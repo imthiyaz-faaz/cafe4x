@@ -59,6 +59,7 @@ export default function Signup() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [isStep1Submitting, setIsStep1Submitting] = useState(false)
 
   // Countries and selection
   const countries = useMemo(() => getAllCountries(), [])
@@ -126,6 +127,69 @@ export default function Signup() {
   }, [data.mobile, selectedCountry])
 
 
+
+  // Real-time username validation state (usernames must be unique)
+  const [usernameStatus, setUsernameStatus] = useState<
+    'idle' | 'checking' | 'valid' | 'invalid'
+  >('idle')
+  const [usernameMessage, setUsernameMessage] = useState('')
+  const usernameAbortRef = useRef<AbortController | null>(null)
+
+  // Debounced Username Validation
+  useEffect(() => {
+    const trimmed = data.username.trim()
+
+    if (usernameAbortRef.current) {
+      usernameAbortRef.current.abort()
+      usernameAbortRef.current = null
+    }
+
+    if (!trimmed) {
+      setUsernameStatus('idle')
+      setUsernameMessage('')
+      return
+    }
+
+    if (trimmed.length < 3) {
+      setUsernameStatus('invalid')
+      setUsernameMessage('Username must be at least 3 characters long.')
+      return
+    }
+
+    setUsernameStatus('checking')
+    setUsernameMessage('Checking availability...')
+
+    const controller = new AbortController()
+    usernameAbortRef.current = controller
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await authApi.checkUsername(trimmed, controller.signal)
+        if (controller.signal.aborted) return
+
+        if (res.available) {
+          setUsernameStatus('valid')
+          setUsernameMessage(res.message || 'Username is available.')
+        } else {
+          setUsernameStatus('invalid')
+          setUsernameMessage(
+            res.message || 'This username is already taken. Please choose another username.'
+          )
+        }
+      } catch (err: any) {
+        if (controller.signal.aborted) return
+        setUsernameStatus('invalid')
+        setUsernameMessage(
+          err.message || 'Error checking username availability.'
+        )
+      }
+    }, 500)
+
+    return () => {
+      clearTimeout(timer)
+      controller.abort()
+    }
+  }, [data.username])
 
   // Real-time email validation state (emails must be unique)
   const [emailStatus, setEmailStatus] = useState<
@@ -282,28 +346,29 @@ export default function Signup() {
     setError('')
 
     if (step === 1) {
-      if (!data.username.trim() || !data.name.trim() || !data.email.trim() || !data.password.trim() || !data.mobile.trim()) {
+      const cleanUsername = data.username.trim().toLowerCase()
+      const cleanName = data.name.trim()
+      const cleanEmail = data.email.trim().toLowerCase()
+      const cleanPassword = data.password.trim()
+      const cleanMobile = data.mobile.trim()
+
+      if (!cleanUsername || !cleanName || !cleanEmail || !cleanPassword || !cleanMobile) {
         setError('Please fill in all required fields.')
         return
       }
 
-      if (data.username.trim().length < 3) {
+      if (cleanUsername.length < 3) {
         setError('Username must be at least 3 characters long.')
         return
       }
 
-      if (!validateEmailFormat(data.email.trim())) {
+      if (cleanPassword.length < 8) {
+        setError('Password must be at least 8 characters long.')
+        return
+      }
+
+      if (!validateEmailFormat(cleanEmail)) {
         setError('Please enter a valid email address.')
-        return
-      }
-
-      if (emailStatus === 'checking') {
-        setError('Please wait while we verify your email address availability.')
-        return
-      }
-
-      if (emailStatus === 'invalid') {
-        setError(emailMessage || 'Please provide a valid, unregistered email address.')
         return
       }
 
@@ -312,8 +377,46 @@ export default function Signup() {
         return
       }
 
-      setStep(2)
-      return
+      if (usernameStatus === 'checking' || emailStatus === 'checking') {
+        setError('Please wait while we verify your details.')
+        return
+      }
+
+      // Live revalidation of both username and email availability before advancing to Step 2
+      setIsStep1Submitting(true)
+      try {
+        const [usernameRes, emailRes] = await Promise.all([
+          authApi.checkUsername(cleanUsername),
+          authApi.checkEmail(cleanEmail),
+        ])
+
+        if (!usernameRes.available) {
+          setUsernameStatus('invalid')
+          setUsernameMessage(usernameRes.message || 'This username is already taken. Please choose another username.')
+          setError(usernameRes.message || 'This username is already taken. Please choose another username.')
+          return
+        }
+
+        if (!emailRes.available) {
+          setEmailStatus('invalid')
+          setEmailMessage(emailRes.message || 'This email address is already registered.')
+          setError(emailRes.message || 'This email address is already registered.')
+          return
+        }
+
+        setUsernameStatus('valid')
+        setUsernameMessage(usernameRes.message || 'Username is available.')
+        setEmailStatus('valid')
+        setEmailMessage(emailRes.message || 'Email address is available.')
+
+        setStep(2)
+        return
+      } catch (err: any) {
+        setError(err.message || 'Error verifying account availability. Please try again.')
+        return
+      } finally {
+        setIsStep1Submitting(false)
+      }
     }
 
     if (step === 2) {
@@ -572,9 +675,41 @@ export default function Signup() {
                         onChange={(event) =>
                           updateField('username', event.target.value)
                         }
-                        className={inputClass}
+                        className={`${inputClass} pr-10`}
                       />
+
+                      {/* Username Status Indicator inside Input */}
+                      <div className="absolute right-3.5 top-1/2 -translate-y-1/2 flex items-center">
+                        {usernameStatus === 'checking' && (
+                          <Loader2 size={18} className="animate-spin text-[#8B5738]" />
+                        )}
+                        {usernameStatus === 'valid' && (
+                          <CheckCircle2 size={18} className="text-emerald-600" />
+                        )}
+                        {usernameStatus === 'invalid' && (
+                          <AlertCircle size={18} className="text-rose-600" />
+                        )}
+                      </div>
                     </div>
+
+                    {/* Username feedback message */}
+                    {usernameStatus === 'checking' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs text-[#8B5738]">
+                        Checking availability...
+                      </p>
+                    )}
+                    {usernameStatus === 'valid' && (
+                      <p className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                        <Check size={14} className="stroke-[2.5]" />
+                        {usernameMessage}
+                      </p>
+                    )}
+                    {usernameStatus === 'invalid' && (
+                      <p role="alert" className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-rose-600">
+                        <AlertCircle size={14} className="shrink-0" />
+                        {usernameMessage}
+                      </p>
+                    )}
                   </div>
 
                   {/* Name */}
@@ -861,15 +996,30 @@ export default function Signup() {
                       !data.name.trim() ||
                       !data.email.trim() ||
                       !data.password.trim() ||
+                      data.password.trim().length < 8 ||
                       !data.mobile.trim() ||
+                      usernameStatus === 'checking' ||
+                      usernameStatus === 'invalid' ||
+                      usernameStatus === 'idle' ||
                       emailStatus === 'checking' ||
                       emailStatus === 'invalid' ||
                       emailStatus === 'idle' ||
-                      mobileStatus !== 'valid'
+                      mobileStatus !== 'valid' ||
+                      isStep1Submitting
                     }
                     className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
                   >
-                    {emailStatus === 'checking' ? (
+                    {isStep1Submitting ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Verifying details...
+                      </>
+                    ) : usernameStatus === 'checking' ? (
+                      <>
+                        <Loader2 size={18} className="animate-spin" />
+                        Checking username...
+                      </>
+                    ) : emailStatus === 'checking' ? (
                       <>
                         <Loader2 size={18} className="animate-spin" />
                         Validating email...

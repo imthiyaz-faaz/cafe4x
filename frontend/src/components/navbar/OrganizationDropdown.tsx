@@ -5,8 +5,6 @@ import { organizationApi, type Organization } from "../../services/organizationA
 import { locationApi, type LocationItem } from "../../services/locations";
 import { useAuth } from "../common/AuthContext";
 import CreateFormModal, { FormRow } from "../common/CreateFormModal";
-import { SUPPORTED_CURRENCIES } from "../../utils/currency";
-import { Search } from "lucide-react";
 
 interface OrganizationDropdownProps {
   userRole?: "Admin" | "Provider" | string;
@@ -33,7 +31,6 @@ export default function OrganizationDropdown({
   const [newOrgName, setNewOrgName] = useState("");
   const [newOrgShortCode, setNewOrgShortCode] = useState("");
   const [newOrgCurrency, setNewOrgCurrency] = useState("INR");
-  const [currencySearch, setCurrencySearch] = useState("");
   const [createLoading, setCreateLoading] = useState(false);
   const [createError, setCreateError] = useState("");
 
@@ -290,7 +287,6 @@ export default function OrganizationDropdown({
       setNewOrgName("");
       setNewOrgShortCode("");
       setNewOrgCurrency("INR");
-      setCurrencySearch("");
       setIsCreateModalOpen(false);
       setIsOpen(false);
 
@@ -584,40 +580,18 @@ export default function OrganizationDropdown({
           </FormRow>
 
           <FormRow label="Currency" required>
-            <div className="flex flex-col gap-2">
-              <div className="relative">
-                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#A08C7D]" />
-                <input
-                  type="text"
-                  placeholder="Search currency by name or code..."
-                  value={currencySearch}
-                  onChange={(e) => setCurrencySearch(e.target.value)}
-                  className="w-full rounded-xl border border-[#E5D9CE] bg-[#FAF6F1] pl-10 pr-4 py-2 text-xs text-[#342219] placeholder:text-[#A99A8E] outline-none transition focus:border-[#A66C43] focus:bg-white"
-                />
-              </div>
-              <select
-                value={newOrgCurrency}
-                onChange={(e) => setNewOrgCurrency(e.target.value)}
-                className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm text-[#342219] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
-                required
-              >
-                {SUPPORTED_CURRENCIES
-                  .filter((c) => {
-                    const q = currencySearch.trim().toLowerCase();
-                    if (!q) return true;
-                    return (
-                      c.code.toLowerCase().includes(q) ||
-                      c.name.toLowerCase().includes(q) ||
-                      c.symbol.toLowerCase().includes(q)
-                    );
-                  })
-                  .map((c) => (
-                    <option key={c.code} value={c.code}>
-                      {c.code} - {c.name} ({c.symbol})
-                    </option>
-                  ))}
-              </select>
-            </div>
+            <select
+              value={newOrgCurrency}
+              onChange={(e) => setNewOrgCurrency(e.target.value)}
+              className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm text-[#342219] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
+              required
+            >
+              <option value="INR">INR - Indian Rupee (₹)</option>
+              <option value="USD">USD - US Dollar ($)</option>
+              <option value="AED">AED - UAE Dirham (د.إ)</option>
+              <option value="GBP">GBP - British Pound (£)</option>
+              <option value="EUR">EUR - Euro (€)</option>
+            </select>
           </FormRow>
 
           {createError && (

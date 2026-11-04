@@ -1,4 +1,3 @@
-import { formatCurrency } from "../../utils/currency";
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -64,7 +63,12 @@ useEffect(() => {
 
   // Format item price based on organization currency
 const formatPrice = (amount: number) => {
-  return formatCurrency(amount, currency || "INR");
+  if (!currency) return "";
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency,
+  }).format(amount);
 };
 
   const [items, setItems] = useState<MenuItem[]>(() => {

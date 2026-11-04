@@ -56,13 +56,6 @@ export const organizationApi = {
     );
     return res.organization;
   },
-
-  async getOrganization(idOrCode: string): Promise<Organization> {
-    const res = await api.get<{ success: boolean; organization: Organization }>(
-      `/api/organizations/${encodeURIComponent(idOrCode)}`
-    );
-    return res.organization;
-  },
 };
 
 export const organizationService = organizationApi;

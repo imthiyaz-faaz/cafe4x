@@ -1,5 +1,3 @@
-import { formatCurrency } from "../../utils/currency";
-import { useOrgCurrency } from "../../hooks/useOrgCurrency";
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
@@ -38,7 +36,6 @@ export interface UserOrderItem {
 }
 
 export default function UserOrderPage() {
-  const { currency: orgCurrency } = useOrgCurrency("Admin");
   const { locationId, seatNumber, shortCode, qrToken } = useParams<{
     locationId?: string;
     seatNumber?: string;
@@ -796,7 +793,7 @@ export default function UserOrderPage() {
             <div className="flex flex-col sm:items-end gap-1.5">
               <div className="flex items-center gap-3 bg-[#FAF4ED] border border-[#E8DED4] px-4 py-2 rounded-2xl shadow-xs">
                 <div className="text-xs text-[#704225]">
-                  <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">{formatCurrency(grandTotal, orgCurrency)}</span>
+                  <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">₹{grandTotal}</span>
                 </div>
                 <button
                   type="button"
@@ -868,7 +865,7 @@ export default function UserOrderPage() {
                       </div>
                     )}
                     <div className="absolute top-3 right-3 rounded-lg bg-black/65 px-2.5 py-1 text-xs font-black text-white backdrop-blur-xs shadow-xs">
-                      {formatCurrency(item.price, orgCurrency)}
+                      ₹{item.price}
                     </div>
                   </div>
 
@@ -939,7 +936,7 @@ export default function UserOrderPage() {
                     <div className="mt-4 flex items-center justify-between border-t border-[#F0E6DB] pt-3">
                       <div>
                         <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Price</span>
-                        <span className="text-base font-black text-[#754329]">{formatCurrency(item.price, orgCurrency)}</span>
+                        <span className="text-base font-black text-[#754329]">₹{item.price}</span>
                       </div>
 
                       <div className="flex items-center gap-2 rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] p-1">
@@ -1037,7 +1034,7 @@ export default function UserOrderPage() {
                                   </span>
                                 )
                               ) : null}
-                              <span className="text-[10px] text-stone-500">{formatCurrency(it.price, orgCurrency)} each</span>
+                              <span className="text-[10px] text-stone-500">₹{it.price} each</span>
                             </div>
                           </div>
                         </div>
@@ -1061,7 +1058,7 @@ export default function UserOrderPage() {
                               <Plus size={11} />
                             </button>
                           </div>
-                          <span className="w-14 text-right font-bold text-[#342219]">{formatCurrency(it.totalPrice, orgCurrency)}</span>
+                          <span className="w-14 text-right font-bold text-[#342219]">₹{it.totalPrice}</span>
                         </div>
                       </div>
                     );
@@ -1070,7 +1067,7 @@ export default function UserOrderPage() {
 
                 <div className="mt-3 pt-2.5 border-t border-[#DEC5B0] flex items-center justify-between text-xs font-bold">
                   <span className="text-[#8A7667]">Item Total</span>
-                  <span className="text-sm font-black text-[#754329]">{formatCurrency(grandTotal, orgCurrency)}</span>
+                  <span className="text-sm font-black text-[#754329]">₹{grandTotal}</span>
                 </div>
               </div>
             )}
@@ -1093,7 +1090,7 @@ export default function UserOrderPage() {
                     </span>
                   </div>
                   <div className="text-base font-black text-amber-300">
-                    Total: {formatCurrency(grandTotal, orgCurrency)}
+                    Total: ₹{grandTotal}
                   </div>
                 </div>
               </div>
@@ -1169,7 +1166,7 @@ export default function UserOrderPage() {
                         <span className="text-gray-500 ml-2">x {it.qty}</span>
                       </div>
                       <div className="font-bold text-[#342219] text-sm">
-                        {formatCurrency(Number(it.price) * Number(it.qty), orgCurrency)}
+                        ₹{Number(it.price) * Number(it.qty)}
                       </div>
                     </div>
                   ))}
@@ -1182,7 +1179,7 @@ export default function UserOrderPage() {
                     <span className="text-xs text-gray-500">Includes all taxes and delivery to desk</span>
                   </div>
                   <div className="text-xl font-black text-[#754329]">
-                    {formatCurrency(placedOrder.total, orgCurrency)}
+                    ₹{placedOrder.total}
                   </div>
                 </div>
 

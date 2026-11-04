@@ -1,4 +1,3 @@
-import { formatCurrency } from "../../utils/currency";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -123,7 +122,12 @@ export default function OrdersPage() {
   }, [currentShortCode]);
 
   const formatPrice = (amount: number) => {
-    return formatCurrency(amount, currency || "INR");
+    if (!currency) return "";
+
+    return new Intl.NumberFormat("en-IN", {
+      style: "currency",
+      currency,
+    }).format(amount);
   };
 
   // Timezone & Period Configuration

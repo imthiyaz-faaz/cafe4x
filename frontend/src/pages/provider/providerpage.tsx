@@ -1,6 +1,4 @@
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
-import { formatCurrency, getCurrencySymbol } from "../../utils/currency";
-import { useOrgCurrency } from "../../hooks/useOrgCurrency";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import {
@@ -312,8 +310,6 @@ export default function ProviderPage() {
   const params = useParams();
   const urlShortCode = params.shortCode ? params.shortCode.toUpperCase() : "";
   const { user: authUser } = useAuth();
-  const { currency: orgCurrency } = useOrgCurrency("Provider");
-  const currencySymbol = getCurrencySymbol(orgCurrency);
 
   // Get current logged in user reactively from AuthContext or localStorage
   const currentUser = useMemo(() => {
@@ -1181,7 +1177,7 @@ export default function ProviderPage() {
                                       {summaryText}
                                     </span>
                                     <span className="font-bold text-xs text-stone-900">
-                                      {formatCurrency(order.total, orgCurrency)}
+                                      ₹ {order.total.toFixed(2)}
                                     </span>
                                   </div>
 
@@ -1385,7 +1381,7 @@ export default function ProviderPage() {
                                             {it.name}
                                           </h5>
                                           <span className="text-xs text-[#8A7667]">
-                                            Unit Price: {formatCurrency(it.price, orgCurrency)}
+                                            Unit Price: ₹{it.price}
                                           </span>
                                         </div>
                                       </div>
@@ -1395,7 +1391,7 @@ export default function ProviderPage() {
                                           Qty: {it.qty}
                                         </div>
                                         <div className="text-sm font-black text-[#342219] w-20 text-right">
-                                          {formatCurrency(it.price * it.qty, orgCurrency)}
+                                          ₹ {(it.price * it.qty).toFixed(2)}
                                         </div>
                                       </div>
                                     </div>
@@ -1436,7 +1432,7 @@ export default function ProviderPage() {
                                       <div className="divide-y divide-[#F0E6DB] pt-2">
                                         <div className="flex items-center justify-between py-1.5 text-stone-700">
                                           <span>Original Amount (Subtotal)</span>
-                                          <span className="font-semibold">{formatCurrency(subtotal, orgCurrency)}</span>
+                                          <span className="font-semibold">₹ {subtotal.toFixed(2)}</span>
                                         </div>
 
                                         {/* Adjustment Amount Row with inline update */}
@@ -1467,7 +1463,7 @@ export default function ProviderPage() {
                                               </div>
                                             ) : (
                                               <span className={`font-semibold ${currentAdj > 0 ? "text-emerald-700" : currentAdj < 0 ? "text-rose-700" : ""}`}>
-                                                {currentAdj >= 0 ? `+ ${formatCurrency(currentAdj, orgCurrency)}` : `- ${formatCurrency(Math.abs(currentAdj), orgCurrency)}`}
+                                                {currentAdj >= 0 ? `+ ₹ ${currentAdj.toFixed(2)}` : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
                                               </span>
                                             )}
                                           </div>
@@ -1476,13 +1472,13 @@ export default function ProviderPage() {
                                         <div className="flex items-center justify-between py-1.5 text-stone-700">
                                           <span>Discount</span>
                                           <span className="font-semibold text-rose-600">
-                                            {discount > 0 ? `- ${formatCurrency(discount, orgCurrency)}` : formatCurrency(0, orgCurrency)}
+                                            {discount > 0 ? `- ₹ ${discount.toFixed(2)}` : "₹ 0.00"}
                                           </span>
                                         </div>
 
                                         <div className="flex items-center justify-between pt-2 text-sm font-black text-[#342219]">
                                           <span>Final Net Amount</span>
-                                          <span className="text-[#28A745]">{formatCurrency(netTotal, orgCurrency)}</span>
+                                          <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
                                         </div>
                                       </div>
                                     </div>
@@ -1814,7 +1810,7 @@ export default function ProviderPage() {
                                       <span>
                                         {it.name} &times; {it.qty}
                                       </span>
-                                      <span>{formatCurrency(it.price * it.qty, orgCurrency)}</span>
+                                      <span>₹{it.price * it.qty}</span>
                                     </div>
                                   ))}
 
@@ -1822,25 +1818,25 @@ export default function ProviderPage() {
                                   <div className="border-t border-[#E8DED4] pt-2 mt-2 space-y-1 text-[11px] text-stone-600">
                                     <div className="flex justify-between">
                                       <span>Original Subtotal:</span>
-                                      <span className="font-medium">{formatCurrency(subtotal, orgCurrency)}</span>
+                                      <span className="font-medium">₹ {subtotal.toFixed(2)}</span>
                                     </div>
                                     {currentAdj !== 0 && (
                                       <div className="flex justify-between text-amber-800">
                                         <span>Adjustment:</span>
                                         <span className="font-medium">
-                                          {currentAdj > 0 ? `+ ${formatCurrency(currentAdj, orgCurrency)}` : `- ${formatCurrency(Math.abs(currentAdj), orgCurrency)}`}
+                                          {currentAdj > 0 ? `+ ₹ ${currentAdj.toFixed(2)}` : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
                                         </span>
                                       </div>
                                     )}
                                     {discount > 0 && (
                                       <div className="flex justify-between text-rose-700">
                                         <span>Discount:</span>
-                                        <span className="font-medium">- {formatCurrency(discount, orgCurrency)}</span>
+                                        <span className="font-medium">- ₹ {discount.toFixed(2)}</span>
                                       </div>
                                     )}
                                     <div className="flex justify-between font-black text-sm text-[#70452D] pt-1 border-t border-[#E8DED4]">
                                       <span>Net Amount:</span>
-                                      <span className="text-[#28A745]">{formatCurrency(netTotal, orgCurrency)}</span>
+                                      <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
                                     </div>
                                   </div>
                                 </div>
@@ -2180,7 +2176,7 @@ export default function ProviderPage() {
 
                                   {/* Col 3: Total Amount matching green text in user screenshot */}
                                   <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
-                                    {formatCurrency(item.totalAmount, orgCurrency)}
+                                    ₹ {item.totalAmount.toFixed(2)}
                                   </div>
                                 </div>
 
@@ -2239,7 +2235,7 @@ export default function ProviderPage() {
 
                                           {/* Amount */}
                                           <div className="col-span-2 text-right font-bold text-gray-800">
-                                            {formatCurrency(sub.amount, orgCurrency)}
+                                            ₹ {sub.amount.toFixed(2)}
                                           </div>
                                         </div>
                                       ))}
@@ -2263,7 +2259,7 @@ export default function ProviderPage() {
                           Total Items: {grandTotalItems}
                         </span>
                         <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
-                          Total Amount: {formatCurrency(grandTotalAmount, orgCurrency)}
+                          Total Amount: ₹ {grandTotalAmount.toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -2540,7 +2536,7 @@ export default function ProviderPage() {
 
                                   {/* Col 3: Amount */}
                                   <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
-                                    {formatCurrency(item.totalAmount, orgCurrency)}
+                                    ₹ {item.totalAmount.toFixed(2)}
                                   </div>
                                 </div>
 
@@ -2584,7 +2580,7 @@ export default function ProviderPage() {
                                             <div className="flex items-center gap-4 self-end sm:self-auto">
                                               <div className="text-right">
                                                 <span className="text-[10px] text-gray-500 block">Qty: {sub.qty}</span>
-                                                <span className="font-bold text-gray-900">{formatCurrency(sub.amount, orgCurrency)}</span>
+                                                <span className="font-bold text-gray-900">₹ {sub.amount.toFixed(2)}</span>
                                               </div>
 
                                               <div className="flex items-center gap-1.5">
@@ -2629,7 +2625,7 @@ export default function ProviderPage() {
                           Total Pending Items: {grandPendingQty}
                         </span>
                         <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
-                          Total Pending Amount: {formatCurrency(grandPendingAmount, orgCurrency)}
+                          Total Pending Amount: ₹ {grandPendingAmount.toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -2689,11 +2685,11 @@ export default function ProviderPage() {
 
                 {/* Subtotal (Original) */}
                 <div>
-                  <label className="block font-bold text-stone-700 mb-1">Original Subtotal ({currencySymbol})</label>
+                  <label className="block font-bold text-stone-700 mb-1">Original Subtotal (₹)</label>
                   <input
                     type="text"
                     readOnly
-                    value={formatCurrency(editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total), orgCurrency)}
+                    value={`₹ ${(editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total)).toFixed(2)}`}
                     className="w-full rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-stone-600 font-semibold"
                   />
                 </div>
@@ -2701,7 +2697,7 @@ export default function ProviderPage() {
                 {/* Adjustment Amount */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="block font-bold text-stone-700">Adjustment Amount ({currencySymbol})</label>
+                    <label className="block font-bold text-stone-700">Adjustment Amount (₹)</label>
                     <span className="text-[10px] text-stone-500">e.g. 10 or -10</span>
                   </div>
                   <input
@@ -2717,7 +2713,7 @@ export default function ProviderPage() {
                 {/* Discount */}
                 <div>
                   <div className="flex justify-between items-center mb-1">
-                    <label className="block font-bold text-stone-700">Discount ({currencySymbol})</label>
+                    <label className="block font-bold text-stone-700">Discount (₹)</label>
                     <span className="text-[10px] text-stone-500">Positive value</span>
                   </div>
                   <input
@@ -2735,15 +2731,12 @@ export default function ProviderPage() {
                 <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 flex justify-between items-center">
                   <span className="font-bold text-emerald-900">Recalculated Net Amount:</span>
                   <span className="font-black text-sm text-[#28A745]">
-                    {formatCurrency(
-                      Math.max(
-                        0,
-                        ((editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total))) +
-                        (parseFloat(editAdjustmentAmount) || 0) -
-                        (parseFloat(editDiscount) || 0)
-                      ),
-                      orgCurrency
-                    )}
+                    ₹ {Math.max(
+                      0,
+                      ((editingOrder.subtotal !== undefined ? editingOrder.subtotal : (editingOrder.items?.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) || editingOrder.total))) +
+                      (parseFloat(editAdjustmentAmount) || 0) -
+                      (parseFloat(editDiscount) || 0)
+                    ).toFixed(2)}
                   </span>
                 </div>
 

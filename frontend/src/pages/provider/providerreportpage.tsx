@@ -1,5 +1,3 @@
-import { formatCurrency } from "../../utils/currency";
-import { useOrgCurrency } from "../../hooks/useOrgCurrency";
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -68,7 +66,6 @@ export interface DayReportRecord {
 }
 
 export default function ProviderReportPage() {
-  const { currency: orgCurrency } = useOrgCurrency("Provider");
   const navigate = useNavigate();
   const { user: currentUser } = useAuth();
   const currentShortCode = currentUser?.shortCode || "";
@@ -541,23 +538,23 @@ export default function ProviderReportPage() {
                                 </td>
 
                                 <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  {formatCurrency(row.morningSubtotal, orgCurrency)}
+                                  ₹ {row.morningSubtotal.toLocaleString("en-IN")}
                                 </td>
 
                                 <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  {formatCurrency(row.eveningSubtotal, orgCurrency)}
+                                  ₹ {row.eveningSubtotal.toLocaleString("en-IN")}
                                 </td>
 
                                 <td className="px-4 py-4 text-[#342219]">
-                                  {formatCurrency(row.adjustment, orgCurrency)}
+                                  ₹ {row.adjustment.toLocaleString("en-IN")}
                                 </td>
 
                                 <td className="px-4 py-4 text-[#342219]">
-                                  {formatCurrency(row.discount, orgCurrency)}
+                                  ₹ {row.discount.toLocaleString("en-IN")}
                                 </td>
 
                                 <td className="px-4 py-4 font-bold text-[#1E140E]">
-                                  {formatCurrency(row.netAmount, orgCurrency)}
+                                  ₹ {row.netAmount.toLocaleString("en-IN")}
                                 </td>
 
                                 <td className="py-4 pl-2 pr-6 text-right">
@@ -658,7 +655,7 @@ export default function ProviderReportPage() {
                       <Sun size={16} className="mx-auto mb-1 text-amber-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Morning</span>
                       <span className="block text-xs font-black text-[#1E140E]">
-                        {formatCurrency(selectedDayRecord.morningSubtotal, orgCurrency)}
+                        ₹ {selectedDayRecord.morningSubtotal.toLocaleString("en-IN")}
                       </span>
                       <span className="block text-[9px] text-[#A08C7D]">
                         ({selectedDayRecord.morningOrdersCount} orders)
@@ -670,7 +667,7 @@ export default function ProviderReportPage() {
                       <Moon size={16} className="mx-auto mb-1 text-orange-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Evening</span>
                       <span className="block text-xs font-black text-[#1E140E]">
-                        {formatCurrency(selectedDayRecord.eveningSubtotal, orgCurrency)}
+                        ₹ {selectedDayRecord.eveningSubtotal.toLocaleString("en-IN")}
                       </span>
                       <span className="block text-[9px] text-[#A08C7D]">
                         ({selectedDayRecord.eveningOrdersCount} orders)
@@ -682,7 +679,7 @@ export default function ProviderReportPage() {
                       <Receipt size={16} className="mx-auto mb-1 text-red-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Adjustment</span>
                       <span className="mt-1 block text-xs font-black text-[#1E140E]">
-                        {formatCurrency(selectedDayRecord.adjustment, orgCurrency)}
+                        ₹ {selectedDayRecord.adjustment.toLocaleString("en-IN")}
                       </span>
                     </div>
 
@@ -691,7 +688,7 @@ export default function ProviderReportPage() {
                       <Percent size={16} className="mx-auto mb-1 text-rose-500" />
                       <span className="block text-[10px] font-semibold text-[#8A7667]">Discount</span>
                       <span className="mt-1 block text-xs font-black text-[#1E140E]">
-                        {formatCurrency(selectedDayRecord.discount, orgCurrency)}
+                        ₹ {selectedDayRecord.discount.toLocaleString("en-IN")}
                       </span>
                     </div>
                   </div>
@@ -700,7 +697,7 @@ export default function ProviderReportPage() {
                   <div className="mb-5 flex items-center justify-between rounded-2xl bg-[#FBF1E6] px-5 py-3.5 border border-[#DEC5B0]/50">
                     <span className="text-xs font-black text-[#6F4228]">Day Total (Net Amount)</span>
                     <span className="text-xl font-black text-[#1E140E]">
-                      {formatCurrency(selectedDayRecord.netAmount, orgCurrency)}
+                      ₹ {selectedDayRecord.netAmount.toLocaleString("en-IN")}
                     </span>
                   </div>
 
@@ -718,7 +715,7 @@ export default function ProviderReportPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-xs font-bold text-[#75472D]">
-                            Subtotal: {formatCurrency(selectedDayRecord.morningSubtotal, orgCurrency)}
+                            Subtotal: ₹ {selectedDayRecord.morningSubtotal.toLocaleString("en-IN")}
                           </span>
                           <ChevronUp size={15} className="text-[#8A7667]" />
                         </div>
@@ -775,7 +772,7 @@ export default function ProviderReportPage() {
                                     </span>
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs font-black text-[#1E140E]">
-                                        {formatCurrency(item.totalAmount, orgCurrency)}
+                                        ₹ {item.totalAmount.toLocaleString("en-IN")}
                                       </span>
                                       {isExpanded ? (
                                         <ChevronUp size={15} className="text-[#8A7667]" />
@@ -809,7 +806,7 @@ export default function ProviderReportPage() {
                                             <td className="py-1.5">{ord.qty}</td>
                                             <td className="py-1.5 text-[#6B574B]">{ord.preferences}</td>
                                             <td className="py-1.5 pr-1 text-right font-bold text-[#1E140E]">
-                                              {formatCurrency(ord.amount, orgCurrency)}
+                                              ₹ {ord.amount.toLocaleString("en-IN")}
                                             </td>
                                           </tr>
                                         ))}
@@ -836,7 +833,7 @@ export default function ProviderReportPage() {
                         </div>
                         <div className="flex items-center gap-1">
                           <span className="text-xs font-bold text-[#75472D]">
-                            Subtotal: {formatCurrency(selectedDayRecord.eveningSubtotal, orgCurrency)}
+                            Subtotal: ₹ {selectedDayRecord.eveningSubtotal.toLocaleString("en-IN")}
                           </span>
                           <ChevronUp size={15} className="text-[#8A7667]" />
                         </div>
@@ -892,7 +889,7 @@ export default function ProviderReportPage() {
                                     </span>
                                     <div className="flex items-center gap-2">
                                       <span className="text-xs font-black text-[#1E140E]">
-                                        {formatCurrency(item.totalAmount, orgCurrency)}
+                                        ₹ {item.totalAmount.toLocaleString("en-IN")}
                                       </span>
                                       {isExpanded ? (
                                         <ChevronUp size={15} className="text-[#8A7667]" />
@@ -925,7 +922,7 @@ export default function ProviderReportPage() {
                                             <td className="py-1.5">{ord.qty}</td>
                                             <td className="py-1.5 text-[#6B574B]">{ord.preferences}</td>
                                             <td className="py-1.5 pr-1 text-right font-bold text-[#1E140E]">
-                                              {formatCurrency(ord.amount, orgCurrency)}
+                                              ₹ {ord.amount.toLocaleString("en-IN")}
                                             </td>
                                           </tr>
                                         ))}
@@ -948,25 +945,25 @@ export default function ProviderReportPage() {
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Day Total</span>
                         <span className="block text-xs font-black text-[#1E140E]">
-                          {formatCurrency(selectedDayRecord.dayTotal, orgCurrency)}
+                          ₹ {selectedDayRecord.dayTotal.toLocaleString("en-IN")}
                         </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Total Adjustment</span>
                         <span className="block text-xs font-bold text-[#1E140E]">
-                          {formatCurrency(selectedDayRecord.adjustment, orgCurrency)}
+                          ₹ {selectedDayRecord.adjustment.toLocaleString("en-IN")}
                         </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Total Discount</span>
                         <span className="block text-xs font-bold text-[#1E140E]">
-                          {formatCurrency(selectedDayRecord.discount, orgCurrency)}
+                          ₹ {selectedDayRecord.discount.toLocaleString("en-IN")}
                         </span>
                       </div>
                       <div>
                         <span className="block text-[10px] text-[#8A7667]">Net Amount</span>
                         <span className="block text-xs font-black text-[#75472D]">
-                          {formatCurrency(selectedDayRecord.netAmount, orgCurrency)}
+                          ₹ {selectedDayRecord.netAmount.toLocaleString("en-IN")}
                         </span>
                       </div>
                     </div>

@@ -5,8 +5,6 @@ import { organizationApi, type Organization } from "../../../services/organizati
 import Background from "../../../components/background";
 import logoImg from "../../../assets/images/logo.png";
 import CreateFormModal, { FormRow } from "../../../components/common/CreateFormModal";
-import { SUPPORTED_CURRENCIES } from "../../../utils/currency";
-import { Search } from "lucide-react";
 import { useAuth } from "../../../components/common/AuthContext";
 
 export default function ChooseOrganizationPage() {
@@ -20,7 +18,6 @@ export default function ChooseOrganizationPage() {
   const [orgName, setOrgName] = useState("");
   const [shortCode, setShortCode] = useState("");
   const [currency, setCurrency] = useState("INR");
-  const [currencySearch, setCurrencySearch] = useState("");
   const [modalLoading, setModalLoading] = useState(false);
   const [modalError, setModalError] = useState("");
 
@@ -287,42 +284,20 @@ export default function ChooseOrganizationPage() {
           />
         </FormRow>
 
-        <FormRow label="Currency" required>
-          <div className="flex flex-col gap-2">
-            <div className="relative">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
-              <input
-                type="text"
-                placeholder="Search currency by name or code..."
-                value={currencySearch}
-                onChange={(e) => setCurrencySearch(e.target.value)}
-                className="w-full rounded-md border border-gray-200 bg-stone-50 pl-10 pr-3 py-1.5 text-xs text-stone-800 outline-none focus:border-[#28A745] focus:bg-white"
-              />
-            </div>
-            <select
-              id="org-currency"
-              required
-              value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-            >
-              {SUPPORTED_CURRENCIES
-                .filter((c) => {
-                  const q = currencySearch.trim().toLowerCase();
-                  if (!q) return true;
-                  return (
-                    c.code.toLowerCase().includes(q) ||
-                    c.name.toLowerCase().includes(q) ||
-                    c.symbol.toLowerCase().includes(q)
-                  );
-                })
-                .map((c) => (
-                  <option key={c.code} value={c.code}>
-                    {c.code} - {c.name} ({c.symbol})
-                  </option>
-                ))}
-            </select>
-          </div>
+        <FormRow label="currency" required>
+          <select
+            id="org-currency"
+            required
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+          >
+            <option value="INR">INR - Indian Rupee (₹)</option>
+            <option value="USD">USD - US Dollar ($)</option>
+            <option value="AED">AED - UAE Dirham (د.إ)</option>
+            <option value="GBP">GBP - British Pound (£)</option>
+            <option value="EUR">EUR - Euro (€)</option>
+          </select>
         </FormRow>
       </CreateFormModal>
 

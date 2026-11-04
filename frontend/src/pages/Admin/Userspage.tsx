@@ -91,6 +91,10 @@ export default function UsersPage() {
   // --- Modal States ---
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
 
@@ -182,8 +186,23 @@ export default function UsersPage() {
       organization: currentUserOrg || newUser.organization,
     };
 
-    const updated = [userWithOrg, ...users];
+    const updated = [userWithOrg, ...users.filter((u) => u.id !== userWithOrg.id)];
     saveUsers(updated);
+
+    setToastMessage({
+      type: "success",
+      message: `User "${newUser.name}" (${newUser.userType}) created successfully.`,
+    });
+    setTimeout(() => setToastMessage(null), 5000);
+
+    // Refresh from DB to guarantee sync
+    userApi.getUsers(undefined, currentShortCode || undefined)
+      .then((serverUsers) => {
+        if (Array.isArray(serverUsers)) {
+          setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
+        }
+      })
+      .catch(() => {});
   };
 
   // Open Edit User Modal
@@ -197,21 +216,54 @@ export default function UsersPage() {
   const handleUserUpdated = (updatedUser: UserItem) => {
     const updated = users.map((u) => (u.id === updatedUser.id ? updatedUser : u));
     saveUsers(updated);
+    userApi.updateUser(updatedUser.id, updatedUser).catch((err) => {
+      console.warn("Could not sync user update to server:", err);
+    });
   };
 
-  // Handle Delete User
-  const handleDeleteUser = (id: string, name: string, e: React.MouseEvent) => {
+  // Prompt Delete User (opens confirmation dialog)
+  const promptDeleteUser = (user: UserItem, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (confirm(`Are you sure you want to delete user "${name}"?`)) {
-      const updated = users.filter((u) => u.id !== id);
+    setUserToDelete(user);
+    setDeleteError("");
+  };
+
+  // Confirm Permanent Deletion
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeleting(true);
+    setDeleteError("");
+
+    try {
+      await userApi.deleteUser(userToDelete.id);
+
+      const targetId = userToDelete.id;
+      const targetName = userToDelete.name;
+      const targetType = userToDelete.userType;
+
+      // Update local state immediately
+      const updated = users.filter((u) => u.id !== targetId);
       saveUsers(updated);
 
-      userApi.deleteUser(id).catch((err) => {
-        console.warn("Could not delete user from backend:", err);
+      setUserToDelete(null);
+      setToastMessage({
+        type: "success",
+        message: `User "${targetName}" (${targetType}) permanently deleted.`,
       });
+      setTimeout(() => setToastMessage(null), 5000);
+
+      // Refresh from DB to ensure state is in sync
+      const serverUsers = await userApi.getUsers(undefined, currentShortCode || undefined);
+      if (Array.isArray(serverUsers)) {
+        setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
+      }
+    } catch (err: any) {
+      console.error("Failed to delete user:", err);
+      setDeleteError(err?.message || "Failed to delete user. Please try again.");
+    } finally {
+      setIsDeleting(false);
     }
   };
-
 
   // Bulk Upload File Handler
   const handleBulkFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -276,6 +328,24 @@ export default function UsersPage() {
         {/* Main Content */}
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto max-w-7xl">
+            {toastMessage && (
+              <div
+                className={`mb-4 flex items-center justify-between rounded-2xl p-4 text-xs font-semibold shadow-xs ${
+                  toastMessage.type === "success"
+                    ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                    : "bg-red-50 text-red-800 border border-red-200"
+                }`}
+              >
+                <span>{toastMessage.message}</span>
+                <button
+                  type="button"
+                  onClick={() => setToastMessage(null)}
+                  className="ml-2 text-current opacity-70 hover:opacity-100"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+            )}
             {/* Top Toolbar Header */}
             <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-[#EEE5DC] bg-white/90 p-4 shadow-md shadow-[#70452D]/5 backdrop-blur-md sm:p-5 lg:flex-row lg:items-center lg:justify-between">
               {/* Left: Title & Search Input */}
@@ -423,7 +493,7 @@ export default function UsersPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => handleDeleteUser(user.id, user.name, e)}
+                        onClick={(e) => promptDeleteUser(user, e)}
                         className="flex h-7 w-7 items-center justify-center rounded-lg bg-red-50 text-red-600 border border-red-200 shadow-xs hover:bg-red-600 hover:text-white transition"
                         title="Delete User"
                       >
@@ -546,6 +616,104 @@ export default function UsersPage() {
         {/* ========================================================
             MODAL 2: BULK IMPORT USERS (EXACT SCREENSHOT LAYOUT)
            ======================================================== */}
+        {/* ========================================================
+            MODAL: PERMANENT USER DELETE CONFIRMATION
+           ======================================================== */}
+        {userToDelete && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-4">
+                <div className="flex items-center gap-2.5 text-red-600">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-red-50 text-red-600 border border-red-100">
+                    <Trash2 size={18} />
+                  </div>
+                  <h3 className="text-lg font-bold text-[#342219]">Delete User</h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isDeleting) {
+                      setUserToDelete(null);
+                      setDeleteError('');
+                    }
+                  }}
+                  className="rounded-lg p-1 text-gray-400 hover:text-gray-700 transition"
+                  disabled={isDeleting}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {deleteError && (
+                <div className="mb-4 rounded-lg bg-red-50 p-2.5 text-xs font-semibold text-red-600 border border-red-200">
+                  {deleteError}
+                </div>
+              )}
+
+              {/* Body */}
+              <div className="space-y-3 text-sm text-[#4A382E]">
+                <p>
+                  Are you sure you want to permanently delete this user account?
+                </p>
+
+                {/* User Details Card */}
+                <div className="rounded-xl border border-gray-100 bg-[#FAF6F1] p-3.5 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-500">Name:</span>
+                    <span className="font-bold text-[#342219]">{userToDelete.name}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-500">Account Type:</span>
+                    <span className="inline-flex items-center gap-1 rounded bg-[#1D2B3A] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+                      <Shield size={10} className="text-[#7FB3D5]" />
+                      {userToDelete.userType}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-500">Username:</span>
+                    <span className="font-medium text-[#70523E]">{userToDelete.userName}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-gray-500">Email:</span>
+                    <span className="font-medium text-[#70523E] truncate max-w-[200px]" title={userToDelete.email}>
+                      {userToDelete.email}
+                    </span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-red-600 font-medium">
+                  This action will permanently delete the account, revoke all active sessions, and remove access immediately. This cannot be undone.
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex justify-end gap-3 border-t border-gray-100 pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserToDelete(null);
+                    setDeleteError('');
+                  }}
+                  disabled={isDeleting}
+                  className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmDeleteUser}
+                  disabled={isDeleting}
+                  className="flex items-center gap-1.5 rounded-xl bg-red-600 px-5 py-2 text-xs font-bold text-white shadow-md transition hover:bg-red-700 disabled:opacity-50"
+                >
+                  <Trash2 size={14} />
+                  <span>{isDeleting ? 'Deleting...' : 'Permanently Delete'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {isBulkOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
             <div className="relative w-full max-w-lg overflow-hidden rounded-3xl border border-gray-200 bg-white p-7 shadow-2xl">

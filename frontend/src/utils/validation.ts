@@ -196,3 +196,101 @@ export const validateAndNormalizeMobile = (raw: string, country?: string) => {
     e164: res.e164Number,
   };
 };
+
+export interface UserValidationInput {
+  name?: string;
+  userName?: string;
+  password?: string;
+  confirmPassword?: string;
+  userType?: string;
+  email?: string;
+  mobileNumber?: string;
+  countryCode?: string;
+}
+
+export interface UserValidationResult {
+  isValid: boolean;
+  errors: {
+    name?: string;
+    userName?: string;
+    password?: string;
+    confirmPassword?: string;
+    userType?: string;
+    email?: string;
+    mobileNumber?: string;
+  };
+}
+
+/**
+ * Reusable user validation for Admin, Provider, and general users across Cafe4x.
+ * Follows the standard user creation validation rules consistently.
+ */
+export function validateUserCreation(
+  data: UserValidationInput,
+  options?: { requireConfirmPassword?: boolean }
+): UserValidationResult {
+  const errors: UserValidationResult['errors'] = {};
+
+  // 1. Name
+  const name = (data.name || '').trim();
+  if (!name) {
+    errors.name = 'Name is required';
+  }
+
+  // 2. User Name
+  const userName = (data.userName || '').trim();
+  if (!userName) {
+    errors.userName = 'User Name is required';
+  } else if (userName.length < 3) {
+    errors.userName = 'Username must be at least 3 characters long';
+  }
+
+  // 3. Password
+  const password = data.password || '';
+  if (!password) {
+    errors.password = 'Password is required';
+  } else if (password.length < 6) {
+    errors.password = 'Password must be at least 6 characters long';
+  }
+
+  // 4. Confirm Password (checked if explicitly required or if confirmPassword is provided)
+  if (options?.requireConfirmPassword || data.confirmPassword !== undefined) {
+    if (!data.confirmPassword) {
+      errors.confirmPassword = 'Confirm Password is required';
+    } else if (data.confirmPassword !== password) {
+      errors.confirmPassword = 'Passwords do not match';
+    }
+  }
+
+  // 5. User Type
+  const userType = (data.userType || '').trim();
+  if (!userType) {
+    errors.userType = 'User Type is required';
+  } else if (!['Admin', 'Provider', 'Staff'].includes(userType)) {
+    errors.userType = 'User Type must be Admin or Provider';
+  }
+
+  // 6. Email
+  const email = (data.email || '').trim();
+  if (!email) {
+    errors.email = 'Email is required';
+  } else if (!validateEmailFormat(email)) {
+    errors.email = 'Please enter a valid email address';
+  }
+
+  // 7. Mobile Number
+  const mobile = (data.mobileNumber || '').trim();
+  if (!mobile) {
+    errors.mobileNumber = 'Mobile Number is required';
+  } else {
+    const phoneRes = validatePhone(mobile, data.countryCode || 'IN');
+    if (!phoneRes.isValid) {
+      errors.mobileNumber = phoneRes.message || 'Please enter a valid mobile number';
+    }
+  }
+
+  return {
+    isValid: Object.keys(errors).length === 0,
+    errors,
+  };
+}

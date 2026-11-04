@@ -3,6 +3,7 @@ import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
 import { getNextId, generateId, hashPassword, generateSecureQrToken } from "../utils/id-generator";
+import { validateUserCreation, validatePhone } from "../utils/validation";
 
 export interface UserModel {
   id: string;
@@ -219,115 +220,80 @@ export const userController = {
       }
 
       const body = await c.req.json();
-      if (!body.name || !body.name.trim()) {
-        return c.json({ success: false, message: "Name is required" }, 400);
-      }
-      if (!body.userName || !body.userName.trim()) {
-        return c.json({ success: false, message: "User Name is required" }, 400);
-      }
-      if (!body.password || !body.password.trim()) {
-        return c.json({ success: false, message: "Password is required" }, 400);
-      }
-      if (!body.email || !body.email.trim()) {
-        return c.json({ success: false, message: "Email is required" }, 400);
+
+      // 1. Validate all fields with common validation schema
+      const validation = validateUserCreation(body, {
+        requireConfirmPassword: body.confirmPassword !== undefined,
+      });
+
+      if (!validation.isValid) {
+        const firstError = Object.values(validation.errors)[0];
+        return c.json(
+          {
+            success: false,
+            message: firstError,
+            errors: validation.errors,
+          },
+          400
+        );
       }
 
       const db = getUniversalDb(c.env?.DB);
       const email = body.email.trim().toLowerCase();
       const userName = body.userName.trim();
 
-      if (userName.length < 3) {
-        return c.json({ success: false, message: "Username must be at least 3 characters long" }, 400);
-      }
-
-      // Check if username already exists in this organization across both Admin and Provider roles
-      const usernameInOrg = (await db
-        .prepare(
-          `SELECT u.id, u.user_name as userName, u.user_type as userType
-           FROM users u
-           JOIN user_organizations uo ON u.id = uo.user_id
-           WHERE uo.organization_id = ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
-        )
-        .bind(org.organizationId, userName)
+      // 2. Validate email uniqueness across users table
+      const existingEmail = (await db
+        .prepare(`SELECT id, email FROM users WHERE LOWER(TRIM(email)) = LOWER(?)`)
+        .bind(email)
         .get()) as any;
 
-      if (usernameInOrg) {
-        return c.json({
-          success: false,
-          code: "USERNAME_ALREADY_EXISTS_IN_ORG",
-          message: `Username "${userName}" is already taken in this organization by a ${usernameInOrg.userType || "user"}.`,
-        }, 409);
+      if (existingEmail) {
+        return c.json(
+          {
+            success: false,
+            code: "EMAIL_ALREADY_EXISTS",
+            message: "This email address is already registered.",
+            errors: { email: "This email address is already registered." },
+          },
+          409
+        );
       }
 
-      // Check if user already exists
-      let existingUser = (await db
-        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email FROM users WHERE LOWER(TRIM(email)) = LOWER(?) OR LOWER(TRIM(user_name)) = LOWER(?)`)
-        .bind(email, userName)
-        .get()) as any;
+      const phoneRes = validatePhone(body.mobileNumber);
+      const formattedMobile = phoneRes.e164Number || body.mobileNumber.trim();
 
-      if (existingUser && existingUser.userName.trim().toLowerCase() === userName.toLowerCase() && existingUser.email.trim().toLowerCase() !== email) {
-        return c.json({
-          success: false,
-          code: "USERNAME_ALREADY_TAKEN",
-          message: "This username is already taken. Please choose another username.",
-        }, 409);
-      }
-
-      const newUserId = existingUser ? existingUser.id : await generateId(db, "USR");
+      const newUserId = await generateId(db, "USR");
       const displayId = newUserId;
       const hashedPassword = await hashPassword(body.password.trim());
       const now = new Date().toISOString();
-
       const generatedQrToken = generateSecureQrToken(16);
 
-      if (!existingUser) {
-        await db
-          .prepare(
-            `INSERT INTO users (id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          )
-          .run(
-            newUserId,
-            displayId,
-            body.name.trim(),
-            userName,
-            body.password.trim(),
-            hashedPassword,
-            email,
-            body.mobileNumber ? String(body.mobileNumber).trim() : "",
-            body.userType === "Provider" ? "Provider" : "Admin",
-            generatedQrToken,
-            now,
-            "active",
-            now
-          );
-      } else {
-        // If user already existed without a QR token, ensure they have one
-        const userRow = (await db.prepare(`SELECT qr_token FROM users WHERE id = ?`).bind(newUserId).get()) as any;
-        if (!userRow?.qr_token) {
-          await db
-            .prepare(`UPDATE users SET qr_token = ?, qr_token_created_at = ?, qr_token_status = 'active' WHERE id = ?`)
-            .bind(generatedQrToken, now, newUserId)
-            .run();
-        }
-      }
+      // 3. Insert into users table
+      await db
+        .prepare(
+          `INSERT INTO users (id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          newUserId,
+          displayId,
+          body.name.trim(),
+          userName,
+          body.password.trim(),
+          hashedPassword,
+          email,
+          formattedMobile,
+          body.userType === "Provider" ? "Provider" : "Admin",
+          generatedQrToken,
+          now,
+          "active",
+          now
+        );
 
-      // Check if user is already linked to this organization
-      const link = (await db
-        .prepare(`SELECT id FROM user_organizations WHERE user_id = ? AND organization_id = ?`)
-        .bind(newUserId, org.organizationId)
-        .get()) as any;
-
-      if (link) {
-        return c.json({
-          success: false,
-          message: "A user with this email or username is already in this organization",
-        }, 409);
-      }
-
-      // Link to organization
+      // 4. Link to organization
       const role = body.userType === "Admin" ? "Owner" : (body.userType === "Provider" ? "Provider" : "Member");
-const uorId = await generateId(db, "UOR");
+      const uorId = await generateId(db, "UOR");
       await db
         .prepare(
           `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
@@ -345,10 +311,11 @@ const uorId = await generateId(db, "UOR");
             name: body.name.trim(),
             userName,
             email,
-            mobileNumber: body.mobileNumber ? String(body.mobileNumber).trim() : "",
+            mobileNumber: formattedMobile,
             userType: body.userType === "Provider" ? "Provider" : "Admin",
             organizationId: org.organizationId,
             shortCode: org.shortCode,
+            organization: org.shortCode,
             qrToken: generatedQrToken,
             qrTokenStatus: "active",
             createdAt: now,
@@ -357,6 +324,7 @@ const uorId = await generateId(db, "UOR");
         201
       );
     } catch (err: any) {
+      console.error("userController.createUser error:", err);
       return c.json({ success: false, message: err.message }, 500);
     }
   },
@@ -465,17 +433,90 @@ const uorId = await generateId(db, "UOR");
       const id = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
-      const res = await db
-        .prepare(`DELETE FROM user_organizations WHERE (user_id = ? OR user_id IN (SELECT id FROM users WHERE display_id = ?)) AND organization_id = ?`)
-        .bind(id, id, org.organizationId)
-        .run();
+      // Find user by id or display_id
+      const targetUser = (await db
+        .prepare(`SELECT id, display_id as displayId, name, user_name as userName, email, user_type as userType FROM users WHERE id = ? OR display_id = ?`)
+        .bind(id, id)
+        .get()) as any;
 
-      if (res.changes === 0) {
+      if (!targetUser) {
+        return c.json({ success: false, message: "User not found" }, 404);
+      }
+
+      const targetUserId = String(targetUser.id);
+
+      // Verify that this user belongs to the current organization
+      const orgLink = (await db
+        .prepare(`SELECT id FROM user_organizations WHERE user_id = ? AND organization_id = ?`)
+        .bind(targetUserId, org.organizationId)
+        .get()) as any;
+
+      if (!orgLink) {
         return c.json({ success: false, message: "User not found in this organization" }, 404);
       }
 
-      return c.json({ success: true, message: "User removed from organization successfully" });
+      // 1. Unassign from locations (set assigned_provider_id, assigned_provider_name, assigned_provider_email to NULL)
+      await db
+        .prepare(
+          `UPDATE locations 
+           SET assigned_provider_id = NULL, assigned_provider_name = NULL, assigned_provider_email = NULL 
+           WHERE assigned_provider_id = ?`
+        )
+        .bind(targetUserId)
+        .run();
+
+      // 2. Unassign from seats (set employee_id, employee_name, employee_email, employee to NULL)
+      await db
+        .prepare(
+          `UPDATE seats 
+           SET employee_id = NULL, employee_name = NULL, employee_email = NULL, employee = NULL 
+           WHERE employee_id = ?`
+        )
+        .bind(targetUserId)
+        .run();
+
+      // 3. Clear owner reference in organizations if matching
+      await db
+        .prepare(`UPDATE organizations SET owner_user_id = NULL WHERE owner_user_id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      // 4. Delete user sessions (immediately revokes all active auth tokens)
+      await db
+        .prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      // 5. Delete provider locations
+      await db
+        .prepare(`DELETE FROM provider_locations WHERE provider_id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      // 6. Delete ordering sessions
+      await db
+        .prepare(`DELETE FROM ordering_sessions WHERE employee_id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      // 7. Delete organization link
+      await db
+        .prepare(`DELETE FROM user_organizations WHERE user_id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      // 8. Permanently delete from users table
+      await db
+        .prepare(`DELETE FROM users WHERE id = ?`)
+        .bind(targetUserId)
+        .run();
+
+      return c.json({
+        success: true,
+        message: `User "${targetUser.name}" (${targetUser.userType}) permanently deleted successfully.`,
+      });
     } catch (err: any) {
+      console.error("userController.deleteUser error:", err);
       return c.json({ success: false, message: err.message }, 500);
     }
   },

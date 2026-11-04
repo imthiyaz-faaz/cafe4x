@@ -16,6 +16,8 @@ export interface UserModel {
   mobileNumber?: string;
   organization?: string;
   shortCode?: string;
+  currency?: string;
+  currencyCode?: string;
   organizationId?: string;
   createdAt: string;
 }
@@ -95,7 +97,7 @@ export const authController = {
       // Fetch organizations linked to this user in user_organizations
       const userOrgs = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
            FROM organizations o
            JOIN user_organizations uo ON o.id = uo.organization_id
            WHERE uo.user_id = ?
@@ -117,6 +119,8 @@ export const authController = {
         organizationId: primaryOrg ? primaryOrg.id : undefined,
         shortCode: primaryOrg ? primaryOrg.shortCode : undefined,
         organization: primaryOrg ? primaryOrg.name : undefined,
+        currency: primaryOrg ? (primaryOrg.currencyCode || primaryOrg.currency || "INR") : "INR",
+        currencyCode: primaryOrg ? (primaryOrg.currencyCode || primaryOrg.currency || "INR") : "INR",
         createdAt: row.createdAt,
       };
 
@@ -287,6 +291,7 @@ export const authController = {
 
       const orgName = (body.organization || "").trim().replace(/\s+/g, " ");
       const orgShort = (body.shortCode || "").trim().toUpperCase();
+      const orgCurrency = (body.currencyCode || body.currency || "INR").trim().toUpperCase();
       const now = new Date().toISOString();
 
       if (!orgName || !orgShort) {
@@ -317,10 +322,10 @@ export const authController = {
       // Never use ON CONFLICT DO UPDATE on organizations here; public signup creates NEW organizations only
       await db
         .prepare(
-          `INSERT INTO organizations (id, display_id, name, short_code, owner_user_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
+          `INSERT INTO organizations (id, display_id, name, short_code, currency_code, owner_user_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
         )
-        .run(orgId, orgDisplayId, orgName, orgShort, newUserId, now);
+        .run(orgId, orgDisplayId, orgName, orgShort, orgCurrency, newUserId, now);
 
       const actualOrgId = orgId;
       const actualOrgDisplayId = orgDisplayId;
@@ -363,6 +368,8 @@ export const authController = {
         organization: orgName,
         shortCode: orgShort,
         organizationId: actualOrgId,
+        currency: orgCurrency,
+        currencyCode: orgCurrency,
         userType: body.userType || "Admin",
         createdAt: now,
       };
@@ -394,6 +401,8 @@ export const authController = {
             displayId: actualOrgDisplayId,
             name: orgName,
             shortCode: orgShort,
+            currency: orgCurrency,
+            currencyCode: orgCurrency,
             role: "Owner",
           },
         ],
@@ -448,7 +457,7 @@ export const authController = {
 
     const userOrgs = (await db
       .prepare(
-        `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.owner_user_id as ownerUserId, uo.role
+        `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
          FROM organizations o
          JOIN user_organizations uo ON o.id = uo.organization_id
          WHERE uo.user_id = ?
@@ -472,6 +481,8 @@ export const authController = {
         organizationId: primaryOrg ? primaryOrg.id : undefined,
         shortCode: primaryOrg ? primaryOrg.shortCode : undefined,
         organization: primaryOrg ? primaryOrg.name : undefined,
+        currency: primaryOrg ? (primaryOrg.currencyCode || primaryOrg.currency || "INR") : "INR",
+        currencyCode: primaryOrg ? (primaryOrg.currencyCode || primaryOrg.currency || "INR") : "INR",
         createdAt: user.createdAt,
       },
       organizations: userOrgs,

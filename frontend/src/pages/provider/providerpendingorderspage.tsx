@@ -1,4 +1,6 @@
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
+import { formatCurrency, getCurrencySymbol } from "../../utils/currency";
+import { useOrgCurrency } from "../../hooks/useOrgCurrency";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -25,6 +27,8 @@ import { orderApi, type ProviderOrder } from "../../services/orders";
 import { itemsApi } from "../../services/items";
 
 export default function ProviderPendingOrdersPage() {
+  const { currency: orgCurrency } = useOrgCurrency("Provider");
+  const currencySymbol = getCurrencySymbol(orgCurrency);
   const navigate = useNavigate();
 
   // Session Filter State: "all" | "morning" | "evening"
@@ -633,34 +637,34 @@ export default function ProviderPendingOrdersPage() {
                                   <span>
                                     {it.qty}x {it.name}
                                   </span>
-                                  <span>₹{(it.price || 0) * (it.qty || 1)}</span>
+                                  <span>{formatCurrency((it.price || 0) * (it.qty || 1), orgCurrency)}</span>
                                 </div>
                               ))}
 
                               <div className="border-t border-[#E8DED4] pt-2 mt-2 space-y-1 text-[11px] text-stone-600">
                                 <div className="flex justify-between">
                                   <span>Original Subtotal:</span>
-                                  <span className="font-medium">₹ {subtotal.toFixed(2)}</span>
+                                  <span className="font-medium">{formatCurrency(subtotal, orgCurrency)}</span>
                                 </div>
                                 {currentAdj !== 0 && (
                                   <div className="flex justify-between text-amber-800">
                                     <span>Adjustment:</span>
                                     <span className="font-medium">
                                       {currentAdj > 0
-                                        ? `+ ₹ ${currentAdj.toFixed(2)}`
-                                        : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
+                                        ? `+ ${formatCurrency(currentAdj, orgCurrency)}`
+                                        : `- ${formatCurrency(Math.abs(currentAdj), orgCurrency)}`}
                                     </span>
                                   </div>
                                 )}
                                 {discount > 0 && (
                                   <div className="flex justify-between text-rose-700">
                                     <span>Discount:</span>
-                                    <span className="font-medium">- ₹ {discount.toFixed(2)}</span>
+                                    <span className="font-medium">- {formatCurrency(discount, orgCurrency)}</span>
                                   </div>
                                 )}
                                 <div className="flex justify-between font-black text-sm text-[#70452D] pt-1 border-t border-[#E8DED4]">
                                   <span>Net Amount:</span>
-                                  <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
+                                  <span className="text-[#28A745]">{formatCurrency(netTotal, orgCurrency)}</span>
                                 </div>
                               </div>
                             </div>
@@ -1054,7 +1058,7 @@ export default function ProviderPendingOrdersPage() {
                                 </div>
 
                                 <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
-                                  ₹ {item.totalAmount.toFixed(2)}
+                                  {formatCurrency(item.totalAmount, orgCurrency)}
                                 </div>
                               </div>
 
@@ -1106,7 +1110,7 @@ export default function ProviderPendingOrdersPage() {
                                                 Qty: {sub.qty}
                                               </span>
                                               <span className="font-bold text-gray-800">
-                                                ₹ {sub.amount.toFixed(2)}
+                                                {formatCurrency(sub.amount, orgCurrency)}
                                               </span>
                                             </div>
 
@@ -1178,7 +1182,7 @@ export default function ProviderPendingOrdersPage() {
                           Total Items: {grandPendingQty}
                         </span>
                         <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
-                          Total Amount: ₹ {grandPendingAmount.toFixed(2)}
+                          Total Amount: {formatCurrency(grandPendingAmount, orgCurrency)}
                         </span>
                       </div>
                     </div>
@@ -1223,7 +1227,7 @@ export default function ProviderPendingOrdersPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-gray-700 mb-1">
-                      Adjustment (₹) <span className="font-normal text-stone-400">(±)</span>
+                      Adjustment ({currencySymbol}) <span className="font-normal text-stone-400">(±)</span>
                     </label>
                     <input
                       type="number"
@@ -1235,7 +1239,7 @@ export default function ProviderPendingOrdersPage() {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-gray-700 mb-1">Discount (₹)</label>
+                    <label className="block font-bold text-gray-700 mb-1">Discount ({currencySymbol})</label>
                     <input
                       type="number"
                       step="0.01"

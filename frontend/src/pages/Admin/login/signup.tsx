@@ -59,7 +59,6 @@ export default function Signup() {
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [isStep1Submitting, setIsStep1Submitting] = useState(false)
 
   // Countries and selection
   const countries = useMemo(() => getAllCountries(), [])
@@ -346,29 +345,38 @@ export default function Signup() {
     setError('')
 
     if (step === 1) {
-      const cleanUsername = data.username.trim().toLowerCase()
-      const cleanName = data.name.trim()
-      const cleanEmail = data.email.trim().toLowerCase()
-      const cleanPassword = data.password.trim()
-      const cleanMobile = data.mobile.trim()
-
-      if (!cleanUsername || !cleanName || !cleanEmail || !cleanPassword || !cleanMobile) {
+      if (!data.username.trim() || !data.name.trim() || !data.email.trim() || !data.password.trim() || !data.mobile.trim()) {
         setError('Please fill in all required fields.')
         return
       }
 
-      if (cleanUsername.length < 3) {
+      if (data.username.trim().length < 3) {
         setError('Username must be at least 3 characters long.')
         return
       }
 
-      if (cleanPassword.length < 8) {
-        setError('Password must be at least 8 characters long.')
+      if (usernameStatus === 'checking') {
+        setError('Please wait while we verify your username availability.')
         return
       }
 
-      if (!validateEmailFormat(cleanEmail)) {
+      if (usernameStatus === 'invalid' || usernameStatus === 'idle') {
+        setError(usernameMessage || 'Please provide an available username.')
+        return
+      }
+
+      if (!validateEmailFormat(data.email.trim())) {
         setError('Please enter a valid email address.')
+        return
+      }
+
+      if (emailStatus === 'checking') {
+        setError('Please wait while we verify your email address availability.')
+        return
+      }
+
+      if (emailStatus === 'invalid') {
+        setError(emailMessage || 'Please provide a valid, unregistered email address.')
         return
       }
 
@@ -377,46 +385,8 @@ export default function Signup() {
         return
       }
 
-      if (usernameStatus === 'checking' || emailStatus === 'checking') {
-        setError('Please wait while we verify your details.')
-        return
-      }
-
-      // Live revalidation of both username and email availability before advancing to Step 2
-      setIsStep1Submitting(true)
-      try {
-        const [usernameRes, emailRes] = await Promise.all([
-          authApi.checkUsername(cleanUsername),
-          authApi.checkEmail(cleanEmail),
-        ])
-
-        if (!usernameRes.available) {
-          setUsernameStatus('invalid')
-          setUsernameMessage(usernameRes.message || 'This username is already taken. Please choose another username.')
-          setError(usernameRes.message || 'This username is already taken. Please choose another username.')
-          return
-        }
-
-        if (!emailRes.available) {
-          setEmailStatus('invalid')
-          setEmailMessage(emailRes.message || 'This email address is already registered.')
-          setError(emailRes.message || 'This email address is already registered.')
-          return
-        }
-
-        setUsernameStatus('valid')
-        setUsernameMessage(usernameRes.message || 'Username is available.')
-        setEmailStatus('valid')
-        setEmailMessage(emailRes.message || 'Email address is available.')
-
-        setStep(2)
-        return
-      } catch (err: any) {
-        setError(err.message || 'Error verifying account availability. Please try again.')
-        return
-      } finally {
-        setIsStep1Submitting(false)
-      }
+      setStep(2)
+      return
     }
 
     if (step === 2) {
@@ -996,7 +966,6 @@ export default function Signup() {
                       !data.name.trim() ||
                       !data.email.trim() ||
                       !data.password.trim() ||
-                      data.password.trim().length < 8 ||
                       !data.mobile.trim() ||
                       usernameStatus === 'checking' ||
                       usernameStatus === 'invalid' ||
@@ -1004,22 +973,11 @@ export default function Signup() {
                       emailStatus === 'checking' ||
                       emailStatus === 'invalid' ||
                       emailStatus === 'idle' ||
-                      mobileStatus !== 'valid' ||
-                      isStep1Submitting
+                      mobileStatus !== 'valid'
                     }
                     className="group flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#754329] to-[#A66C43] px-5 py-4 text-sm font-semibold text-white shadow-lg shadow-[#754329]/20 transition hover:-translate-y-0.5 hover:shadow-xl disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none"
                   >
-                    {isStep1Submitting ? (
-                      <>
-                        <Loader2 size={18} className="animate-spin" />
-                        Verifying details...
-                      </>
-                    ) : usernameStatus === 'checking' ? (
-                      <>
-                        <Loader2 size={18} className="animate-spin" />
-                        Checking username...
-                      </>
-                    ) : emailStatus === 'checking' ? (
+                    {emailStatus === 'checking' ? (
                       <>
                         <Loader2 size={18} className="animate-spin" />
                         Validating email...

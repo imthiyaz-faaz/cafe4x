@@ -154,7 +154,7 @@ export function requireRole(...allowedRoles: string[]) {
 export async function resolveAuthorizedOrg(
   c: Context<AppEnv>,
   options: { allowPublic?: boolean } = {}
-): Promise<{ organizationId: string; shortCode: string } | null> {
+): Promise<{ organizationId: string; shortCode: string; currency: string } | null> {
   const reqShortCode = (
     c.req.header("x-shortcode") ||
     c.req.query("shortCode") ||
@@ -174,17 +174,17 @@ export async function resolveAuthorizedOrg(
   if (options.allowPublic) {
     if (reqShortCode) {
       const org = (await db
-        .prepare(`SELECT id, short_code as shortCode FROM organizations WHERE UPPER(short_code) = ?`)
+        .prepare(`SELECT id, short_code as shortCode, currency_code as currency FROM organizations WHERE UPPER(short_code) = ?`)
         .bind(reqShortCode)
         .get()) as any;
-      if (org) return { organizationId: String(org.id), shortCode: org.shortCode };
+      if (org) return { organizationId: String(org.id), shortCode: org.shortCode, currency: org.currency || "INR" };
     }
     if (reqOrgId) {
       const org = (await db
-        .prepare(`SELECT id, short_code as shortCode FROM organizations WHERE id = ?`)
+        .prepare(`SELECT id, short_code as shortCode, currency_code as currency FROM organizations WHERE id = ?`)
         .bind(reqOrgId)
         .get()) as any;
-      if (org) return { organizationId: String(org.id), shortCode: org.shortCode };
+      if (org) return { organizationId: String(org.id), shortCode: org.shortCode, currency: org.currency || "INR" };
     }
   }
 
@@ -196,7 +196,7 @@ export async function resolveAuthorizedOrg(
   // Fetch all organizations the user belongs to from user_organizations
   const userOrgs = (await db
     .prepare(
-      `SELECT o.id, o.short_code as shortCode, uo.role 
+      `SELECT o.id, o.short_code as shortCode, o.currency_code as currency, uo.role 
        FROM organizations o
        JOIN user_organizations uo ON o.id = uo.organization_id
        WHERE uo.user_id = ?`
@@ -215,7 +215,7 @@ export async function resolveAuthorizedOrg(
       // User is attempting to access an organization they do not belong to!
       return null;
     }
-    return { organizationId: String(match.id), shortCode: match.shortCode };
+    return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || "INR" };
   }
 
   if (reqOrgId) {
@@ -223,9 +223,9 @@ export async function resolveAuthorizedOrg(
     if (!match) {
       return null;
     }
-    return { organizationId: String(match.id), shortCode: match.shortCode };
+    return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || "INR" };
   }
 
   // Default to user's first organization
-  return { organizationId: String(userOrgs[0].id), shortCode: userOrgs[0].shortCode };
+  return { organizationId: String(userOrgs[0].id), shortCode: userOrgs[0].shortCode, currency: userOrgs[0].currency || "INR" };
 }

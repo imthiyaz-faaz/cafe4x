@@ -10,6 +10,7 @@ export interface OrganizationModel {
   name: string;
   shortCode: string;
   currency: string;
+  currencyCode?: string;
   ownerUserId?: string;
   createdAt: string;
 }
@@ -97,7 +98,7 @@ export const organizationController = {
 
       const rows = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency as currency, o.owner_user_id as ownerUserId, o.created_at as createdAt
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, o.created_at as createdAt
            FROM organizations o
            JOIN user_organizations uo ON o.id = uo.organization_id
            WHERE uo.user_id = ?
@@ -123,9 +124,11 @@ export const organizationController = {
       const body = await c.req.json();
       const name = (body.name || "").trim();
       const shortCode = (body.shortCode || "").trim().toUpperCase();
-      const currency = (body.currency || "INR").trim().toUpperCase();
+      const currency = (body.currencyCode || body.currency || "INR").trim().toUpperCase();
       const userId = body.userId ? String(body.userId) : authUser.id;
-      const allowedCurrencies = ["INR", "USD", "AED", "GBP", "EUR"];
+      const allowedCurrencies = [
+        "INR", "USD", "AED", "GBP", "EUR", "SGD", "CAD", "AUD", "JPY", "SAR", "QAR", "KWD", "OMR", "BHD", "MYR", "NZD", "CHF", "CNY", "HKD", "THB", "IDR", "PHP", "VND", "ZAR", "BRL"
+      ];
 
       if (!name || !shortCode) {
         return c.json({ success: false, message: "Organization name and shortCode are required" }, 400);
@@ -146,7 +149,7 @@ export const organizationController = {
       try {
         await db
           .prepare(
-            `INSERT INTO organizations (id, display_id, name, short_code, currency, owner_user_id, created_at)
+            `INSERT INTO organizations (id, display_id, name, short_code, currency_code, owner_user_id, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)`
           )
           .run(orgId, displayId, name, shortCode, currency, userId || null, now);
@@ -188,6 +191,7 @@ export const organizationController = {
         name,
         shortCode,
         currency,
+        currencyCode: currency,
         ownerUserId: userId || undefined,
         createdAt: now,
       };
@@ -197,6 +201,33 @@ export const organizationController = {
         message: "Organization created successfully",
         organization: newOrg,
       }, 201);
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/organizations/:id
+  async getOrganization(c: Context<AppEnv>) {
+    try {
+      const idOrCode = c.req.param("id") || "";
+      if (!idOrCode) {
+        return c.json({ success: false, message: "Organization ID or code required" }, 400);
+      }
+      const db = getUniversalDb(c.env?.DB);
+      const org = (await db
+        .prepare(
+          `SELECT id, display_id as displayId, name, short_code as shortCode, currency_code as currencyCode, currency_code as currency, owner_user_id as ownerUserId, created_at as createdAt
+           FROM organizations
+           WHERE id = ? OR UPPER(short_code) = UPPER(?)`
+        )
+        .bind(idOrCode, idOrCode)
+        .get()) as any;
+
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 404);
+      }
+
+      return c.json({ success: true, organization: org });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }

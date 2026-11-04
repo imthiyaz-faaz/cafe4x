@@ -1,5 +1,6 @@
 import { Context } from "hono";
 import { getUniversalDb } from "../db";
+import { generateId } from "../utils/id-generator";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
 import {
   BreakSession,
@@ -175,7 +176,8 @@ export const workingHoursController = {
 
       const breakSessionsJson = JSON.stringify(sanitizedBreaks);
       const now = new Date().toISOString();
-      const whId = `wh_${orgId}`;
+      const existingWh = (await db.prepare(`SELECT id FROM working_hours WHERE organization_id = ?`).bind(orgId).get()) as any;
+      const whId = existingWh?.id || (await generateId(db, "WHR"));
 
       await db
         .prepare(

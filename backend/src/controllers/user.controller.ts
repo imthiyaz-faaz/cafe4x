@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
-import { getNextId, hashPassword, generateSecureQrToken } from "../utils/id-generator";
+import { getNextId, generateId, hashPassword, generateSecureQrToken } from "../utils/id-generator";
 
 export interface UserModel {
   id: string;
@@ -174,9 +174,8 @@ export const userController = {
         .bind(email, userName)
         .get()) as any;
 
-      const { displayId: generatedDisplayId } = await getNextId(db, "USER");
-      const newUserId = existingUser ? existingUser.id : (body.id ? String(body.id) : generatedDisplayId);
-      const displayId = existingUser ? existingUser.displayId : generatedDisplayId;
+      const newUserId = existingUser ? existingUser.id : await generateId(db, "USR");
+      const displayId = newUserId;
       const hashedPassword = await hashPassword(body.password.trim());
       const now = new Date().toISOString();
 
@@ -229,12 +228,13 @@ export const userController = {
 
       // Link to organization
       const role = body.userType === "Admin" ? "Owner" : (body.userType === "Provider" ? "Provider" : "Member");
+const uorId = await generateId(db, "UOR");
       await db
         .prepare(
           `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
            VALUES (?, ?, ?, ?, ?)`
         )
-        .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, newUserId, org.organizationId, role, now);
+        .run(uorId, newUserId, org.organizationId, role, now);
 
       return c.json(
         {

@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
-import { getNextId } from "../utils/id-generator";
+import { getNextId, generateId } from "../utils/id-generator";
 import { getSigningSecret, verifyTemporaryOrderToken } from "../utils/token";
 import { validateOrderingWindow } from "../utils/session-window";
 
@@ -655,7 +655,7 @@ export const orderController = {
       // Populate normalized order_items table
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        const oiId = `oi_${orderId}_${i + 1}`;
+        const oiId = await generateId(db, "OIT");
         let resolvedItemId = it.itemId || null;
 
         // If itemId was not provided in payload, attempt exact match from items in this organization

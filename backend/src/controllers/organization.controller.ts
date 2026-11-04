@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { getAuthUser } from "../middleware/auth.middleware";
-import { getNextId } from "../utils/id-generator";
+import { getNextId, generateId } from "../utils/id-generator";
 
 export interface OrganizationModel {
   id: string;
@@ -139,8 +139,8 @@ export const organizationController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const { displayId } = await getNextId(db, "ORG", shortCode);
-      const orgId = `org_${shortCode.toLowerCase()}_${Date.now()}`;
+      const orgId = await generateId(db, "ORG");
+      const displayId = orgId;
       const now = new Date().toISOString();
 
       try {
@@ -152,12 +152,13 @@ export const organizationController = {
           .run(orgId, displayId, name, shortCode, currency, userId || null, now);
 
         if (userId) {
+          const uorId = await generateId(db, "UOR");
           await db
             .prepare(
               `INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role, created_at)
                VALUES (?, ?, ?, 'Owner', ?)`
             )
-            .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, userId, orgId, now);
+            .run(uorId, userId, orgId, now);
         }
       } catch (dbErr: any) {
         if (dbErr.message && dbErr.message.includes("UNIQUE")) {

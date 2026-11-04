@@ -1,7 +1,7 @@
 import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
-import { getNextId, hashPassword, verifyPassword, sha256Hex } from "../utils/id-generator";
+import { getNextId, generateId, hashPassword, verifyPassword, sha256Hex } from "../utils/id-generator";
 import { getAuthUser } from "../middleware/auth.middleware";
 import { validateEmailFormat, validateAndNormalizeMobile } from "../utils/validation";
 
@@ -123,7 +123,7 @@ export const authController = {
       const token = `cafe4x_token_${row.id}_${Date.now()}`;
       try {
         const tokenHash = await sha256Hex(token);
-        const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const sessionId = await generateId(db, "SES");
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         await db
           .prepare(
@@ -279,12 +279,11 @@ export const authController = {
         }, 409);
       }
 
-      // Generate meaningful sequential IDs
-      const { displayId: userDisplayId } = await getNextId(db, "USER");
-      const { displayId: orgDisplayId } = await getNextId(db, "ORG", orgShort);
-
-      const newUserId = body.id ? String(body.id) : userDisplayId;
-      const orgId = `org_${orgShort.toLowerCase()}_${Date.now()}`;
+      // Generate standardized sequential 6-digit IDs
+      const orgId = await generateId(db, "ORG");
+      const newUserId = await generateId(db, "USR");
+      const userDisplayId = newUserId;
+      const orgDisplayId = orgId;
       const hashedPassword = await hashPassword(password);
 
       // Perform atomic insertion of Organization, User, and UserOrganization link
@@ -319,12 +318,13 @@ export const authController = {
         );
 
       // 3. Link user as Owner in user_organizations
+      const uorId = await generateId(db, "UOR");
       await db
         .prepare(
           `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
            VALUES (?, ?, ?, 'Owner', ?)`
         )
-        .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, newUserId, actualOrgId, now);
+        .run(uorId, newUserId, actualOrgId, now);
 
       const userSafe: UserModel = {
         id: newUserId,
@@ -343,7 +343,7 @@ export const authController = {
       const token = `cafe4x_token_${newUserId}_${Date.now()}`;
       try {
         const tokenHash = await sha256Hex(token);
-        const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+        const sessionId = await generateId(db, "SES");
         const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
         await db
           .prepare(

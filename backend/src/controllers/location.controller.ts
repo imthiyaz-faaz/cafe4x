@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
-import { getNextId } from "../utils/id-generator";
+import { getNextId, generateId } from "../utils/id-generator";
 
 export interface LocationModel {
   id: string;
@@ -197,7 +197,8 @@ export const locationController = {
             `INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at)
              VALUES (?, ?, ?, ?, ?)`
           )
-          .run(`pl_${assignedProviderId}_${id}`, org.organizationId, assignedProviderId, id, now);
+          const prlId = await generateId(db, "PRL");
+          await db.prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`).run(prlId, org.organizationId, assignedProviderId, id, now);
       }
 
       const newLoc: LocationModel = {
@@ -281,7 +282,8 @@ export const locationController = {
             `INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at)
              VALUES (?, ?, ?, ?, ?)`
           )
-          .run(`pl_${body.assignedProviderId}_${targetId}`, org.organizationId, body.assignedProviderId, targetId, now);
+          const prlId = await generateId(db, "PRL");
+            await db.prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`).run(prlId, org.organizationId, body.assignedProviderId, targetId, now);
       } else if (body.assignedProviderId === null || body.assignedProviderId === "") {
         await db
           .prepare(`DELETE FROM provider_locations WHERE location_id = ? AND organization_id = ?`)
@@ -350,7 +352,8 @@ export const locationController = {
             `INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at)
              VALUES (?, ?, ?, ?, ?)`
           )
-          .run(`pl_${providerId}_${targetId}`, org.organizationId, providerId, targetId, now);
+          const prlId = await generateId(db, "PRL");
+          await db.prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`).run(prlId, org.organizationId, providerId, targetId, now);
       } else {
         await db
           .prepare(`DELETE FROM provider_locations WHERE location_id = ? AND organization_id = ?`)
@@ -457,7 +460,6 @@ export const locationController = {
       }
       const number = rawNumber.padStart(2, "0");
       const displayId = `SEAT-${org.shortCode}-${number}`;
-      const seatId = body.id || `${org.shortCode}-${number}`;
 
       const db = getUniversalDb(c.env?.DB);
 
@@ -472,6 +474,8 @@ export const locationController = {
       }
 
       const effectiveLocId = loc.id;
+      const existingSeatRow = (await db.prepare(`SELECT id, display_id FROM seats WHERE location_id = ? AND number = ?`).bind(effectiveLocId, number).get()) as any;
+      const seatId = existingSeatRow?.id || (await generateId(db, "SEA"));
 
       // Employee assignment fields
       const employeeName = body.employeeName ? String(body.employeeName).trim() : null;

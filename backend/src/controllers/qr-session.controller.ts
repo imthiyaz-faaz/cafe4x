@@ -467,7 +467,7 @@ export const qrSessionController = {
 
         // Verify organization exists in database
         const orgRow = (await db
-          .prepare(`SELECT id, short_code as shortCode, name FROM organizations WHERE id = ?`)
+          .prepare(`SELECT id, short_code as shortCode, name, currency_code as currency FROM organizations WHERE id = ?`)
           .bind(payload.orgId)
           .get()) as any;
 

@@ -544,7 +544,8 @@ export const userController = {
             u.qr_token_status as qrTokenStatus,
             o.id as organizationId, 
             o.short_code as shortCode, 
-            o.name as organization
+            o.name as organization,
+            o.currency_code as currency
            FROM users u
            JOIN user_organizations uo ON u.id = uo.user_id
            JOIN organizations o ON uo.organization_id = o.id

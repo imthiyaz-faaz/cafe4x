@@ -25,6 +25,7 @@ import Background from '../../../components/background'
 import { authApi } from '../../../services/auth'
 import { organizationApi } from '../../../services/organizations'
 import { getAllCountries, type CountryInfo } from '../../../utils/countries'
+import { SUPPORTED_CURRENCIES, type CurrencyInfo, DEFAULT_CURRENCY } from '../../../utils/currencies'
 import { validateEmailFormat, validateMobileNumber } from '../../../utils/validation'
 
 interface SignupData {
@@ -35,6 +36,7 @@ interface SignupData {
   password: string
   organization: string
   shortCode: string
+  currency: string
 }
 
 const initialData: SignupData = {
@@ -45,6 +47,7 @@ const initialData: SignupData = {
   password: '',
   organization: '',
   shortCode: '',
+  currency: 'INR',
 }
 
 const steps = [
@@ -68,6 +71,47 @@ export default function Signup() {
   const [isCountryDropdownOpen, setIsCountryDropdownOpen] = useState(false)
   const [countrySearch, setCountrySearch] = useState('')
   const countryDropdownRef = useRef<HTMLDivElement | null>(null)
+
+  // Currencies and selection (default INR ₹)
+  const [selectedCurrency, setSelectedCurrency] = useState<CurrencyInfo>(() => {
+    return (
+      SUPPORTED_CURRENCIES.find((c) => c.code === DEFAULT_CURRENCY) ||
+      SUPPORTED_CURRENCIES[0]
+    )
+  })
+  const [isCurrencyDropdownOpen, setIsCurrencyDropdownOpen] = useState(false)
+  const [currencySearch, setCurrencySearch] = useState('')
+  const currencyDropdownRef = useRef<HTMLDivElement | null>(null)
+
+  // Filtered currencies based on search query
+  const filteredCurrencies = useMemo(() => {
+    const q = currencySearch.trim().toLowerCase()
+    if (!q) return SUPPORTED_CURRENCIES
+    return SUPPORTED_CURRENCIES.filter(
+      (c) =>
+        c.code.toLowerCase().includes(q) ||
+        c.name.toLowerCase().includes(q) ||
+        c.symbol.toLowerCase().includes(q)
+    )
+  }, [currencySearch])
+
+  // Close currency dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (
+        currencyDropdownRef.current &&
+        !currencyDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsCurrencyDropdownOpen(false)
+      }
+    }
+    if (isCurrencyDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isCurrencyDropdownOpen])
 
   // Mobile validation state
   const [mobileStatus, setMobileStatus] = useState<
@@ -423,6 +467,8 @@ export default function Signup() {
         countryCode: selectedCountry.code,
         organization: cleanOrg,
         shortCode: cleanShortCode,
+        currency: selectedCurrency.code || 'INR',
+        currencyCode: selectedCurrency.code || 'INR',
         userType: 'Admin',
       }
 
@@ -448,6 +494,8 @@ export default function Signup() {
           mobileNumber: payload.mobileNumber,
           organization: payload.organization,
           shortCode: cleanShortCode,
+          currency: selectedCurrency.code || 'INR',
+          currencyCode: selectedCurrency.code || 'INR',
           userType: 'Admin',
           createdAt: new Date().toISOString(),
         }
@@ -1107,6 +1155,126 @@ export default function Signup() {
                       </p>
                     )}
                   </div>
+
+                  {/* Currency Selection Field (below Short Code) */}
+                  <div ref={currencyDropdownRef} className="relative">
+                    <div className="mb-2 flex items-center justify-between">
+                      <label
+                        htmlFor="currency"
+                        className="block text-sm font-semibold text-[#45352B]"
+                      >
+                        Currency
+                      </label>
+                      <span className="text-xs text-[#9A8778]">
+                        Default currency for all menu pricing & reports
+                      </span>
+                    </div>
+
+                    {/* Trigger button */}
+                    <button
+                      type="button"
+                      id="currency"
+                      onClick={() => {
+                        setIsCurrencyDropdownOpen((prev) => !prev)
+                        setCurrencySearch('')
+                      }}
+                      className={`${inputClass} flex items-center justify-between text-left cursor-pointer transition hover:border-[#8B5738] focus:border-[#8B5738]`}
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <span className="text-lg leading-none select-none shrink-0">
+                          {selectedCurrency.flag}
+                        </span>
+                        <span className="font-bold tracking-wide text-[#342219]">
+                          {selectedCurrency.code}
+                        </span>
+                        <span className="text-stone-300 font-light">•</span>
+                        <span className="truncate text-xs text-[#6F4228]">
+                          {selectedCurrency.name}
+                        </span>
+                        <span className="ml-1 inline-flex shrink-0 items-center rounded-md bg-[#FAF4ED] px-2 py-0.5 text-xs font-bold text-[#8B5738] border border-[#E8DED4]">
+                          {selectedCurrency.symbol}
+                        </span>
+                      </div>
+                      <ChevronDown
+                        size={17}
+                        className={`shrink-0 text-[#8D7A6C] transition-transform duration-200 ${
+                          isCurrencyDropdownOpen ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {/* Searchable Currency Dropdown */}
+                    {isCurrencyDropdownOpen && (
+                      <div className="absolute left-0 right-0 top-full mt-1.5 max-h-72 overflow-hidden rounded-2xl border border-[#E8DED4] bg-white shadow-2xl z-50 flex flex-col animate-in fade-in zoom-in-95 duration-100">
+                        {/* Search box inside dropdown */}
+                        <div className="p-2.5 border-b border-[#F0E6DC] bg-[#FAF6F2]">
+                          <div className="relative flex items-center">
+                            <Search size={14} className="absolute left-3 text-[#A08C7D]" />
+                            <input
+                              type="text"
+                              autoFocus
+                              placeholder="Search currency name, code or symbol..."
+                              value={currencySearch}
+                              onChange={(e) => setCurrencySearch(e.target.value)}
+                              className="w-full rounded-xl border border-[#E8DED4] bg-white py-1.5 pl-8 pr-3 text-xs text-[#342219] outline-none focus:border-[#8B5738] placeholder:text-[#A99A8E]"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Currencies List */}
+                        <div className="overflow-y-auto max-h-56 divide-y divide-[#F5EBE1]">
+                          {filteredCurrencies.length === 0 ? (
+                            <div className="p-4 text-center text-xs text-[#897B71]">
+                              No currencies found
+                            </div>
+                          ) : (
+                            filteredCurrencies.map((c) => {
+                              const isSelected = c.code === selectedCurrency.code
+                              return (
+                                <button
+                                  key={c.code}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedCurrency(c)
+                                    updateField('currency', c.code)
+                                    setIsCurrencyDropdownOpen(false)
+                                  }}
+                                  className={`w-full flex items-center justify-between px-3.5 py-2.5 text-left text-xs transition cursor-pointer hover:bg-[#F7F2EB] ${
+                                    isSelected
+                                      ? 'bg-[#F4ECE3] text-[#6F4228] font-bold'
+                                      : 'text-[#45352B]'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2.5 truncate">
+                                    <span className="text-lg leading-none select-none shrink-0">
+                                      {c.flag}
+                                    </span>
+                                    <span className="font-bold text-[#342219]">
+                                      {c.code}
+                                    </span>
+                                    <span className="truncate text-xs text-stone-600">
+                                      {c.name}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="rounded-md bg-[#FAF4ED] px-2 py-0.5 text-xs font-bold text-[#8B5738] border border-[#E8DED4]">
+                                      {c.symbol}
+                                    </span>
+                                    {isSelected && (
+                                      <Check size={15} className="text-emerald-600 stroke-[2.5]" />
+                                    )}
+                                  </div>
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+
 
                   {error && (
                     <p role="alert" className="text-sm text-red-600">

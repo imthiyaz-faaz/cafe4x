@@ -1,3 +1,4 @@
+import { getCurrencySymbol, getActiveOrgCurrency } from '../../utils/currencies';
 import { useState, useEffect, useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import {
@@ -105,6 +106,8 @@ export default function UserOrderPage() {
 
   // 1. Resolve organization shortCode
   const [effectiveShortCode, setEffectiveShortCode] = useState<string>(shortCode || "");
+  const [orderCurrency, setOrderCurrency] = useState<string>("INR");
+  const currencySymbol = useMemo(() => getCurrencySymbol(orderCurrency), [orderCurrency]);
 
   // Validate QR Token if present
   // Validate Token if present (via URL param or ?token= query string)
@@ -141,6 +144,11 @@ export default function UserOrderPage() {
           }
           if (res.organization?.shortCode) {
             setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+          }
+          if (res.organization?.currency || (res.organization as any)?.currencyCode) {
+            setOrderCurrency(res.organization.currency || (res.organization as any).currencyCode);
+          } else if (res.organization?.shortCode) {
+            setOrderCurrency(getActiveOrgCurrency(res.organization.shortCode));
           }
         } else if (res && res.isClosed) {
           // ── Outside ordering window / emergency closed ────────
@@ -185,6 +193,11 @@ export default function UserOrderPage() {
                 setEmployeeEmail(res.employee.email);
                 if (res.organization?.shortCode) {
                   setEffectiveShortCode(res.organization.shortCode.toUpperCase());
+                }
+                if (res.organization?.currency || (res.organization as any)?.currencyCode) {
+                  setOrderCurrency(res.organization.currency || (res.organization as any).currencyCode);
+                } else if (res.organization?.shortCode) {
+                  setOrderCurrency(getActiveOrgCurrency(res.organization.shortCode));
                 }
 
                 // Legacy: check localStorage for seat assignment
@@ -793,7 +806,7 @@ export default function UserOrderPage() {
             <div className="flex flex-col sm:items-end gap-1.5">
               <div className="flex items-center gap-3 bg-[#FAF4ED] border border-[#E8DED4] px-4 py-2 rounded-2xl shadow-xs">
                 <div className="text-xs text-[#704225]">
-                  <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">₹{grandTotal}</span>
+                  <span className="font-bold">{totalItemCount}</span> item{totalItemCount > 1 ? "s" : ""} selected &bull; <span className="font-bold text-[#342219]">{currencySymbol}{grandTotal}</span>
                 </div>
                 <button
                   type="button"
@@ -865,7 +878,7 @@ export default function UserOrderPage() {
                       </div>
                     )}
                     <div className="absolute top-3 right-3 rounded-lg bg-black/65 px-2.5 py-1 text-xs font-black text-white backdrop-blur-xs shadow-xs">
-                      ₹{item.price}
+                      {currencySymbol}{item.price}
                     </div>
                   </div>
 
@@ -936,7 +949,7 @@ export default function UserOrderPage() {
                     <div className="mt-4 flex items-center justify-between border-t border-[#F0E6DB] pt-3">
                       <div>
                         <span className="text-[10px] text-gray-500 block uppercase tracking-wider">Price</span>
-                        <span className="text-base font-black text-[#754329]">₹{item.price}</span>
+                        <span className="text-base font-black text-[#754329]">{currencySymbol}{item.price}</span>
                       </div>
 
                       <div className="flex items-center gap-2 rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] p-1">
@@ -1034,7 +1047,7 @@ export default function UserOrderPage() {
                                   </span>
                                 )
                               ) : null}
-                              <span className="text-[10px] text-stone-500">₹{it.price} each</span>
+                              <span className="text-[10px] text-stone-500">{currencySymbol}{it.price} each</span>
                             </div>
                           </div>
                         </div>
@@ -1058,7 +1071,7 @@ export default function UserOrderPage() {
                               <Plus size={11} />
                             </button>
                           </div>
-                          <span className="w-14 text-right font-bold text-[#342219]">₹{it.totalPrice}</span>
+                          <span className="w-14 text-right font-bold text-[#342219]">{currencySymbol}{it.totalPrice}</span>
                         </div>
                       </div>
                     );
@@ -1067,7 +1080,7 @@ export default function UserOrderPage() {
 
                 <div className="mt-3 pt-2.5 border-t border-[#DEC5B0] flex items-center justify-between text-xs font-bold">
                   <span className="text-[#8A7667]">Item Total</span>
-                  <span className="text-sm font-black text-[#754329]">₹{grandTotal}</span>
+                  <span className="text-sm font-black text-[#754329]">{currencySymbol}{grandTotal}</span>
                 </div>
               </div>
             )}
@@ -1090,7 +1103,7 @@ export default function UserOrderPage() {
                     </span>
                   </div>
                   <div className="text-base font-black text-amber-300">
-                    Total: ₹{grandTotal}
+                    Total: {currencySymbol}{grandTotal}
                   </div>
                 </div>
               </div>
@@ -1166,7 +1179,7 @@ export default function UserOrderPage() {
                         <span className="text-gray-500 ml-2">x {it.qty}</span>
                       </div>
                       <div className="font-bold text-[#342219] text-sm">
-                        ₹{Number(it.price) * Number(it.qty)}
+                        {currencySymbol}{Number(it.price) * Number(it.qty)}
                       </div>
                     </div>
                   ))}
@@ -1179,7 +1192,7 @@ export default function UserOrderPage() {
                     <span className="text-xs text-gray-500">Includes all taxes and delivery to desk</span>
                   </div>
                   <div className="text-xl font-black text-[#754329]">
-                    ₹{placedOrder.total}
+                    {currencySymbol}{placedOrder.total}
                   </div>
                 </div>
 

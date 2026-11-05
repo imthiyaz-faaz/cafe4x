@@ -4,6 +4,7 @@ import { AppEnv } from "../types";
 import { getNextId, generateId, hashPassword, verifyPassword, sha256Hex } from "../utils/id-generator";
 import { getAuthUser } from "../middleware/auth.middleware";
 import { validateEmailFormat, validateAndNormalizeMobile } from "../utils/validation";
+import { isSupportedCurrency, DEFAULT_CURRENCY } from "../utils/currencies";
 
 export interface UserModel {
   id: string;
@@ -291,11 +292,15 @@ export const authController = {
 
       const orgName = (body.organization || "").trim().replace(/\s+/g, " ");
       const orgShort = (body.shortCode || "").trim().toUpperCase();
-      const orgCurrency = (body.currencyCode || body.currency || "INR").trim().toUpperCase();
+            const orgCurrency = (body.currencyCode || body.currency || DEFAULT_CURRENCY).trim().toUpperCase();
       const now = new Date().toISOString();
 
       if (!orgName || !orgShort) {
         return c.json({ success: false, message: "Organization name and short code are required" }, 400);
+      }
+
+      if (!isSupportedCurrency(orgCurrency)) {
+        return c.json({ success: false, message: `Unsupported currency code: ${orgCurrency}` }, 400);
       }
 
       // Check organization short code uniqueness before inserting user or organization (org names can be duplicate, short codes must be unique)

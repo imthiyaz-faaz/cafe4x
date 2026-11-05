@@ -3,6 +3,7 @@ import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { getAuthUser } from "../middleware/auth.middleware";
 import { getNextId, generateId } from "../utils/id-generator";
+import { isSupportedCurrency, DEFAULT_CURRENCY } from "../utils/currencies";
 
 export interface OrganizationModel {
   id: string;
@@ -124,17 +125,14 @@ export const organizationController = {
       const body = await c.req.json();
       const name = (body.name || "").trim();
       const shortCode = (body.shortCode || "").trim().toUpperCase();
-      const currency = (body.currencyCode || body.currency || "INR").trim().toUpperCase();
+      const currency = (body.currencyCode || body.currency || DEFAULT_CURRENCY).trim().toUpperCase();
       const userId = body.userId ? String(body.userId) : authUser.id;
-      const allowedCurrencies = [
-        "INR", "USD", "AED", "GBP", "EUR", "SGD", "CAD", "AUD", "JPY", "SAR", "QAR", "KWD", "OMR", "BHD", "MYR", "NZD", "CHF", "CNY", "HKD", "THB", "IDR", "PHP", "VND", "ZAR", "BRL"
-      ];
 
       if (!name || !shortCode) {
         return c.json({ success: false, message: "Organization name and shortCode are required" }, 400);
       }
 
-      if (!allowedCurrencies.includes(currency)) {
+      if (!isSupportedCurrency(currency)) {
         return c.json(
           { success: false, message: "Invalid currency" },
           400

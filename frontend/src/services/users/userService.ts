@@ -37,6 +37,8 @@ export interface ValidatedQrTokenResponse {
     id: string;
     shortCode: string;
     name: string;
+    currency?: string;
+    currencyCode?: string;
   };
 }
 

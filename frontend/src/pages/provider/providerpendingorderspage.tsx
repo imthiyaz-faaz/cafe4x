@@ -1,3 +1,4 @@
+import { useOrgCurrency } from '../../utils/currencies';
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
 import { useState, useMemo, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
@@ -25,6 +26,7 @@ import { orderApi, type ProviderOrder } from "../../services/orders";
 import { itemsApi } from "../../services/items";
 
 export default function ProviderPendingOrdersPage() {
+  const { currencySymbol } = useOrgCurrency();
   const navigate = useNavigate();
 
   // Session Filter State: "all" | "morning" | "evening"
@@ -633,34 +635,34 @@ export default function ProviderPendingOrdersPage() {
                                   <span>
                                     {it.qty}x {it.name}
                                   </span>
-                                  <span>₹{(it.price || 0) * (it.qty || 1)}</span>
+                                  <span>{currencySymbol}{(it.price || 0) * (it.qty || 1)}</span>
                                 </div>
                               ))}
 
                               <div className="border-t border-[#E8DED4] pt-2 mt-2 space-y-1 text-[11px] text-stone-600">
                                 <div className="flex justify-between">
                                   <span>Original Subtotal:</span>
-                                  <span className="font-medium">₹ {subtotal.toFixed(2)}</span>
+                                  <span className="font-medium">{currencySymbol} {subtotal.toFixed(2)}</span>
                                 </div>
                                 {currentAdj !== 0 && (
                                   <div className="flex justify-between text-amber-800">
                                     <span>Adjustment:</span>
                                     <span className="font-medium">
                                       {currentAdj > 0
-                                        ? `+ ₹ ${currentAdj.toFixed(2)}`
-                                        : `- ₹ ${Math.abs(currentAdj).toFixed(2)}`}
+                                        ? `+ ${currencySymbol} ${currentAdj.toFixed(2)}`
+                                        : `- ${currencySymbol} ${Math.abs(currentAdj).toFixed(2)}`}
                                     </span>
                                   </div>
                                 )}
                                 {discount > 0 && (
                                   <div className="flex justify-between text-rose-700">
                                     <span>Discount:</span>
-                                    <span className="font-medium">- ₹ {discount.toFixed(2)}</span>
+                                    <span className="font-medium">- {currencySymbol} {discount.toFixed(2)}</span>
                                   </div>
                                 )}
                                 <div className="flex justify-between font-black text-sm text-[#70452D] pt-1 border-t border-[#E8DED4]">
                                   <span>Net Amount:</span>
-                                  <span className="text-[#28A745]">₹ {netTotal.toFixed(2)}</span>
+                                  <span className="text-[#28A745]">{currencySymbol} {netTotal.toFixed(2)}</span>
                                 </div>
                               </div>
                             </div>
@@ -1054,7 +1056,7 @@ export default function ProviderPendingOrdersPage() {
                                 </div>
 
                                 <div className="col-span-3 text-right font-black text-sm text-[#28A745]">
-                                  ₹ {item.totalAmount.toFixed(2)}
+                                  {currencySymbol} {item.totalAmount.toFixed(2)}
                                 </div>
                               </div>
 
@@ -1106,7 +1108,7 @@ export default function ProviderPendingOrdersPage() {
                                                 Qty: {sub.qty}
                                               </span>
                                               <span className="font-bold text-gray-800">
-                                                ₹ {sub.amount.toFixed(2)}
+                                                {currencySymbol} {sub.amount.toFixed(2)}
                                               </span>
                                             </div>
 
@@ -1178,7 +1180,7 @@ export default function ProviderPendingOrdersPage() {
                           Total Items: {grandPendingQty}
                         </span>
                         <span className="rounded-md bg-[#28A745] px-3.5 py-1 font-bold text-white shadow-2xs">
-                          Total Amount: ₹ {grandPendingAmount.toFixed(2)}
+                          Total Amount: {currencySymbol} {grandPendingAmount.toFixed(2)}
                         </span>
                       </div>
                     </div>
@@ -1223,7 +1225,7 @@ export default function ProviderPendingOrdersPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="block font-bold text-gray-700 mb-1">
-                      Adjustment (₹) <span className="font-normal text-stone-400">(±)</span>
+                      Adjustment ({currencySymbol}) <span className="font-normal text-stone-400">(±)</span>
                     </label>
                     <input
                       type="number"
@@ -1235,7 +1237,7 @@ export default function ProviderPendingOrdersPage() {
                   </div>
 
                   <div>
-                    <label className="block font-bold text-gray-700 mb-1">Discount (₹)</label>
+                    <label className="block font-bold text-gray-700 mb-1">Discount ({currencySymbol})</label>
                     <input
                       type="number"
                       step="0.01"

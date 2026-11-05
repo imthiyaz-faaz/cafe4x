@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import type { UserItem } from "../../pages/Admin/Userspage";
 import CreateFormModal, { FormRow } from "../common/CreateFormModal";
-import { validateUserCreation, type UserValidationResult } from "../../utils/validation";
+import { validateUserCreation, validateEmailFormat, type UserValidationResult } from "../../utils/validation";
 import { userApi } from "../../services/userApi";
 
 interface UserCreateProps {
@@ -38,21 +38,96 @@ export default function UserCreate({
     onClose();
   };
 
+  // Real-time onBlur validation for Username
+  const handleUserNameBlur = async () => {
+    const val = formData.userName.trim();
+    if (!val) {
+      setErrors((prev) => ({ ...prev, userName: "User Name is required" }));
+      return;
+    }
+    if (val.length < 3) {
+      setErrors((prev) => ({ ...prev, userName: "Username must be at least 3 characters long" }));
+      return;
+    }
+
+    try {
+      const res = await userApi.checkUsername(val);
+      if (!res.available) {
+        setErrors((prev) => ({
+          ...prev,
+          userName: "This username is already taken. Please choose another username.",
+        }));
+      } else {
+        setErrors((prev) => ({ ...prev, userName: undefined }));
+      }
+    } catch {
+      // Ignore background network errors
+    }
+  };
+
+  // Real-time onBlur validation for Email
+  const handleEmailBlur = async () => {
+    const val = formData.email.trim();
+    if (!val) {
+      setErrors((prev) => ({ ...prev, email: "Email is required" }));
+      return;
+    }
+    if (!validateEmailFormat(val)) {
+      setErrors((prev) => ({ ...prev, email: "Please enter a valid email address" }));
+      return;
+    }
+
+    try {
+      const res = await userApi.checkEmail(val);
+      if (!res.available) {
+        setErrors((prev) => ({
+          ...prev,
+          email: "This email address is already registered. Please use another email.",
+        }));
+      } else {
+        setErrors((prev) => ({ ...prev, email: undefined }));
+      }
+    } catch {
+      // Ignore background network errors
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setGeneralError("");
 
-    // Validate using common validation schema
+    // 1. Validate fields format using common validation schema
     const validation = validateUserCreation(formData, { requireConfirmPassword: true });
     if (!validation.isValid) {
       setErrors(validation.errors);
       return;
     }
 
-    setErrors({});
     setIsSubmitting(true);
 
     try {
+      // 2. Validate username and email availability before creating
+      const [usernameRes, emailRes] = await Promise.all([
+        userApi.checkUsername(formData.userName.trim()),
+        userApi.checkEmail(formData.email.trim()),
+      ]);
+
+      const duplicateErrors: UserValidationResult["errors"] = {};
+      if (!usernameRes.available) {
+        duplicateErrors.userName = "This username is already taken. Please choose another username.";
+      }
+      if (!emailRes.available) {
+        duplicateErrors.email = "This email address is already registered. Please use another email.";
+      }
+
+      if (Object.keys(duplicateErrors).length > 0) {
+        setErrors((prev) => ({ ...prev, ...duplicateErrors }));
+        setIsSubmitting(false);
+        return;
+      }
+
+      // 3. Create user via API
       const createdUser = await userApi.createUser({
         name: formData.name.trim(),
         userName: formData.userName.trim(),
@@ -67,7 +142,7 @@ export default function UserCreate({
         mobileNumber: createdUser.mobileNumber || "",
       });
 
-      // Reset Form
+      // Reset Form & close on success
       setFormData({
         name: "",
         userName: "",
@@ -82,16 +157,28 @@ export default function UserCreate({
       onClose();
     } catch (err: any) {
       console.error("Error creating user:", err);
-      if (err?.data?.errors) {
-        setErrors(err.data.errors);
+      const errData = err?.data;
+      if (errData?.errors) {
+        setErrors((prev) => ({ ...prev, ...errData.errors }));
       } else {
-        const msg = err?.data?.message || err?.message || "Failed to create user. Please try again.";
-        if (msg.toLowerCase().includes("email")) {
-          setErrors((prev) => ({ ...prev, email: msg }));
-        } else if (msg.toLowerCase().includes("username")) {
-          setErrors((prev) => ({ ...prev, userName: msg }));
-        } else {
-          setGeneralError(msg);
+        const msg = String(errData?.message || err?.message || "");
+        const lower = msg.toLowerCase();
+        if (lower.includes("username") || lower.includes("user_name")) {
+          setErrors((prev) => ({
+            ...prev,
+            userName: "This username is already taken. Please choose another username.",
+          }));
+        } else if (lower.includes("email")) {
+          setErrors((prev) => ({
+            ...prev,
+            email: "This email address is already registered. Please use another email.",
+          }));
+        } else if (
+          !lower.includes("d1_error") &&
+          !lower.includes("sqlite") &&
+          !lower.includes("unique constraint")
+        ) {
+          setGeneralError(msg || "Failed to create user. Please try again.");
         }
       }
     } finally {
@@ -123,7 +210,7 @@ export default function UserCreate({
           placeholder="Name"
           value={formData.name}
           onChange={(e) => {
-            setFormData({ ...formData, name: e.target.value });
+            setFormData((prev) => ({ ...prev, name: e.target.value }));
             if (errors.name) setErrors((prev) => ({ ...prev, name: undefined }));
           }}
           className={`w-full rounded-md border px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none transition ${
@@ -143,8 +230,9 @@ export default function UserCreate({
           type="text"
           placeholder="User Name"
           value={formData.userName}
+          onBlur={handleUserNameBlur}
           onChange={(e) => {
-            setFormData({ ...formData, userName: e.target.value });
+            setFormData((prev) => ({ ...prev, userName: e.target.value }));
             if (errors.userName) setErrors((prev) => ({ ...prev, userName: undefined }));
           }}
           className={`w-full rounded-md border px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none transition ${
@@ -165,7 +253,7 @@ export default function UserCreate({
           placeholder="Password"
           value={formData.password}
           onChange={(e) => {
-            setFormData({ ...formData, password: e.target.value });
+            setFormData((prev) => ({ ...prev, password: e.target.value }));
             if (errors.password) setErrors((prev) => ({ ...prev, password: undefined }));
           }}
           className={`w-full rounded-md border px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none transition ${
@@ -186,7 +274,7 @@ export default function UserCreate({
           placeholder="ConfirmPassword"
           value={formData.confirmPassword}
           onChange={(e) => {
-            setFormData({ ...formData, confirmPassword: e.target.value });
+            setFormData((prev) => ({ ...prev, confirmPassword: e.target.value }));
             if (errors.confirmPassword)
               setErrors((prev) => ({ ...prev, confirmPassword: undefined }));
           }}
@@ -209,7 +297,7 @@ export default function UserCreate({
           <select
             value={formData.userType}
             onChange={(e) => {
-              setFormData({ ...formData, userType: e.target.value });
+              setFormData((prev) => ({ ...prev, userType: e.target.value }));
               if (errors.userType) setErrors((prev) => ({ ...prev, userType: undefined }));
             }}
             className={`w-full appearance-none rounded-md border bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none transition ${
@@ -236,8 +324,9 @@ export default function UserCreate({
           type="email"
           placeholder="Email"
           value={formData.email}
+          onBlur={handleEmailBlur}
           onChange={(e) => {
-            setFormData({ ...formData, email: e.target.value });
+            setFormData((prev) => ({ ...prev, email: e.target.value }));
             if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }));
           }}
           className={`w-full rounded-md border px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none transition ${
@@ -258,7 +347,7 @@ export default function UserCreate({
           placeholder="Mobile Number"
           value={formData.mobileNumber}
           onChange={(e) => {
-            setFormData({ ...formData, mobileNumber: e.target.value });
+            setFormData((prev) => ({ ...prev, mobileNumber: e.target.value }));
             if (errors.mobileNumber)
               setErrors((prev) => ({ ...prev, mobileNumber: undefined }));
           }}

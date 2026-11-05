@@ -242,25 +242,45 @@ export const userController = {
       const email = body.email.trim().toLowerCase();
       const userName = body.userName.trim();
 
-      // 2. Validate email uniqueness across users table
+      // 2. Check username and email availability across users table
+      const duplicateErrors: { userName?: string; email?: string } = {};
+
+      const existingUserName = (await db
+        .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
+        .bind(userName)
+        .get()) as any;
+
+      if (existingUserName) {
+        duplicateErrors.userName = "This username is already taken. Please choose another username.";
+      }
+
       const existingEmail = (await db
         .prepare(`SELECT id, email FROM users WHERE LOWER(TRIM(email)) = LOWER(?)`)
         .bind(email)
         .get()) as any;
 
       if (existingEmail) {
+        duplicateErrors.email = "This email address is already registered. Please use another email.";
+      }
+
+      if (Object.keys(duplicateErrors).length > 0) {
+        const code = duplicateErrors.userName && duplicateErrors.email
+          ? "DUPLICATE_USER_CREDENTIALS"
+          : (duplicateErrors.userName ? "USERNAME_ALREADY_EXISTS" : "EMAIL_ALREADY_EXISTS");
+        const firstMessage = Object.values(duplicateErrors)[0];
+
         return c.json(
           {
             success: false,
-            code: "EMAIL_ALREADY_EXISTS",
-            message: "This email address is already registered.",
-            errors: { email: "This email address is already registered." },
+            code,
+            message: firstMessage,
+            errors: duplicateErrors,
           },
           409
         );
       }
 
-      const phoneRes = validatePhone(body.mobileNumber);
+      const phoneRes = validatePhone(body.mobileNumber, body.countryCode || "IN");
       const formattedMobile = phoneRes.e164Number || body.mobileNumber.trim();
 
       const newUserId = await generateId(db, "USR");
@@ -269,27 +289,53 @@ export const userController = {
       const now = new Date().toISOString();
       const generatedQrToken = generateSecureQrToken(16);
 
-      // 3. Insert into users table
-      await db
-        .prepare(
-          `INSERT INTO users (id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
-          newUserId,
-          displayId,
-          body.name.trim(),
-          userName,
-          body.password.trim(),
-          hashedPassword,
-          email,
-          formattedMobile,
-          body.userType === "Provider" ? "Provider" : "Admin",
-          generatedQrToken,
-          now,
-          "active",
-          now
-        );
+      // 3. Insert into users table with graceful UNIQUE constraint handling
+      try {
+        await db
+          .prepare(
+            `INSERT INTO users (id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            newUserId,
+            displayId,
+            body.name.trim(),
+            userName,
+            body.password.trim(),
+            hashedPassword,
+            email,
+            formattedMobile,
+            body.userType === "Provider" ? "Provider" : "Admin",
+            generatedQrToken,
+            now,
+            "active",
+            now
+          );
+      } catch (insertErr: any) {
+        const errMsg = String(insertErr?.message || "");
+        if (errMsg.includes("UNIQUE") || errMsg.includes("SQLITE_CONSTRAINT")) {
+          const errors: { userName?: string; email?: string } = {};
+          if (errMsg.toLowerCase().includes("user_name")) {
+            errors.userName = "This username is already taken. Please choose another username.";
+          }
+          if (errMsg.toLowerCase().includes("email")) {
+            errors.email = "This email address is already registered. Please use another email.";
+          }
+          if (Object.keys(errors).length === 0) {
+            errors.userName = "This username is already taken. Please choose another username.";
+          }
+          return c.json(
+            {
+              success: false,
+              code: "DUPLICATE_USER_CREDENTIALS",
+              message: Object.values(errors)[0],
+              errors,
+            },
+            409
+          );
+        }
+        throw insertErr;
+      }
 
       // 4. Link to organization
       const role = body.userType === "Admin" ? "Owner" : (body.userType === "Provider" ? "Provider" : "Member");
@@ -325,7 +371,29 @@ export const userController = {
       );
     } catch (err: any) {
       console.error("userController.createUser error:", err);
-      return c.json({ success: false, message: err.message }, 500);
+      const errMsg = String(err?.message || "");
+      if (errMsg.includes("UNIQUE") || errMsg.includes("SQLITE_CONSTRAINT")) {
+        const errors: { userName?: string; email?: string } = {};
+        if (errMsg.toLowerCase().includes("user_name")) {
+          errors.userName = "This username is already taken. Please choose another username.";
+        }
+        if (errMsg.toLowerCase().includes("email")) {
+          errors.email = "This email address is already registered. Please use another email.";
+        }
+        if (Object.keys(errors).length === 0) {
+          errors.userName = "This username is already taken. Please choose another username.";
+        }
+        return c.json(
+          {
+            success: false,
+            code: "DUPLICATE_USER_CREDENTIALS",
+            message: Object.values(errors)[0],
+            errors,
+          },
+          409
+        );
+      }
+      return c.json({ success: false, message: errMsg || "Failed to create user" }, 500);
     }
   },
 

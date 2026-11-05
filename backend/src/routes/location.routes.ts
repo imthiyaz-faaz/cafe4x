@@ -18,4 +18,8 @@ locationRoutes.post("/:id/seats/:seatId/unassign", locationController.unassignSe
 locationRoutes.post("/:id/seats/:seatId/assign", locationController.assignSeat);
 locationRoutes.delete("/:id/seats/:seatId", locationController.deleteSeat);
 
+// Employee seat assignment table endpoints
+locationRoutes.get("/:id/assignments", locationController.getAssignments);
+locationRoutes.delete("/:id/assignments/:assignmentId", locationController.removeAssignment);
+
 export default locationRoutes;

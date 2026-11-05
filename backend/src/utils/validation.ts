@@ -1,4 +1,9 @@
-import { parsePhoneNumber, isValidPhoneNumber, type CountryCode, getCountryCallingCode } from 'libphonenumber-js';
+import {
+  parsePhoneNumberFromString,
+  validatePhoneNumberLength,
+  getCountryCallingCode,
+  type CountryCode
+} from 'libphonenumber-js/max';
 import { getExampleNumber } from 'libphonenumber-js/mobile';
 import examples from 'libphonenumber-js/mobile/examples';
 
@@ -30,49 +35,28 @@ export interface PhoneValidationResult {
   countryIsoCode: CountryCode;
   dialingCode: string;
   nationalNumber: string;
+  formattedNumber: string;
   e164Number: string;
 }
 
 /**
- * Universal phone validation for Cafe4x
- * Strictly separates the country code from the national mobile number.
- * Can receive either:
- * - A clean national number + country code
- * - An E.164 number (+919791336641) from which it automatically extracts the national digits and country code
+ * Universal international mobile number validation for Cafe4x.
+ * Uses libphonenumber-js metadata to strictly validate the national number
+ * according to the selected country's numbering plan without hardcoding lengths.
  */
 export function validatePhone(
   rawInput: string,
   countryCode: string = 'IN'
 ): PhoneValidationResult {
-  const isoCode = (countryCode || 'IN').toUpperCase() as CountryCode;
+  const isoCode = (countryCode || 'IN').trim().toUpperCase() as CountryCode;
   let dialCode = '+91';
   try {
     dialCode = `+${getCountryCallingCode(isoCode)}`;
   } catch {}
+  const dialDigits = dialCode.replace(/\D/g, '');
 
   const trimmed = (rawInput || '').trim();
-
-  // Strip everything except digits and leading plus
-  let national = trimmed;
-  // If user passed a full international number with + or starts with country dialing code
-  const dialDigits = dialCode.replace(/\D/g, '');
-  if (national.startsWith('+')) {
-    // If starts with +, strip the matching dial code
-    const plusDial = `+${dialDigits}`;
-    if (national.startsWith(plusDial)) {
-      national = national.substring(plusDial.length);
-    } else {
-      national = national.replace(/^\+/, '');
-    }
-  } else if (national.startsWith(dialDigits) && national.length > dialDigits.length) {
-    // If it starts with country dial code (e.g. 919791336641 when country is IN)
-    national = national.substring(dialDigits.length);
-  }
-
-  // Keep strictly digits for the national number
-  const cleanedNational = national.replace(/\D/g, '');
-
-  if (!cleanedNational) {
+  if (!trimmed) {
     return {
       isValid: false,
       isIncomplete: false,
@@ -81,62 +65,52 @@ export function validatePhone(
       countryIsoCode: isoCode,
       dialingCode: dialCode,
       nationalNumber: '',
+      formattedNumber: '',
       e164Number: '',
     };
   }
 
-  // 1. Specific rules for India (IN)
-  if (isoCode === 'IN') {
-    if (cleanedNational.length < 10) {
-      return {
-        isValid: false,
-        isIncomplete: true,
-        status: 'incomplete',
-        message: 'Mobile number is incomplete.',
-        countryIsoCode: isoCode,
-        dialingCode: dialCode,
-        nationalNumber: cleanedNational,
-        e164Number: '',
-      };
+  // Get example mobile number length for this country for typing/incomplete feedback
+  let mobileLength = 10;
+  try {
+    const ex = getExampleNumber(isoCode, examples);
+    if (ex && ex.nationalNumber) {
+      mobileLength = ex.nationalNumber.length;
     }
-    if (cleanedNational.length > 10 || !/^[6-9]\d{9}$/.test(cleanedNational)) {
-      return {
-        isValid: false,
-        isIncomplete: false,
-        status: 'invalid',
-        message: 'Please enter a valid mobile number for the selected country.',
-        countryIsoCode: isoCode,
-        dialingCode: dialCode,
-        nationalNumber: cleanedNational,
-        e164Number: '',
-      };
+  } catch {}
+
+  let nationalDigits = trimmed.replace(/\D/g, '');
+  if (trimmed.startsWith('+')) {
+    const parsed = parsePhoneNumberFromString(trimmed);
+    if (parsed) {
+      nationalDigits = parsed.nationalNumber;
+    } else if (trimmed.startsWith(dialCode)) {
+      nationalDigits = trimmed.substring(dialCode.length).replace(/\D/g, '');
     }
+  } else if (nationalDigits.startsWith(dialDigits) && nationalDigits.length > mobileLength) {
+    nationalDigits = nationalDigits.substring(dialDigits.length);
+  }
+
+  if (!nationalDigits) {
     return {
-      isValid: true,
+      isValid: false,
       isIncomplete: false,
-      status: 'valid',
-      message: 'Mobile number verified successfully.',
+      status: 'idle',
+      message: '',
       countryIsoCode: isoCode,
       dialingCode: dialCode,
-      nationalNumber: cleanedNational,
-      e164Number: `+91${cleanedNational}`,
+      nationalNumber: '',
+      formattedNumber: '',
+      e164Number: '',
     };
   }
 
-  // 2. Generic International Rules using libphonenumber-js metadata
-  try {
-    let expectedLength = 10;
-    try {
-      const ex = getExampleNumber(isoCode, examples);
-      if (ex && ex.nationalNumber) {
-        expectedLength = ex.nationalNumber.length;
-      }
-    } catch {}
-
-    const isValid = isValidPhoneNumber(cleanedNational, isoCode);
-
-    if (isValid) {
-      const parsed = parsePhoneNumber(cleanedNational, isoCode);
+  // 1. If parsed number is valid and mobile-compatible, return valid immediately
+  const parsed = parsePhoneNumberFromString(nationalDigits, isoCode);
+  if (parsed && parsed.isValid()) {
+    const type = parsed.getType();
+    const isMobileCompatible = !type || type === 'MOBILE' || type === 'FIXED_LINE_OR_MOBILE';
+    if (isMobileCompatible) {
       return {
         isValid: true,
         isIncomplete: false,
@@ -144,46 +118,43 @@ export function validatePhone(
         message: 'Mobile number verified successfully.',
         countryIsoCode: isoCode,
         dialingCode: dialCode,
-        nationalNumber: cleanedNational,
+        nationalNumber: parsed.nationalNumber,
+        formattedNumber: parsed.formatNational(),
         e164Number: parsed.format('E.164'),
       };
     }
+  }
 
-    if (cleanedNational.length < expectedLength) {
-      return {
-        isValid: false,
-        isIncomplete: true,
-        status: 'incomplete',
-        message: 'Mobile number is incomplete.',
-        countryIsoCode: isoCode,
-        dialingCode: dialCode,
-        nationalNumber: cleanedNational,
-        e164Number: '',
-      };
-    }
+  // 2. Determine incomplete vs invalid
+  const lenStatus = validatePhoneNumberLength(nationalDigits, isoCode);
+  const isTrunkZero = nationalDigits.startsWith('0');
+  const effectiveExpectedLen = isTrunkZero ? mobileLength + 1 : mobileLength;
 
+  if (lenStatus === 'TOO_SHORT' || nationalDigits.length < effectiveExpectedLen) {
     return {
       isValid: false,
-      isIncomplete: false,
-      status: 'invalid',
-      message: 'Please enter a valid mobile number for the selected country.',
+      isIncomplete: true,
+      status: 'incomplete',
+      message: 'Mobile number is incomplete.',
       countryIsoCode: isoCode,
       dialingCode: dialCode,
-      nationalNumber: cleanedNational,
-      e164Number: '',
-    };
-  } catch {
-    return {
-      isValid: false,
-      isIncomplete: false,
-      status: 'invalid',
-      message: 'Please enter a valid mobile number for the selected country.',
-      countryIsoCode: isoCode,
-      dialingCode: dialCode,
-      nationalNumber: cleanedNational,
+      nationalNumber: nationalDigits,
+      formattedNumber: nationalDigits,
       e164Number: '',
     };
   }
+
+  return {
+    isValid: false,
+    isIncomplete: false,
+    status: 'invalid',
+    message: 'Please enter a valid mobile number for the selected country.',
+    countryIsoCode: isoCode,
+    dialingCode: dialCode,
+    nationalNumber: nationalDigits,
+    formattedNumber: nationalDigits,
+    e164Number: '',
+  };
 }
 
 // Backward compatibility aliases

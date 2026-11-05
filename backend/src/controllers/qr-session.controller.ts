@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
-import { generateSecureQrToken } from "../utils/id-generator";
+import { generateSecureQrToken, normalizeLocationPrefix } from "../utils/id-generator";
 import { getSigningSecret, createTemporaryOrderToken, verifyTemporaryOrderToken } from "../utils/token";
 import { validateOrderingWindow } from "../utils/session-window";
 
@@ -283,8 +283,9 @@ export const qrSessionController = {
       // If seat not explicitly in seats table, check if it's within location's totalSeats
       if (!seatRow && !isNaN(parsedSeatNum) && parsedSeatNum >= 1 && parsedSeatNum <= (locRow.totalSeats || 12)) {
         // Automatically ensure seat record exists
-        const generatedSeatId = `${orgRow.shortCode}-${paddedSeatNum}`;
-        const generatedDisplayId = `SEAT-${orgRow.shortCode}-${paddedSeatNum}`;
+        const locPrefix = normalizeLocationPrefix(locRow.name);
+        const generatedSeatId = `${locPrefix}-${String(parsedSeatNum).padStart(4, "0")}`;
+        const generatedDisplayId = generatedSeatId;
         const nowIso = new Date().toISOString();
         try {
           await db

@@ -96,16 +96,30 @@ export const authController = {
       }
 
       // Fetch organizations linked to this user in user_organizations
-      const userOrgs = (await db
-        .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
-           FROM organizations o
-           JOIN user_organizations uo ON o.id = uo.organization_id
-           WHERE uo.user_id = ?
-           ORDER BY o.created_at DESC`
-        )
-        .bind(row.id)
-        .all()) as any[];
+      let userOrgs: any[] = [];
+      try {
+        userOrgs = (await db
+          .prepare(
+            `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
+             FROM organizations o
+             JOIN user_organizations uo ON o.id = uo.organization_id
+             WHERE uo.user_id = ?
+             ORDER BY o.created_at DESC`
+          )
+          .bind(row.id)
+          .all()) as any[];
+      } catch {
+        userOrgs = (await db
+          .prepare(
+            `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, 'INR' as currencyCode, 'INR' as currency, o.owner_user_id as ownerUserId, uo.role
+             FROM organizations o
+             JOIN user_organizations uo ON o.id = uo.organization_id
+             WHERE uo.user_id = ?
+             ORDER BY o.created_at DESC`
+          )
+          .bind(row.id)
+          .all()) as any[];
+      }
 
       const primaryOrg = userOrgs.length > 0 ? userOrgs[0] : null;
 
@@ -214,7 +228,7 @@ export const authController = {
         return c.json({
           success: true,
           available: false,
-          message: "This email address is already registered.",
+          message: "This email address is already registered. Please use another email.",
         });
       }
 
@@ -460,16 +474,30 @@ export const authController = {
       return c.json({ success: false, message: "User not found." }, 404);
     }
 
-    const userOrgs = (await db
-      .prepare(
-        `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
-         FROM organizations o
-         JOIN user_organizations uo ON o.id = uo.organization_id
-         WHERE uo.user_id = ?
-         ORDER BY o.created_at DESC`
-      )
-      .bind(user.id)
-      .all()) as any[];
+    let userOrgs: any[] = [];
+    try {
+      userOrgs = (await db
+        .prepare(
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, uo.role
+           FROM organizations o
+           JOIN user_organizations uo ON o.id = uo.organization_id
+           WHERE uo.user_id = ?
+           ORDER BY o.created_at DESC`
+        )
+        .bind(user.id)
+        .all()) as any[];
+    } catch {
+      userOrgs = (await db
+        .prepare(
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, 'INR' as currencyCode, 'INR' as currency, o.owner_user_id as ownerUserId, uo.role
+           FROM organizations o
+           JOIN user_organizations uo ON o.id = uo.organization_id
+           WHERE uo.user_id = ?
+           ORDER BY o.created_at DESC`
+        )
+        .bind(user.id)
+        .all()) as any[];
+    }
 
     const primaryOrg = userOrgs.length > 0 ? userOrgs[0] : null;
 

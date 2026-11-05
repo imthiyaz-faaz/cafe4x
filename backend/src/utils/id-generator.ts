@@ -79,7 +79,8 @@ export type EntityIdType =
   | "OIT"
   | "SES"
   | "OSN"
-  | "WHR";
+  | "WHR"
+  | "ESA";
 
 const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLen: number }> = {
   ORG: { scope: "ORGANIZATIONS", prefix: "ORG", padLen: 6 },
@@ -94,6 +95,7 @@ const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLe
   SES: { scope: "USER_SESSIONS", prefix: "SES", padLen: 6 },
   OSN: { scope: "ORDERING_SESSIONS", prefix: "OSN", padLen: 6 },
   WHR: { scope: "WORKING_HOURS", prefix: "WHR", padLen: 6 },
+  ESA: { scope: "EMPLOYEE_SEAT_ASSIGNMENTS", prefix: "ESA", padLen: 6 },
 };
 
 /**
@@ -121,6 +123,89 @@ export async function generateId(
   const row = (await db.prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`).bind(config.scope).get()) as any;
   const num = row?.last_val || 1;
   return `${config.prefix}-${String(num).padStart(config.padLen, "0")}`;
+}
+
+/**
+ * Normalizes a location name to an uppercase, hyphen-separated prefix.
+ * e.g. "office" -> "OFFICE", "Room" -> "ROOM", "Meeting Room" -> "MEETING-ROOM"
+ */
+export function normalizeLocationPrefix(name: string): string {
+  const cleaned = (name || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return cleaned || "SEAT";
+}
+
+/**
+ * Generates an atomic, sequential, location-scoped seat identifier:
+ * e.g. OFFICE-0001, ROOM-0001, MEETING-ROOM-0001
+ * Uses id_sequences with scope: SEAT_LOC_<locationId>
+ */
+export async function generateLocationSeatId(
+  db: UniversalDb,
+  locationId: string,
+  locationName: string,
+  preferredNumber?: number
+): Promise<{ seatId: string; number: string; displayId: string }> {
+  const prefix = normalizeLocationPrefix(locationName);
+  const scope = `SEAT_LOC_${locationId}`;
+
+  let nextVal: number;
+  if (preferredNumber !== undefined && preferredNumber > 0) {
+    nextVal = preferredNumber;
+    await db
+      .prepare(
+        `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
+         ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
+      )
+      .bind(scope, nextVal, nextVal)
+      .run();
+  } else {
+    await db
+      .prepare(
+        `INSERT INTO id_sequences (scope, last_val) VALUES (?, 1)
+         ON CONFLICT(scope) DO UPDATE SET last_val = last_val + 1`
+      )
+      .bind(scope)
+      .run();
+
+    const row = (await db
+      .prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`)
+      .bind(scope)
+      .get()) as any;
+    nextVal = Number(row?.last_val) || 1;
+  }
+
+  // Ensure candidate does not collide with an existing seat in this location
+  while (true) {
+    const candidateId = `${prefix}-${String(nextVal).padStart(4, "0")}`;
+    const candidateNumber = String(nextVal).padStart(2, "0");
+    const existing = (await db
+      .prepare(
+        `SELECT id FROM seats WHERE location_id = ? AND (id = ? OR number = ?)`
+      )
+      .bind(locationId, candidateId, candidateNumber)
+      .get()) as any;
+
+    if (!existing) {
+      await db
+        .prepare(
+          `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
+           ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
+        )
+        .bind(scope, nextVal, nextVal)
+        .run();
+
+      return {
+        seatId: candidateId,
+        number: candidateNumber,
+        displayId: candidateId,
+      };
+    }
+    nextVal++;
+  }
 }
 
 /**

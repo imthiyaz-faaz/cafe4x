@@ -25,7 +25,7 @@ import Background from '../../../components/background'
 import { authApi } from '../../../services/auth'
 import { organizationApi } from '../../../services/organizations'
 import { getAllCountries, type CountryInfo } from '../../../utils/countries'
-import { SUPPORTED_CURRENCIES, type CurrencyInfo, DEFAULT_CURRENCY } from '../../../utils/currencies'
+import { SUPPORTED_CURRENCIES, type CurrencyInfo, DEFAULT_CURRENCY, getDefaultCurrencyForCountry } from '../../../utils/currencies'
 import { validateEmailFormat, validateMobileNumber } from '../../../utils/validation'
 
 interface SignupData {
@@ -362,6 +362,20 @@ export default function Signup() {
       controller.abort()
     }
   }, [data.shortCode])
+
+  // Select a country and automatically update suggested organization currency
+  function handleCountrySelect(c: CountryInfo) {
+    setSelectedCountry(c)
+    setIsCountryDropdownOpen(false)
+
+    // Automatic Currency Selection based on Phone Country (ISO 3166-1 -> ISO 4217)
+    const defaultCurrCode = c.defaultCurrency || getDefaultCurrencyForCountry(c.code)
+    const matched =
+      SUPPORTED_CURRENCIES.find((curr) => curr.code === defaultCurrCode) ||
+      SUPPORTED_CURRENCIES[0]
+    setSelectedCurrency(matched)
+    updateField('currency', matched.code)
+  }
 
   function updateField(field: keyof SignupData, value: string) {
     setData((previous) => ({
@@ -780,7 +794,7 @@ export default function Signup() {
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel-national"
-                        placeholder="Enter your mobile number"
+                        placeholder={selectedCountry.placeholder || '9876543210'}
                         value={data.mobile}
                         onChange={(event) => handleMobileChange(event.target.value)}
                         className={`${inputClass} pr-32`}
@@ -840,10 +854,7 @@ export default function Signup() {
                                     <button
                                       key={`${c.code}-${c.dialCode}`}
                                       type="button"
-                                      onClick={() => {
-                                        setSelectedCountry(c)
-                                        setIsCountryDropdownOpen(false)
-                                      }}
+                                      onClick={() => handleCountrySelect(c)}
                                       className={`w-full flex items-center justify-between px-3 py-2 text-left text-xs transition hover:bg-[#F7F2EB] ${
                                         isSelected
                                           ? 'bg-[#F4ECE3] font-bold text-[#6F4228]'
@@ -855,6 +866,9 @@ export default function Signup() {
                                           {c.flag}
                                         </span>
                                         <span className="truncate">{c.name}</span>
+                                        <span className="text-[10px] text-stone-500 font-medium shrink-0">
+                                          ({c.code})
+                                        </span>
                                       </div>
                                       <span className="shrink-0 text-xs font-semibold text-[#8B5738]">
                                         {c.dialCode}

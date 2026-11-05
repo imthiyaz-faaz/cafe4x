@@ -2,7 +2,7 @@ import { Context, Next } from "hono";
 import { AppEnv, AuthUser } from "../types";
 import { getUniversalDb } from "../db";
 import { sha256Hex } from "../utils/id-generator";
-
+ 
 /**
  * Extracts the authenticated user from the Bearer token.
  * Validates the session against the user_sessions table:
@@ -15,7 +15,7 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
   const authHeader = c.req.header("Authorization") || "";
   let rawToken: string | null = null;
   let parsedUserId: string | null = null;
-
+ 
   if (authHeader.startsWith("Bearer ")) {
     rawToken = authHeader.replace("Bearer ", "").trim();
     const parts = rawToken.split("_");
@@ -23,17 +23,17 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
       parsedUserId = parts[2];
     }
   }
-
+ 
   // Reject requests without a Bearer token
   if (!rawToken) {
     return null;
   }
-
+ 
   try {
     const db = getUniversalDb(c.env?.DB);
     const nowIso = new Date().toISOString();
     const tokenHash = await sha256Hex(rawToken);
-
+ 
     // 1. Check user_sessions table for an active, unexpired, unrevoked session
     const existingSession = (await db
       .prepare(
@@ -45,13 +45,13 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
       )
       .bind(tokenHash)
       .get()) as any;
-
+ 
     if (existingSession) {
       // If the session was explicitly revoked or has expired, immediately deny access
       if (existingSession.revokedAt || existingSession.expiresAt <= nowIso) {
         return null;
       }
-
+ 
       return {
         id: String(existingSession.uId),
         name: existingSession.name,
@@ -60,27 +60,27 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
         userType: existingSession.userType,
       };
     }
-
+ 
     // 2. Backward compatibility fallback for active tokens not yet in user_sessions:
     // Only valid if this token was NOT previously recorded (or revoked) in user_sessions
     if (rawToken.startsWith("cafe4x_token_")) {
       const parts = rawToken.split("_");
       // Format: "cafe4x", "token", ...userIdParts..., timestamp
       const tokenTime = parseInt(parts[parts.length - 1], 10);
-      const extractedUserId = parts.length >= 4 
-        ? parts.slice(2, parts.length - 1).join("_") 
+      const extractedUserId = parts.length >= 4
+        ? parts.slice(2, parts.length - 1).join("_")
         : (parts.length >= 3 ? parts[2] : null);
-
+ 
       const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
       if (extractedUserId && !isNaN(tokenTime) && Date.now() - tokenTime < SEVEN_DAYS_MS) {
         const userRow = (await db
           .prepare(
-            `SELECT id, name, user_name as userName, email, user_type as userType 
+            `SELECT id, name, user_name as userName, email, user_type as userType
              FROM users WHERE id = ?`
           )
           .bind(extractedUserId)
           .get()) as any;
-
+ 
         if (userRow) {
           // Transparently register session in user_sessions for future requests
           try {
@@ -94,7 +94,7 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
               .bind(sessionId, tokenHash, String(userRow.id), expiresAt)
               .run();
           } catch {}
-
+ 
           return {
             id: String(userRow.id),
             name: userRow.name,
@@ -105,14 +105,14 @@ export async function getAuthUser(c: Context<AppEnv>): Promise<AuthUser | null> 
         }
       }
     }
-
+ 
     return null;
   } catch (err) {
     console.warn("Error fetching auth user:", err);
     return null;
   }
 }
-
+ 
 /**
  * Middleware that requires a valid authenticated user session.
  * Rejects unauthenticated requests with 401 Unauthorized.
@@ -125,7 +125,7 @@ export async function requireAuth(c: Context<AppEnv>, next: Next) {
   c.set("user", user);
   await next();
 }
-
+ 
 /**
  * Middleware that requires the user to have one of the specified roles (e.g. Admin, Provider).
  */
@@ -145,7 +145,7 @@ export function requireRole(...allowedRoles: string[]) {
     await next();
   };
 }
-
+ 
 /**
  * Resolves the authorized organization for the current request.
  * Ensures the user belongs to the requested organization (by shortCode or orgId).
@@ -161,15 +161,15 @@ export async function resolveAuthorizedOrg(
     (typeof c.req.param === "function" ? c.req.param("shortCode") : "") ||
     ""
   ).trim().toUpperCase();
-
+ 
   const reqOrgId = (
     c.req.header("x-organization-id") ||
     c.req.query("organizationId") ||
     ""
   ).trim();
-
+ 
   const db = getUniversalDb(c.env?.DB);
-
+ 
   // If public employee / guest QR ordering is permitted
   if (options.allowPublic) {
     if (reqShortCode) {
@@ -187,47 +187,43 @@ export async function resolveAuthorizedOrg(
       if (org) return { organizationId: String(org.id), shortCode: org.shortCode, currency: org.currency || "INR" };
     }
   }
-
+ 
   const user = await getAuthUser(c);
   if (!user) {
     return null;
   }
-
+ 
   // Fetch all organizations the user belongs to from user_organizations
   const userOrgs = (await db
     .prepare(
-      `SELECT o.id, o.short_code as shortCode, o.currency_code as currency, uo.role 
+      `SELECT o.id, o.short_code as shortCode, o.currency_code as currency, uo.role
        FROM organizations o
        JOIN user_organizations uo ON o.id = uo.organization_id
        WHERE uo.user_id = ?`
     )
     .bind(user.id)
     .all()) as any[];
-
+ 
   if (!userOrgs || userOrgs.length === 0) {
     return null;
   }
-
+ 
   // If a specific organization was requested, ensure the user has access to it
   if (reqShortCode) {
     const match = userOrgs.find((o) => (o.shortCode || "").toUpperCase() === reqShortCode);
     if (match) {
-      return { organizationId: String(match.id), shortCode: match.shortCode };
+      return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || 'INR' };
     }
-<<<<<<< HEAD
     // If shortCode was not matched, also check if reqOrgId was provided and valid
     if (reqOrgId) {
       const orgMatch = userOrgs.find((o) => String(o.id) === reqOrgId);
       if (orgMatch) {
-        return { organizationId: String(orgMatch.id), shortCode: orgMatch.shortCode };
+        return { organizationId: String(orgMatch.id), shortCode: orgMatch.shortCode, currency: orgMatch.currency || 'INR' };
       }
     }
     return null;
-=======
-    return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || "INR" };
->>>>>>> a5fd717188ff95492b7274e13df10c7c67b29dc1
   }
-
+ 
   if (reqOrgId) {
     const match = userOrgs.find((o) => String(o.id) === reqOrgId);
     if (!match) {
@@ -235,7 +231,7 @@ export async function resolveAuthorizedOrg(
     }
     return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || "INR" };
   }
-
+ 
   // Default to user's first organization
   return { organizationId: String(userOrgs[0].id), shortCode: userOrgs[0].shortCode, currency: userOrgs[0].currency || "INR" };
 }

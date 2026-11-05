@@ -214,6 +214,7 @@ export async function resolveAuthorizedOrg(
     if (match) {
       return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || String('INR') };
     }
+    // If shortCode was not matched, also check if reqOrgId was provided and valid
     if (reqOrgId) {
       const orgMatch = userOrgs.find((o) => String(o.id) === reqOrgId);
       if (orgMatch) {

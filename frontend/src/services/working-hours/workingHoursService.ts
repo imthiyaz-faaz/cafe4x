@@ -48,9 +48,9 @@ export const workingHoursApi = {
       success: boolean;
       workingHours: WorkingHoursModel;
       windowStatus?: OrderingWindowStatus;
-    }>("/api/working-hours", undefined, { signal: options?.signal });
+    }>("/api/working-hours", undefined, { signal: options?.signal, cache: "no-store" });
 
-    // Guarantee complete working hours with default breaks if missing
+    // Guarantee complete working hours with default breaks if configuration missing
     const defaultWH: WorkingHoursModel = {
       openTime: "08:00",
       closeTime: "20:00",
@@ -63,10 +63,9 @@ export const workingHoursApi = {
       ? {
           ...defaultWH,
           ...res.workingHours,
-          breakSessions:
-            Array.isArray(res.workingHours.breakSessions) && res.workingHours.breakSessions.length > 0
-              ? res.workingHours.breakSessions
-              : DEFAULT_BREAK_SESSIONS,
+          breakSessions: Array.isArray(res.workingHours.breakSessions)
+            ? res.workingHours.breakSessions
+            : DEFAULT_BREAK_SESSIONS,
         }
       : defaultWH;
 
@@ -82,9 +81,18 @@ export const workingHoursApi = {
   }> {
     const res = await api.put<{
       success: boolean;
+      message?: string;
       workingHours: WorkingHoursModel;
       windowStatus?: OrderingWindowStatus;
     }>("/api/working-hours", data);
+
+    if (res && res.success === false) {
+      throw new Error(res.message || "Failed to save working hours settings.");
+    }
+
+    if (!res || !res.workingHours) {
+      throw new Error("Invalid response from server. Working hours could not be confirmed.");
+    }
 
     return {
       workingHours: res.workingHours,

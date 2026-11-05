@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
+import { useParams } from "react-router-dom";
 import {
   Clock,
   AlertTriangle,
@@ -77,6 +78,9 @@ function formatDuration(minutes: number): string {
 }
 
 export default function WorkingHoursPage() {
+  const params = useParams();
+  const shortCode = params.shortCode;
+
   const [openTime, setOpenTime] = useState("08:00");
   const [closeTime, setCloseTime] = useState("20:00");
   const [timezone, setTimezone] = useState("Asia/Dubai");
@@ -98,7 +102,7 @@ export default function WorkingHoursPage() {
     return () => clearInterval(timer);
   }, []);
 
-  // Load configured working hours on mount
+  // Load configured working hours on mount or when organization shortCode changes
   useEffect(() => {
     const controller = new AbortController();
     setIsLoading(true);
@@ -114,7 +118,7 @@ export default function WorkingHoursPage() {
           if (typeof wh.isEmergencyClosed === "boolean") {
             setIsEmergencyClosed(wh.isEmergencyClosed);
           }
-          if (Array.isArray(wh.breakSessions) && wh.breakSessions.length > 0) {
+          if (Array.isArray(wh.breakSessions)) {
             setBreakSessions(wh.breakSessions);
           }
         }
@@ -122,6 +126,7 @@ export default function WorkingHoursPage() {
       .catch((err) => {
         if (err.name !== "AbortError") {
           console.warn("Could not load working hours:", err);
+          setErrorMessage(err.message || "Failed to load working hours.");
         }
       })
       .finally(() => {
@@ -133,7 +138,7 @@ export default function WorkingHoursPage() {
     return () => {
       controller.abort();
     };
-  }, []);
+  }, [shortCode]);
 
   // Break session modifications
   const handleTimeChange = (id: string, field: "startTime" | "endTime", value: string) => {
@@ -246,13 +251,26 @@ export default function WorkingHoursPage() {
 
     try {
       setIsSaving(true);
-      await workingHoursService.updateWorkingHours({
+      const res = await workingHoursService.updateWorkingHours({
         openTime,
         closeTime,
         timezone,
         isEmergencyClosed,
         breakSessions,
       });
+
+      // Synchronize component state with verified persisted data from server response
+      if (res?.workingHours) {
+        if (res.workingHours.openTime) setOpenTime(res.workingHours.openTime);
+        if (res.workingHours.closeTime) setCloseTime(res.workingHours.closeTime);
+        if (res.workingHours.timezone) setTimezone(res.workingHours.timezone);
+        if (typeof res.workingHours.isEmergencyClosed === "boolean") {
+          setIsEmergencyClosed(res.workingHours.isEmergencyClosed);
+        }
+        if (Array.isArray(res.workingHours.breakSessions)) {
+          setBreakSessions(res.workingHours.breakSessions);
+        }
+      }
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3500);
@@ -482,7 +500,7 @@ export default function WorkingHoursPage() {
                         <button
                           type="button"
                           onClick={handleAddBreak}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
                         >
                           <Plus size={14} />
                           <span>Add Break</span>
@@ -500,85 +518,91 @@ export default function WorkingHoursPage() {
 
                     {/* Break Sessions List */}
                     <div className="space-y-3">
-                      {breakSessions.map((b, index) => {
-                        const badgeColor = breakBadgeColors[index % 5];
-                        return (
-                          <div
-                            key={b.id}
-                            className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:px-4 sm:py-3 transition hover:border-gray-300 shadow-sm"
-                          >
-                            <div className="flex items-center gap-3">
-                              {/* Drag handle dots */}
-                              <GripVertical size={16} className="text-gray-400 cursor-grab" />
+                      {breakSessions.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500">
+                          No break sessions configured. Click &quot;Add Break&quot; above to add a break session.
+                        </div>
+                      ) : (
+                        breakSessions.map((b, index) => {
+                          const badgeColor = breakBadgeColors[index % 5] || breakBadgeColors[0];
+                          return (
+                            <div
+                              key={b.id}
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:px-4 sm:py-3 transition hover:border-gray-300 shadow-sm"
+                            >
+                              <div className="flex items-center gap-3">
+                                {/* Drag handle dots */}
+                                <GripVertical size={16} className="text-gray-400 cursor-grab" />
 
-                              {/* Break Label Badge */}
-                              <span
-                                className={`inline-flex items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-bold ${badgeColor.bg} ${badgeColor.text} ${badgeColor.border}`}
-                              >
-                                {b.name}
-                              </span>
-                            </div>
-
-                            {/* Start Time - End Time Inputs */}
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="time"
-                                value={b.startTime}
-                                onChange={(e) => handleTimeChange(b.id, "startTime", e.target.value)}
-                                className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
-                              />
-                              <span className="text-xs text-gray-400 font-bold">-</span>
-                              <input
-                                type="time"
-                                value={b.endTime}
-                                onChange={(e) => handleTimeChange(b.id, "endTime", e.target.value)}
-                                className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
-                              />
-                            </div>
-
-                            {/* Calculated Duration Display */}
-                            <div className="w-24 text-right sm:text-center">
-                              <span className="text-xs font-medium text-gray-600">
-                                {formatDuration(b.durationMinutes)}
-                              </span>
-                            </div>
-
-                            {/* Enabled Toggle & Delete Button */}
-                            <div className="flex items-center gap-3">
-                              {/* Toggle switch with "Enabled" label */}
-                              <div
-                                onClick={() => handleToggleBreak(b.id)}
-                                className="flex items-center gap-2 cursor-pointer select-none"
-                              >
-                                <div
-                                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
-                                    b.isEnabled ? "bg-emerald-600" : "bg-gray-300"
-                                  }`}
+                                {/* Break Label Badge */}
+                                <span
+                                  className={`inline-flex items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-bold ${badgeColor.bg} ${badgeColor.text} ${badgeColor.border}`}
                                 >
-                                  <span
-                                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                      b.isEnabled ? "translate-x-4" : "translate-x-0"
-                                    }`}
-                                  />
-                                </div>
-                                <span className="text-xs font-medium text-gray-700">
-                                  {b.isEnabled ? "Enabled" : "Disabled"}
+                                  {b.name}
                                 </span>
                               </div>
 
-                              {/* Delete Break Icon */}
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteBreak(b.id)}
-                                className="text-gray-400 hover:text-red-500 transition p-1"
-                                title="Delete break session"
-                              >
-                                <Trash2 size={16} />
-                              </button>
+                              {/* Start Time - End Time Inputs */}
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="time"
+                                  value={b.startTime}
+                                  onChange={(e) => handleTimeChange(b.id, "startTime", e.target.value)}
+                                  className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
+                                />
+                                <span className="text-xs text-gray-400 font-bold">-</span>
+                                <input
+                                  type="time"
+                                  value={b.endTime}
+                                  onChange={(e) => handleTimeChange(b.id, "endTime", e.target.value)}
+                                  className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
+                                />
+                              </div>
+
+                              {/* Calculated Duration Display */}
+                              <div className="w-24 text-right sm:text-center">
+                                <span className="text-xs font-medium text-gray-600">
+                                  {formatDuration(b.durationMinutes)}
+                                </span>
+                              </div>
+
+                              {/* Enabled Toggle & Delete Button */}
+                              <div className="flex items-center gap-3">
+                                {/* Toggle switch with "Enabled" label */}
+                                <div
+                                  onClick={() => handleToggleBreak(b.id)}
+                                  className="flex items-center gap-2 cursor-pointer select-none"
+                                >
+                                  <div
+                                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                                      b.isEnabled ? "bg-emerald-600" : "bg-gray-300"
+                                    }`}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                        b.isEnabled ? "translate-x-4" : "translate-x-0"
+                                      }`}
+                                    />
+                                  </div>
+                                  <span className="text-xs font-medium text-gray-700">
+                                    {b.isEnabled ? "Enabled" : "Disabled"}
+                                  </span>
+                                </div>
+
+                                {/* Delete Break Icon */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteBreak(b.id)}
+                                  className="text-gray-400 hover:text-red-500 transition p-1 cursor-pointer"
+                                  title="Delete break session"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })
+                      )}
                     </div>
                   </div>
 
@@ -645,7 +669,7 @@ export default function WorkingHoursPage() {
                 )}
               </div>
 
-              {/* Bottom Card: Visual Cafe Ordering Timeline (matching screenshot) */}
+              {/* Bottom Card: Visual Cafe Ordering Timeline */}
               <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-[#FFFBF7] p-6 shadow-sm">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
               <h3 className="text-sm font-bold text-gray-900">

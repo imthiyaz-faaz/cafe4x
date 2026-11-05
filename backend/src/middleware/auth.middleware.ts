@@ -211,11 +211,17 @@ export async function resolveAuthorizedOrg(
   // If a specific organization was requested, ensure the user has access to it
   if (reqShortCode) {
     const match = userOrgs.find((o) => (o.shortCode || "").toUpperCase() === reqShortCode);
-    if (!match) {
-      // User is attempting to access an organization they do not belong to!
-      return null;
+    if (match) {
+      return { organizationId: String(match.id), shortCode: match.shortCode };
     }
-    return { organizationId: String(match.id), shortCode: match.shortCode };
+    // If shortCode was not matched, also check if reqOrgId was provided and valid
+    if (reqOrgId) {
+      const orgMatch = userOrgs.find((o) => String(o.id) === reqOrgId);
+      if (orgMatch) {
+        return { organizationId: String(orgMatch.id), shortCode: orgMatch.shortCode };
+      }
+    }
+    return null;
   }
 
   if (reqOrgId) {

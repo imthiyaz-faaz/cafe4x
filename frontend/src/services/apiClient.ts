@@ -85,7 +85,12 @@ export async function apiRequest<T = any>(
       if (segments.length > 0) {
         const first = segments[0].toUpperCase();
         // Skip reserved non-org routes
-        if (!["LOGIN", "SIGNUP", "ORDER", "ADMIN", "PROVIDER", "API"].includes(first)) {
+        const reservedRoutes = [
+          "LOGIN", "SIGNUP", "ORDER", "ADMIN", "PROVIDER", "API",
+          "WORKING-HOURS", "USERS", "LOCATION", "ITEMS", "ORDERS", "REPORTS",
+          "HOME", "CHOOSE-ORGANIZATION", "LANDING", "EMPLOYEE", "QRORDER"
+        ];
+        if (!reservedRoutes.includes(first)) {
           urlShortCode = first;
         }
       }

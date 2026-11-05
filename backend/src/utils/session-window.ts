@@ -85,14 +85,31 @@ export async function validateOrderingWindow(
   const isEmergencyClosed = Boolean(row?.is_emergency_closed);
 
   let breakSessions: BreakSession[] = DEFAULT_BREAK_SESSIONS;
-  if (row?.break_sessions_json) {
-    try {
-      const parsed = JSON.parse(row.break_sessions_json);
-      if (Array.isArray(parsed)) {
-        breakSessions = parsed;
+  if (row) {
+    if (row.break_sessions_json != null) {
+      try {
+        const parsed = JSON.parse(row.break_sessions_json);
+        if (Array.isArray(parsed)) {
+          breakSessions = parsed.map((b: any, index: number) => ({
+            id: b.id ? String(b.id) : `break_${index + 1}`,
+            name: (b.name || `Break ${index + 1}`).trim(),
+            startTime: (b.startTime || "09:00").trim(),
+            endTime: (b.endTime || "09:15").trim(),
+            durationMinutes:
+              typeof b.durationMinutes === "number" && b.durationMinutes > 0
+                ? b.durationMinutes
+                : calculateDurationMinutes(b.startTime, b.endTime),
+            isEnabled:
+              typeof b.isEnabled === "boolean"
+                ? b.isEnabled
+                : (typeof b.enabled === "boolean" ? b.enabled : true),
+          }));
+        }
+      } catch (e) {
+        console.warn("Could not parse break_sessions_json:", e);
       }
-    } catch (e) {
-      console.warn("Could not parse break_sessions_json:", e);
+    } else {
+      breakSessions = [];
     }
   }
 

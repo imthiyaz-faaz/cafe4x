@@ -20,7 +20,7 @@ export interface WorkingHoursModel {
 export const workingHoursController = {
   /**
    * GET /api/working-hours
-   * Returns working hours, timezone, emergency override status, and 5 break sessions.
+   * Returns working hours, timezone, emergency override status, and break sessions.
    */
   async getWorkingHours(c: Context) {
     try {
@@ -37,13 +37,34 @@ export const workingHoursController = {
       }
 
       let breakSessions: BreakSession[] = DEFAULT_BREAK_SESSIONS;
-      if (row?.break_sessions_json) {
-        try {
-          const parsed = JSON.parse(row.break_sessions_json);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            breakSessions = parsed;
+      if (row) {
+        if (row.break_sessions_json != null) {
+          try {
+            const parsed = JSON.parse(row.break_sessions_json);
+            if (Array.isArray(parsed)) {
+              breakSessions = parsed.map((b: any, index: number) => ({
+                id: b.id ? String(b.id) : `break_${index + 1}`,
+                name: (b.name || `Break ${index + 1}`).trim(),
+                startTime: (b.startTime || "09:00").trim(),
+                endTime: (b.endTime || "09:15").trim(),
+                durationMinutes:
+                  typeof b.durationMinutes === "number" && b.durationMinutes > 0
+                    ? b.durationMinutes
+                    : (typeof b.duration === "number" && b.duration > 0
+                      ? b.duration
+                      : calculateDurationMinutes(b.startTime, b.endTime)),
+                isEnabled:
+                  typeof b.isEnabled === "boolean"
+                    ? b.isEnabled
+                    : (typeof b.enabled === "boolean" ? b.enabled : true),
+              }));
+            }
+          } catch (e) {
+            console.warn("Could not parse break_sessions_json from DB:", e);
           }
-        } catch {}
+        } else {
+          breakSessions = [];
+        }
       }
 
       const openTime = row?.open_time || "08:00";
@@ -54,6 +75,9 @@ export const workingHoursController = {
 
       // Also compute current status for frontend preview
       const windowStatus = await validateOrderingWindow(db, orgId || "default");
+
+      c.header("Cache-Control", "no-store, no-cache, must-revalidate");
+      c.header("Pragma", "no-cache");
 
       return c.json({
         success: true,
@@ -69,17 +93,13 @@ export const workingHoursController = {
       });
     } catch (err: any) {
       console.error("Error getting working hours:", err);
-      return c.json({
-        success: true,
-        workingHours: {
-          openTime: "08:00",
-          closeTime: "20:00",
-          timezone: "Asia/Dubai",
-          isEmergencyClosed: false,
-          breakSessions: DEFAULT_BREAK_SESSIONS,
-          updatedAt: new Date().toISOString(),
+      return c.json(
+        {
+          success: false,
+          message: err.message || "Failed to load working hours.",
         },
-      });
+        500
+      );
     }
   },
 
@@ -113,14 +133,24 @@ export const workingHoursController = {
       const sanitizedBreaks: BreakSession[] = rawBreaks.slice(0, 5).map((b: any, index: number) => {
         const startTime = (b.startTime || "09:00").trim();
         const endTime = (b.endTime || "09:15").trim();
-        const durationMinutes = calculateDurationMinutes(startTime, endTime);
+        const durationMinutes =
+          typeof b.durationMinutes === "number" && b.durationMinutes > 0
+            ? b.durationMinutes
+            : (typeof b.duration === "number" && b.duration > 0
+              ? b.duration
+              : calculateDurationMinutes(startTime, endTime));
+        const isEnabled =
+          typeof b.isEnabled === "boolean"
+            ? b.isEnabled
+            : (typeof b.enabled === "boolean" ? b.enabled : true);
+
         return {
-          id: b.id || `break_${index + 1}`,
-          name: b.name || `Break ${index + 1}`,
+          id: b.id ? String(b.id) : `break_${Date.now()}_${index + 1}`,
+          name: (b.name || `Break ${index + 1}`).trim(),
           startTime,
           endTime,
           durationMinutes,
-          isEnabled: typeof b.isEnabled === "boolean" ? b.isEnabled : true,
+          isEnabled,
         };
       });
 
@@ -153,44 +183,59 @@ export const workingHoursController = {
         }
       }
 
-      // Ensure table exists safely if running on a newly provisioned database
-      try {
-        await db.exec(`
-          CREATE TABLE IF NOT EXISTS working_hours (
-            id TEXT PRIMARY KEY,
-            organization_id TEXT NOT NULL UNIQUE,
-            open_time TEXT NOT NULL DEFAULT '08:00',
-            close_time TEXT NOT NULL DEFAULT '20:00',
-            timezone TEXT NOT NULL DEFAULT 'Asia/Dubai',
-            is_emergency_closed INTEGER NOT NULL DEFAULT 0,
-            break_sessions_json TEXT DEFAULT '[]',
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
-          );
-        `);
-      } catch (tableErr) {
-        // Table may already exist
-      }
-
       const breakSessionsJson = JSON.stringify(sanitizedBreaks);
       const now = new Date().toISOString();
       const whId = `wh_${orgId}`;
 
-      await db
-        .prepare(
-          `INSERT INTO working_hours (id, organization_id, open_time, close_time, timezone, is_emergency_closed, break_sessions_json, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(organization_id) DO UPDATE SET
-             open_time = excluded.open_time,
-             close_time = excluded.close_time,
-             timezone = excluded.timezone,
-             is_emergency_closed = excluded.is_emergency_closed,
-             break_sessions_json = excluded.break_sessions_json,
-             updated_at = excluded.updated_at`
-        )
-        .bind(whId, orgId, openTime, closeTime, timezone, isEmergencyClosed, breakSessionsJson, now, now)
-        .run();
+      try {
+        await db
+          .prepare(
+            `INSERT INTO working_hours (id, organization_id, open_time, close_time, timezone, is_emergency_closed, break_sessions_json, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(organization_id) DO UPDATE SET
+               open_time = excluded.open_time,
+               close_time = excluded.close_time,
+               timezone = excluded.timezone,
+               is_emergency_closed = excluded.is_emergency_closed,
+               break_sessions_json = excluded.break_sessions_json,
+               updated_at = excluded.updated_at`
+          )
+          .bind(whId, orgId, openTime, closeTime, timezone, isEmergencyClosed, breakSessionsJson, now, now)
+          .run();
+      } catch (insertErr: any) {
+        if (insertErr?.message && insertErr.message.includes("no such table")) {
+          await db.exec(`
+            CREATE TABLE IF NOT EXISTS working_hours (
+              id TEXT PRIMARY KEY,
+              organization_id TEXT NOT NULL UNIQUE,
+              open_time TEXT NOT NULL DEFAULT '08:00',
+              close_time TEXT NOT NULL DEFAULT '20:00',
+              timezone TEXT NOT NULL DEFAULT 'Asia/Dubai',
+              is_emergency_closed INTEGER NOT NULL DEFAULT 0,
+              break_sessions_json TEXT DEFAULT '[]',
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE
+            );
+          `);
+          await db
+            .prepare(
+              `INSERT INTO working_hours (id, organization_id, open_time, close_time, timezone, is_emergency_closed, break_sessions_json, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(organization_id) DO UPDATE SET
+                 open_time = excluded.open_time,
+                 close_time = excluded.close_time,
+                 timezone = excluded.timezone,
+                 is_emergency_closed = excluded.is_emergency_closed,
+                 break_sessions_json = excluded.break_sessions_json,
+                 updated_at = excluded.updated_at`
+            )
+            .bind(whId, orgId, openTime, closeTime, timezone, isEmergencyClosed, breakSessionsJson, now, now)
+            .run();
+        } else {
+          throw insertErr;
+        }
+      }
 
       const windowStatus = await validateOrderingWindow(db, orgId);
 
@@ -209,7 +254,7 @@ export const workingHoursController = {
       });
     } catch (err: any) {
       console.error("Error updating working hours:", err);
-      return c.json({ success: false, message: err.message }, 500);
+      return c.json({ success: false, message: err.message || "Failed to update working hours." }, 500);
     }
   },
 };

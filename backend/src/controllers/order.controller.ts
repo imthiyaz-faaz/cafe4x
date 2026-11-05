@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
-import { getNextId } from "../utils/id-generator";
+import { getNextId, generateId } from "../utils/id-generator";
 import { getSigningSecret, verifyTemporaryOrderToken } from "../utils/token";
 import { validateOrderingWindow } from "../utils/session-window";
 
@@ -22,6 +22,7 @@ export interface OrderModel {
   organizationId: string;
   shortCode: string;
   seat: string;
+  seatId?: string;
   locationName: string;
   locationId?: string;
   employeeName: string;
@@ -39,6 +40,21 @@ export interface OrderModel {
   updatedAt: string;
 }
 
+export async function ensureOrderSchema(db: any): Promise<void> {
+  try {
+    await db.exec(`ALTER TABLE orders ADD COLUMN seat_id TEXT;`);
+  } catch {}
+  try {
+    await db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_seat_id ON orders(seat_id);`);
+  } catch {}
+  try {
+    await db.exec(`ALTER TABLE seats ADD COLUMN qr_token TEXT;`);
+  } catch {}
+  try {
+    await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_seats_qr_token ON seats(qr_token);`);
+  } catch {}
+}
+
 export const orderController = {
   // GET /api/orders
   async getOrders(c: Context<AppEnv>) {
@@ -49,6 +65,7 @@ export const orderController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
+      await ensureOrderSchema(db);
       const authUser = await getAuthUser(c);
       const location = c.req.query("location");
       const status = c.req.query("status");
@@ -62,7 +79,8 @@ export const orderController = {
           o.display_id as displayId,
           o.organization_id as organizationId, 
           o.short_code as shortCode,
-          o.seat, 
+          COALESCE(o.seat_id, o.seat) as seat,
+          o.seat_id as seatId,
           o.location_id as locationId, 
           o.location_name as locationName,
           o.employee_name as employeeName, 
@@ -112,15 +130,13 @@ export const orderController = {
       }
 
       if (startDate) {
-        const startBound = startDate.length === 10 ? `${startDate}T00:00:00.000Z` : startDate;
-        query += ` AND o.created_at >= ?`;
-        params.push(startBound);
+        query += ` AND date(o.created_at) >= date(?)`;
+        params.push(startDate.length >= 10 ? startDate.substring(0, 10) : startDate);
       }
 
       if (endDate) {
-        const endBound = endDate.length === 10 ? `${endDate}T23:59:59.999Z` : endDate;
-        query += ` AND o.created_at <= ?`;
-        params.push(endBound);
+        query += ` AND date(o.created_at) <= date(?)`;
+        params.push(endDate.length >= 10 ? endDate.substring(0, 10) : endDate);
       }
 
       query += ` ORDER BY o.created_at DESC`;
@@ -185,7 +201,8 @@ export const orderController = {
             displayId: r.displayId || r.id,
             organizationId: r.organizationId || org.organizationId,
             shortCode: r.shortCode || org.shortCode,
-            seat: r.seat,
+            seat: r.seatId || r.seat,
+            seatId: r.seatId || undefined,
             locationId: r.locationId || undefined,
             locationName: r.locationName,
             employeeName: r.employeeName,
@@ -245,14 +262,12 @@ export const orderController = {
       const params: any[] = [org.organizationId];
 
       if (startDate) {
-        const startBound = startDate.length === 10 ? `${startDate}T00:00:00.000Z` : startDate;
-        query += ` AND o.created_at >= ?`;
-        params.push(startBound);
+        query += ` AND date(o.created_at) >= date(?)`;
+        params.push(startDate.length >= 10 ? startDate.substring(0, 10) : startDate);
       }
       if (endDate) {
-        const endBound = endDate.length === 10 ? `${endDate}T23:59:59.999Z` : endDate;
-        query += ` AND o.created_at <= ?`;
-        params.push(endBound);
+        query += ` AND date(o.created_at) <= date(?)`;
+        params.push(endDate.length >= 10 ? endDate.substring(0, 10) : endDate);
       }
 
       query += `
@@ -279,6 +294,496 @@ export const orderController = {
       return c.json({ success: false, message: err.message }, 500);
     }
   },
+
+  /**
+   * GET /api/orders/locations
+   * Returns all locations belonging to the authorized organization with aggregated order statistics.
+   * Supports optional date filters: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+   */
+  async getOrderLocations(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 403);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      await ensureOrderSchema(db);
+      const authUser = await getAuthUser(c);
+      const startDate = c.req.query("startDate");
+      const endDate = c.req.query("endDate");
+
+      // 1. Fetch locations for the organization (respecting provider scoping if applicable)
+      let locQuery = `
+        SELECT l.id, l.name, l.total_seats as totalSeats, l.status, l.created_at as createdAt
+        FROM locations l
+      `;
+      const locParams: any[] = [];
+
+      if (authUser?.userType === "Provider") {
+        locQuery += `
+          LEFT JOIN provider_locations pl ON l.id = pl.location_id
+          WHERE l.organization_id = ? AND (l.assigned_provider_id = ? OR pl.provider_id = ?)
+        `;
+        locParams.push(org.organizationId, authUser.id, authUser.id);
+      } else {
+        locQuery += ` WHERE l.organization_id = ?`;
+        locParams.push(org.organizationId);
+      }
+      locQuery += ` ORDER BY l.name ASC`;
+
+      const locations = (await db.prepare(locQuery).bind(...locParams).all()) as any[];
+
+      // 2. Fetch order statistics grouped by location_id and location_name
+      let statsQuery = `
+        SELECT 
+          o.location_id as locationId,
+          LOWER(o.location_name) as locNameLower,
+          COUNT(o.id) as totalOrders,
+          COALESCE(SUM(o.total), 0) as totalAmount,
+          SUM(CASE WHEN LOWER(o.status) = 'pending' THEN 1 ELSE 0 END) as pendingOrders,
+          SUM(CASE WHEN LOWER(o.status) = 'delivered' THEN 1 ELSE 0 END) as deliveredOrders
+        FROM orders o
+        WHERE o.organization_id = ?
+      `;
+      const statsParams: any[] = [org.organizationId];
+
+      if (startDate) {
+        statsQuery += ` AND date(o.created_at) >= date(?)`;
+        statsParams.push(startDate.length >= 10 ? startDate.substring(0, 10) : startDate);
+      }
+      if (endDate) {
+        statsQuery += ` AND date(o.created_at) <= date(?)`;
+        statsParams.push(endDate.length >= 10 ? endDate.substring(0, 10) : endDate);
+      }
+
+      statsQuery += ` GROUP BY o.location_id, LOWER(o.location_name)`;
+      const statsRows = (await db.prepare(statsQuery).bind(...statsParams).all()) as any[];
+
+      // 3. Count assigned employees per location
+      const assignedRows = (await db
+        .prepare(
+          `SELECT location_id as locationId, COUNT(DISTINCT COALESCE(employee_id, employee)) as assignedCount
+           FROM seats
+           WHERE organization_id = ? AND (employee_id IS NOT NULL OR employee IS NOT NULL)
+           GROUP BY location_id`
+        )
+        .bind(org.organizationId)
+        .all()) as any[];
+
+      const assignedMap = new Map<string, number>();
+      for (const a of assignedRows || []) {
+        if (a.locationId) assignedMap.set(a.locationId, Number(a.assignedCount) || 0);
+      }
+
+      // Merge results
+      const results = (locations || []).map((loc) => {
+        // Find matching stats either by locationId or lower(name)
+        const stat = (statsRows || []).find(
+          (s) => s.locationId === loc.id || (s.locNameLower && s.locNameLower === (loc.name || "").toLowerCase())
+        );
+
+        return {
+          id: loc.id,
+          name: loc.name,
+          locationType: "Office / Dining Area",
+          totalSeats: loc.totalSeats || 0,
+          totalEmployees: assignedMap.get(loc.id) || 0,
+          totalOrders: stat ? Number(stat.totalOrders) : 0,
+          totalAmount: stat ? Number(stat.totalAmount) : 0,
+          pendingOrders: stat ? Number(stat.pendingOrders) : 0,
+          deliveredOrders: stat ? Number(stat.deliveredOrders) : 0,
+          status: loc.status || "Active",
+        };
+      });
+
+      return c.json({ success: true, locations: results });
+    } catch (err: any) {
+      console.error("[orderController.getOrderLocations] Error:", err);
+      return c.json({ success: false, message: err.message || "Failed to retrieve location order summaries" }, 500);
+    }
+  },
+
+  /**
+   * GET /api/orders/location/:locationId/employees
+   * Returns employees assigned to or ordering in a specific location with order summaries.
+   * Supports optional date filters: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+   */
+  async getLocationEmployees(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 403);
+      }
+
+      const locationId = c.req.param("locationId");
+      const db = getUniversalDb(c.env?.DB);
+      await ensureOrderSchema(db);
+      const startDate = c.req.query("startDate");
+      const endDate = c.req.query("endDate");
+
+      // Verify location belongs to organization
+      const loc = (await db
+        .prepare(`SELECT id, name FROM locations WHERE (id = ? OR display_id = ? OR LOWER(name) = LOWER(?)) AND organization_id = ?`)
+        .bind(locationId, locationId, locationId, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      // 1. Get all seats in this location and their assigned employees
+      const seats = (await db
+        .prepare(
+          `SELECT 
+             s.id as seatId, 
+             s.display_id as seatDisplayId,
+             s.number as seatNumber, 
+             s.employee_id as employeeId, 
+             s.employee_name as employeeName, 
+             s.employee_email as employeeEmail, 
+             s.employee as employeeRaw,
+             u.id as userId,
+             u.name as uName,
+             u.user_name as userName,
+             u.email as uEmail
+           FROM seats s
+           LEFT JOIN users u ON s.employee_id = u.id
+           WHERE s.location_id = ? AND s.organization_id = ?`
+        )
+        .bind(effectiveLocId, org.organizationId)
+        .all()) as any[];
+
+      // 2. Query order aggregates for this location
+      let orderQuery = `
+        SELECT 
+          o.id,
+          o.seat_id as seatId,
+          o.seat as seat,
+          o.employee_id as employeeId,
+          o.employee_name as employeeName,
+          o.total,
+          o.status,
+          o.created_at as createdAt
+        FROM orders o
+        WHERE o.organization_id = ? AND (o.location_id = ? OR LOWER(o.location_name) = LOWER(?))
+      `;
+      const orderParams: any[] = [org.organizationId, effectiveLocId, loc.name];
+
+      if (startDate) {
+        orderQuery += ` AND date(o.created_at) >= date(?)`;
+        orderParams.push(startDate.length >= 10 ? startDate.substring(0, 10) : startDate);
+      }
+      if (endDate) {
+        orderQuery += ` AND date(o.created_at) <= date(?)`;
+        orderParams.push(endDate.length >= 10 ? endDate.substring(0, 10) : endDate);
+      }
+
+      orderQuery += ` ORDER BY o.created_at DESC`;
+      let locOrders: any[] = [];
+      try {
+        locOrders = (await db.prepare(orderQuery).bind(...orderParams).all()) as any[];
+      } catch (err: any) {
+        // Fallback if seat_id is missing on old D1 database instances
+        if (String(err?.message || "").includes("seat_id")) {
+          const fallbackQuery = orderQuery.replace("o.seat_id as seatId,\n          o.seat as seat,", "o.seat as seatId,\n          o.seat as seat,");
+          locOrders = (await db.prepare(fallbackQuery).bind(...orderParams).all()) as any[];
+        } else {
+          throw err;
+        }
+      }
+
+      // 3. Build comprehensive employee list for this location:
+      // Include all seats assigned to employees in this location, plus any employees with orders in this location.
+      interface LocEmpSummary {
+        employeeId: string;
+        employeeName: string;
+        username?: string;
+        employeeEmail?: string;
+        seat: string;
+        seatId?: string;
+        totalOrders: number;
+        totalAmount: number;
+        latestStatus?: string;
+        latestOrderDate?: string;
+      }
+
+      const empMap = new Map<string, LocEmpSummary>();
+
+      // First add assigned seats
+      for (const s of seats || []) {
+        const empName = s.uName || s.employeeName || s.employeeRaw;
+        const empId = s.userId || s.employeeId;
+        const seatLabel = s.seatId || (s.seatNumber ? `Seat ${s.seatNumber}` : "Seat");
+
+        if (empName || empId) {
+          const key = empId || empName;
+          empMap.set(key, {
+            employeeId: empId || `emp_${key}`,
+            employeeName: empName || "Assigned Employee",
+            username: s.userName || undefined,
+            employeeEmail: s.uEmail || s.employeeEmail || undefined,
+            seat: seatLabel,
+            seatId: s.seatId,
+            totalOrders: 0,
+            totalAmount: 0,
+            latestStatus: "None",
+            latestOrderDate: undefined,
+          });
+        }
+      }
+
+      // Now aggregate orders into employee summaries
+      for (const o of locOrders || []) {
+        const oEmpKey = o.employeeId || o.employeeName;
+        if (!oEmpKey) continue;
+
+        let existing = empMap.get(oEmpKey);
+        if (!existing) {
+          // If employee placed order in this location but not assigned to a seat
+          existing = {
+            employeeId: o.employeeId || `emp_${o.employeeName}`,
+            employeeName: o.employeeName || "Employee",
+            seat: o.seatId || o.seat || "Seat",
+            seatId: o.seatId || undefined,
+            totalOrders: 0,
+            totalAmount: 0,
+            latestStatus: undefined,
+            latestOrderDate: undefined,
+          };
+          empMap.set(oEmpKey, existing);
+        }
+
+        existing.totalOrders += 1;
+        existing.totalAmount += Number(o.total) || 0;
+        if (!existing.latestOrderDate || new Date(o.createdAt) > new Date(existing.latestOrderDate)) {
+          existing.latestOrderDate = o.createdAt;
+          existing.latestStatus = o.status;
+        }
+      }
+
+      // Convert to array and sort by totalOrders desc, then employeeName
+      const employeeList = Array.from(empMap.values()).sort((a, b) => {
+        if (b.totalOrders !== a.totalOrders) return b.totalOrders - a.totalOrders;
+        return a.employeeName.localeCompare(b.employeeName);
+      });
+
+      return c.json({
+        success: true,
+        location: {
+          id: loc.id,
+          name: loc.name,
+        },
+        employees: employeeList,
+      });
+    } catch (err: any) {
+      console.error("[orderController.getLocationEmployees] Error:", err);
+      return c.json({ success: false, message: err.message || "Failed to retrieve location employees" }, 500);
+    }
+  },
+
+  /**
+   * GET /api/orders/employee/:employeeId
+   * Returns employee profile info, summary metrics, and their list of individual orders.
+   * Supports optional date filters: ?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
+   */
+  async getEmployeeOrders(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 403);
+      }
+
+      const employeeId = c.req.param("employeeId");
+      const db = getUniversalDb(c.env?.DB);
+      await ensureOrderSchema(db);
+      const startDate = c.req.query("startDate");
+      const endDate = c.req.query("endDate");
+
+      // 1. Resolve employee user record if exists
+      const user = (await db
+        .prepare(
+          `SELECT u.id, u.name, u.user_name as userName, u.email
+           FROM users u
+           JOIN user_organizations uo ON u.id = uo.user_id
+           WHERE uo.organization_id = ? AND (u.id = ? OR LOWER(u.name) = LOWER(?) OR LOWER(u.email) = LOWER(?))`
+        )
+        .bind(org.organizationId, employeeId, employeeId, employeeId)
+        .get()) as any;
+
+      // 2. Resolve employee's assigned seat (if any)
+      let assignedSeat: any = null;
+      try {
+        assignedSeat = await db
+          .prepare(
+            `SELECT s.id as seatId, s.display_id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
+             FROM seats s
+             JOIN locations l ON s.location_id = l.id
+             WHERE s.organization_id = ? AND (s.employee_id = ? OR LOWER(s.employee_name) = LOWER(?) OR LOWER(s.employee) = LOWER(?))
+             LIMIT 1`
+          )
+          .bind(org.organizationId, user?.id || employeeId, user?.name || employeeId, user?.name || employeeId)
+          .get();
+      } catch {}
+
+      // 3. Query all orders placed by this employee in this organization
+      let orderQuery = `
+        SELECT 
+          o.id, 
+          o.display_id as displayId,
+          o.seat_id as seatId, 
+          o.seat as seat,
+          o.location_id as locationId, 
+          o.location_name as locationName,
+          o.employee_name as employeeName, 
+          o.employee_id as employeeId,
+          o.subtotal,
+          o.adjustment_amount as adjustmentAmount,
+          o.discount,
+          o.total, 
+          o.time, 
+          o.status, 
+          o.notes,
+          o.items_json as itemsJson, 
+          o.created_at as createdAt, 
+          o.updated_at as updatedAt
+        FROM orders o
+        WHERE o.organization_id = ?
+          AND (o.employee_id = ? OR (o.employee_name IS NOT NULL AND LOWER(o.employee_name) = LOWER(?)))
+      `;
+      const resolvedName = user?.name || employeeId;
+      const orderParams: any[] = [org.organizationId, user?.id || employeeId, resolvedName];
+
+      if (startDate) {
+        orderQuery += ` AND date(o.created_at) >= date(?)`;
+        orderParams.push(startDate.length >= 10 ? startDate.substring(0, 10) : startDate);
+      }
+      if (endDate) {
+        orderQuery += ` AND date(o.created_at) <= date(?)`;
+        orderParams.push(endDate.length >= 10 ? endDate.substring(0, 10) : endDate);
+      }
+
+      orderQuery += ` ORDER BY o.created_at DESC`;
+      let rows: any[] = [];
+      try {
+        rows = (await db.prepare(orderQuery).bind(...orderParams).all()) as any[];
+      } catch (err: any) {
+        if (String(err?.message || "").includes("seat_id")) {
+          const fallbackQuery = orderQuery.replace("o.seat_id as seatId,\n          o.seat as seat,", "o.seat as seatId,\n          o.seat as seat,");
+          rows = (await db.prepare(fallbackQuery).bind(...orderParams).all()) as any[];
+        } else {
+          throw err;
+        }
+      }
+
+      // Fetch normalized order_items for each order
+      const orders = await Promise.all(
+        (rows || []).map(async (r) => {
+          let items: OrderItem[] = [];
+          try {
+            const dbItems = (await db
+              .prepare(
+                `SELECT 
+                   oi.id, 
+                   oi.item_id as itemId, 
+                   oi.name, 
+                   oi.qty, 
+                   oi.unit_price as price, 
+                   oi.preference,
+                   i.image as itemImage
+                 FROM order_items oi
+                 LEFT JOIN items i ON oi.item_id = i.id
+                 WHERE oi.order_id = ?`
+              )
+              .bind(r.id)
+              .all()) as any[];
+
+            if (dbItems && dbItems.length > 0) {
+              items = dbItems.map((di) => ({
+                id: di.id,
+                itemId: di.itemId || undefined,
+                name: di.name,
+                qty: di.qty,
+                price: di.price,
+                preference: di.preference || undefined,
+                image: di.itemImage || undefined,
+              }));
+            } else if (r.itemsJson) {
+              items = JSON.parse(r.itemsJson);
+            }
+          } catch {
+            if (r.itemsJson) {
+              try { items = JSON.parse(r.itemsJson); } catch {}
+            }
+          }
+
+          const rawTotal = Number(r.total) || 0;
+          const subtotal = r.subtotal !== null && r.subtotal !== undefined
+            ? Number(r.subtotal)
+            : (items.length > 0 ? items.reduce((sum, it) => sum + (Number(it.price) || 0) * (Number(it.qty) || 1), 0) : rawTotal);
+          const adjustmentAmount = Number(r.adjustmentAmount) || 0;
+          const discount = Number(r.discount) || 0;
+          const total = r.subtotal !== null && r.subtotal !== undefined
+            ? Math.max(0, subtotal + adjustmentAmount - discount)
+            : rawTotal;
+
+          return {
+            id: r.id,
+            displayId: r.displayId || r.id,
+            seat: r.seatId || r.seat,
+            seatId: r.seatId || undefined,
+            locationId: r.locationId || undefined,
+            locationName: r.locationName,
+            employeeName: r.employeeName,
+            employeeId: r.employeeId || undefined,
+            items,
+            subtotal,
+            adjustmentAmount,
+            discount,
+            total,
+            time: r.time,
+            status: r.status,
+            notes: r.notes || undefined,
+            createdAt: r.createdAt,
+            updatedAt: r.updatedAt,
+          };
+        })
+      );
+
+      // Compute statistics
+      const totalOrders = orders.length;
+      const totalSpend = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+      const pendingOrders = orders.filter((o) => o.status?.toLowerCase() === "pending").length;
+      const deliveredOrders = orders.filter((o) => o.status?.toLowerCase() === "delivered").length;
+      const cancelledOrders = orders.filter((o) => o.status?.toLowerCase() === "cancelled" || o.status?.toLowerCase() === "canceled").length;
+
+      const primaryLocation = assignedSeat?.locationName || (orders[0]?.locationName || "Office");
+      const primarySeat = assignedSeat?.seatId || (orders[0]?.seat || "Seat 01");
+
+      return c.json({
+        success: true,
+        employee: {
+          id: user?.id || employeeId,
+          name: user?.name || orders[0]?.employeeName || employeeId,
+          username: user?.userName || undefined,
+          email: user?.email || undefined,
+          locationName: primaryLocation,
+          seatIdentifier: primarySeat,
+          totalOrders,
+          totalSpend,
+          pendingOrders,
+          deliveredOrders,
+          cancelledOrders,
+        },
+        orders,
+      });
+    } catch (err: any) {
+      console.error("[orderController.getEmployeeOrders] Error:", err);
+      return c.json({ success: false, message: err.message || "Failed to retrieve employee orders" }, 500);
+    }
+  },
   async getOrderById(c: Context<AppEnv>) {
     try {
       const id = c.req.param("id");
@@ -288,7 +793,7 @@ export const orderController = {
         .prepare(
           `SELECT 
             id, display_id as displayId, organization_id as organizationId, short_code as shortCode,
-            seat, location_id as locationId, location_name as locationName,
+            seat, seat_id as seatId, location_id as locationId, location_name as locationName,
             employee_name as employeeName, subtotal, adjustment_amount as adjustmentAmount, discount,
             total, time, status, notes,
             items_json as itemsJson, created_at as createdAt, updated_at as updatedAt
@@ -352,7 +857,8 @@ export const orderController = {
           displayId: row.displayId || row.id,
           organizationId: row.organizationId,
           shortCode: row.shortCode,
-          seat: row.seat,
+          seat: row.seatId || row.seat,
+          seatId: row.seatId || undefined,
           locationId: row.locationId || undefined,
           locationName: row.locationName,
           employeeName: row.employeeName,
@@ -392,6 +898,7 @@ export const orderController = {
       let employeeId: string | null = null;
       let employeeName = body.employeeName || "Guest";
       let validatedSeatNumber = body.seat ? String(body.seat).padStart(2, "0") : "";
+      let validatedSeatId: string | null = body.seatId || (body.seat && String(body.seat).includes('-') ? String(body.seat) : null);
       let validatedLocationId = body.locationId || null;
       let validatedLocationName = body.locationName || "Office";
 
@@ -491,6 +998,9 @@ export const orderController = {
         }
 
         // Authoritatively lock seat and location from the signed token payload
+        if (payload.seatId) {
+          validatedSeatId = payload.seatId;
+        }
         if (payload.seatNo) {
           validatedSeatNumber = String(payload.seatNo).padStart(2, "0");
         }
@@ -501,6 +1011,9 @@ export const orderController = {
             .bind(payload.locId, org.organizationId)
             .get()) as any;
           if (locRow) validatedLocationName = locRow.name;
+        }
+        if (payload.empName && (!employeeName || employeeName === "Guest")) {
+          employeeName = payload.empName;
         }
 
       // ── 2. Legacy: validate permanent qr_token (backward compat) ─────────
@@ -531,7 +1044,33 @@ export const orderController = {
         employeeName = tokenUser.name || tokenUser.email || employeeName;
       }
 
-      const seat = validatedSeatNumber;
+      // If location and seat are known, authoritatively verify against database seats
+      if (validatedLocationId && (validatedSeatId || validatedSeatNumber)) {
+        try {
+          const dbSeat = (await db
+            .prepare(
+              `SELECT id, display_id as displayId, number, employee_id as employeeId, employee_name as employeeName 
+               FROM seats 
+               WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`
+            )
+            .bind(validatedLocationId, validatedSeatId || validatedSeatNumber, validatedSeatNumber, validatedSeatId || validatedSeatNumber)
+            .get()) as any;
+
+          if (dbSeat) {
+            validatedSeatId = dbSeat.id;
+            if (!validatedSeatNumber && dbSeat.number) validatedSeatNumber = dbSeat.number;
+            if ((!employeeName || employeeName === "Guest") && dbSeat.employeeName) {
+              employeeName = dbSeat.employeeName;
+            }
+            if (!employeeId && dbSeat.employeeId) {
+              employeeId = dbSeat.employeeId;
+            }
+          }
+        } catch {}
+      }
+
+      const seat = validatedSeatId || validatedSeatNumber || "01";
+      const seatId = validatedSeatId || seat;
       const locationName = validatedLocationName;
       const locationId = validatedLocationId;
       const items = Array.isArray(body.items) ? body.items : [];
@@ -624,10 +1163,10 @@ export const orderController = {
       await db
         .prepare(
           `INSERT INTO orders (
-            id, display_id, organization_id, short_code, seat, location_id, location_name,
+            id, display_id, organization_id, short_code, seat, seat_id, location_id, location_name,
             employee_name, employee_id, qr_token, subtotal, adjustment_amount, discount, total, time, status, notes, items_json,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           orderId,
@@ -635,6 +1174,7 @@ export const orderController = {
           org.organizationId,
           org.shortCode,
           seat,
+          seatId,
           locationId,
           locationName,
           employeeName,
@@ -655,7 +1195,7 @@ export const orderController = {
       // Populate normalized order_items table
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
-        const oiId = `oi_${orderId}_${i + 1}`;
+        const oiId = await generateId(db, "OIT");
         let resolvedItemId = it.itemId || null;
 
         // If itemId was not provided in payload, attempt exact match from items in this organization

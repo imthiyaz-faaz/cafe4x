@@ -37,6 +37,8 @@ export interface ValidatedQrTokenResponse {
     id: string;
     shortCode: string;
     name: string;
+    currency?: string;
+    currencyCode?: string;
   };
 }
 
@@ -53,6 +55,14 @@ export const userApi = {
 
     const res = await api.get<{ success: boolean; users: UserItem[] }>("/api/users", params);
     return res.users || [];
+  },
+
+  async checkUsername(username: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {
+    return await api.get<{ success: boolean; available: boolean; message: string }>("/api/users/check-username", { username: username.trim() }, { signal });
+  },
+
+  async checkEmail(email: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {
+    return await api.get<{ success: boolean; available: boolean; message: string }>("/api/users/check-email", { email: email.trim() }, { signal });
   },
 
   async getUserById(id: string): Promise<UserItem> {

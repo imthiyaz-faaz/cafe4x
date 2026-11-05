@@ -15,6 +15,7 @@ export interface AuthUser {
   organization?: string;
   shortCode?: string;
   currency?: string;
+  currencyCode?: string;
   organizationId?: string;
   mobileNumber?: string;
   userType: "Admin" | "Provider" | "Staff" | string;

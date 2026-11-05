@@ -1,3 +1,4 @@
+import { SUPPORTED_CURRENCIES } from '../../utils/currencies';
 import { useState, useEffect, useRef } from "react";
 import { useNavigate, useLocation, useParams } from "react-router-dom";
 import { Building2, Check, Loader2, UserCircle, MapPin, Plus } from "lucide-react";
@@ -586,11 +587,11 @@ export default function OrganizationDropdown({
               className="w-full rounded-xl border border-[#E5D9CE] bg-white px-4 py-3 text-sm text-[#342219] outline-none transition focus:border-[#A66C43] focus:ring-2 focus:ring-[#A66C43]/10"
               required
             >
-              <option value="INR">INR - Indian Rupee (₹)</option>
-              <option value="USD">USD - US Dollar ($)</option>
-              <option value="AED">AED - UAE Dirham (د.إ)</option>
-              <option value="GBP">GBP - British Pound (£)</option>
-              <option value="EUR">EUR - Euro (€)</option>
+              {SUPPORTED_CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.flag} {c.code} - {c.name} ({c.symbol})
+                </option>
+              ))}
             </select>
           </FormRow>
 

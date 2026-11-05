@@ -8,11 +8,19 @@ export interface QrSessionResponse {
   isAssignedEmployee?: boolean;
   seat?: {
     id: string;
+    displayId?: string;
     number: string;
     locationId: string;
     locationName: string;
+    qrToken?: string | null;
+    orderUrl?: string | null;
     employeeName?: string | null;
   };
+  employee?: {
+    id: string;
+    name: string;
+    email?: string | null;
+  } | null;
   message?: string;
 }
 
@@ -22,23 +30,29 @@ export interface QrValidateResponse {
   expiresAt?: string;
   expired?: boolean;
   revoked?: boolean;
+  isClosed?: boolean;
   message?: string;
   employee?: {
     id: string;
     displayId?: string;
     name: string;
-    email: string;
+    email?: string;
   } | null;
   seat?: {
     id?: string | null;
+    displayId?: string | null;
     number?: string | null;
     locationId?: string | null;
     locationName?: string | null;
+    qrToken?: string | null;
+    employeeName?: string | null;
   };
   organization?: {
     id: string;
     shortCode: string;
     name: string;
+    currency?: string;
+    currencyCode?: string;
   };
 }
 
@@ -56,7 +70,7 @@ export interface QrProvisionResponse {
  * Security notes:
  *  - createSession: sends permanentToken to backend, gets back a tempToken.
  *    The permanentToken is passed once from the URL; it is NOT stored in localStorage.
- *  - createSeatSession: sends locationId and seatNumber to backend, gets back a tempToken.
+ *  - createSeatSession: sends seatToken (or locationId and seatNumber) to backend, gets back a tempToken.
  *    Resolves assigned employee or creates seat-level session.
  *  - validateSession: sends tempToken (from URL) to backend for server-side validation.
  *  - provisionPermanentToken / revokePermanentToken: admin-only, requires auth headers.
@@ -72,13 +86,15 @@ export const qrApi = {
   },
 
   /**
-   * Create a temporary ordering session from locationId and seatNumber.
-   * Called when opening /order/:locationId/:seatNumber.
+   * Create a temporary ordering session from a unique permanent seat QR token,
+   * or fallback to locationId and seatNumber.
    */
   async createSeatSession(params: {
     shortCode?: string;
-    locationId: string;
-    seatNumber: string;
+    seatToken?: string;
+    qrToken?: string;
+    locationId?: string;
+    seatNumber?: string;
     seatId?: string;
   }): Promise<QrSessionResponse> {
     const res = await api.post<QrSessionResponse>("/api/qr/seat-session", params);
@@ -110,23 +126,4 @@ export const qrApi = {
       {}
     );
   },
-
-  /**
-   * Revoke a specific ordering session (admin only).
-   */
-  async revokeSession(sessionId: string): Promise<{ success: boolean; message: string }> {
-    return await api.post<{ success: boolean; message: string }>(
-      `/api/qr/session/${sessionId}/revoke`,
-      {}
-    );
-  },
-
-  /**
-   * List recent ordering sessions for the admin's organization.
-   */
-  async listSessions(): Promise<{ success: boolean; sessions: any[] }> {
-    return await api.get<{ success: boolean; sessions: any[] }>("/api/qr/sessions");
-  },
 };
-
-export default qrApi;

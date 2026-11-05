@@ -4,6 +4,9 @@ import { orderController } from "../controllers/order.controller";
 const orderRoutes = new Hono();
 
 orderRoutes.get("/", orderController.getOrders);
+orderRoutes.get("/locations", orderController.getOrderLocations);
+orderRoutes.get("/location/:locationId/employees", orderController.getLocationEmployees);
+orderRoutes.get("/employee/:employeeId", orderController.getEmployeeOrders);
 orderRoutes.get("/employees", orderController.getOrderEmployees);
 orderRoutes.post("/bulk-status", orderController.bulkUpdateStatus);
 orderRoutes.get("/:id", orderController.getOrderById);

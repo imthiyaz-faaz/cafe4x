@@ -75,7 +75,7 @@ export default function UsersEdit({
       <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-gray-200 bg-white p-6 shadow-2xl">
         {/* Header matching screenshot: Title 'User Create' with X */}
         <div className="flex items-center justify-between border-b border-gray-100 pb-3">
-          <h3 className="text-xl font-semibold text-gray-800">User Create</h3>
+          <h3 className="text-xl font-semibold text-gray-800">Edit User</h3>
           <button
             type="button"
             onClick={onClose}

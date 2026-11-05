@@ -1,3 +1,4 @@
+import { SUPPORTED_CURRENCIES } from '../../../utils/currencies';
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { User, Plus, Loader2 } from "lucide-react";
@@ -292,11 +293,11 @@ export default function ChooseOrganizationPage() {
             onChange={(e) => setCurrency(e.target.value)}
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
           >
-            <option value="INR">INR - Indian Rupee (₹)</option>
-            <option value="USD">USD - US Dollar ($)</option>
-            <option value="AED">AED - UAE Dirham (د.إ)</option>
-            <option value="GBP">GBP - British Pound (£)</option>
-            <option value="EUR">EUR - Euro (€)</option>
+            {SUPPORTED_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.flag} {c.code} - {c.name} ({c.symbol})
+              </option>
+            ))}
           </select>
         </FormRow>
       </CreateFormModal>

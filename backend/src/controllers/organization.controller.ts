@@ -2,7 +2,8 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { getAuthUser } from "../middleware/auth.middleware";
-import { getNextId } from "../utils/id-generator";
+import { getNextId, generateId } from "../utils/id-generator";
+import { isSupportedCurrency, DEFAULT_CURRENCY } from "../utils/currencies";
 
 export interface OrganizationModel {
   id: string;
@@ -10,6 +11,7 @@ export interface OrganizationModel {
   name: string;
   shortCode: string;
   currency: string;
+  currencyCode?: string;
   ownerUserId?: string;
   createdAt: string;
 }
@@ -97,7 +99,7 @@ export const organizationController = {
 
       const rows = (await db
         .prepare(
-          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency as currency, o.owner_user_id as ownerUserId, o.created_at as createdAt
+          `SELECT o.id, o.display_id as displayId, o.name, o.short_code as shortCode, o.currency_code as currencyCode, o.currency_code as currency, o.owner_user_id as ownerUserId, o.created_at as createdAt
            FROM organizations o
            JOIN user_organizations uo ON o.id = uo.organization_id
            WHERE uo.user_id = ?
@@ -123,15 +125,14 @@ export const organizationController = {
       const body = await c.req.json();
       const name = (body.name || "").trim();
       const shortCode = (body.shortCode || "").trim().toUpperCase();
-      const currency = (body.currency || "INR").trim().toUpperCase();
+      const currency = (body.currencyCode || body.currency || DEFAULT_CURRENCY).trim().toUpperCase();
       const userId = body.userId ? String(body.userId) : authUser.id;
-      const allowedCurrencies = ["INR", "USD", "AED", "GBP", "EUR"];
 
       if (!name || !shortCode) {
         return c.json({ success: false, message: "Organization name and shortCode are required" }, 400);
       }
 
-      if (!allowedCurrencies.includes(currency)) {
+      if (!isSupportedCurrency(currency)) {
         return c.json(
           { success: false, message: "Invalid currency" },
           400
@@ -139,25 +140,26 @@ export const organizationController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const { displayId } = await getNextId(db, "ORG", shortCode);
-      const orgId = `org_${shortCode.toLowerCase()}_${Date.now()}`;
+      const orgId = await generateId(db, "ORG");
+      const displayId = orgId;
       const now = new Date().toISOString();
 
       try {
         await db
           .prepare(
-            `INSERT INTO organizations (id, display_id, name, short_code, currency, owner_user_id, created_at)
+            `INSERT INTO organizations (id, display_id, name, short_code, currency_code, owner_user_id, created_at)
              VALUES (?, ?, ?, ?, ?, ?, ?)`
           )
           .run(orgId, displayId, name, shortCode, currency, userId || null, now);
 
         if (userId) {
+          const uorId = await generateId(db, "UOR");
           await db
             .prepare(
               `INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role, created_at)
                VALUES (?, ?, ?, 'Owner', ?)`
             )
-            .run(`uo_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`, userId, orgId, now);
+            .run(uorId, userId, orgId, now);
         }
       } catch (dbErr: any) {
         if (dbErr.message && dbErr.message.includes("UNIQUE")) {
@@ -187,6 +189,7 @@ export const organizationController = {
         name,
         shortCode,
         currency,
+        currencyCode: currency,
         ownerUserId: userId || undefined,
         createdAt: now,
       };
@@ -196,6 +199,33 @@ export const organizationController = {
         message: "Organization created successfully",
         organization: newOrg,
       }, 201);
+    } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/organizations/:id
+  async getOrganization(c: Context<AppEnv>) {
+    try {
+      const idOrCode = c.req.param("id") || "";
+      if (!idOrCode) {
+        return c.json({ success: false, message: "Organization ID or code required" }, 400);
+      }
+      const db = getUniversalDb(c.env?.DB);
+      const org = (await db
+        .prepare(
+          `SELECT id, display_id as displayId, name, short_code as shortCode, currency_code as currencyCode, currency_code as currency, owner_user_id as ownerUserId, created_at as createdAt
+           FROM organizations
+           WHERE id = ? OR UPPER(short_code) = UPPER(?)`
+        )
+        .bind(idOrCode, idOrCode)
+        .get()) as any;
+
+      if (!org) {
+        return c.json({ success: false, message: "Organization not found" }, 404);
+      }
+
+      return c.json({ success: true, organization: org });
     } catch (err: any) {
       return c.json({ success: false, message: err.message }, 500);
     }

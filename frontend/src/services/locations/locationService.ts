@@ -26,7 +26,47 @@ export interface SeatItem {
   employeeName?: string;
   employeeEmail?: string;
   employeeId?: string;
+  employeeUserName?: string;
+  employeeQrToken?: string;
+  assignmentId?: string;
+  assignedAt?: string;
+  qrToken?: string;
   orderUrl?: string;
+}
+
+export interface SeatAssignmentItem {
+  id: string;
+  assignedAt: string;
+  createdAt: string;
+  employeeId: string;
+  employeeName: string;
+  userName?: string;
+  email: string;
+  qrToken?: string;
+  organizationId: string;
+  organizationName: string;
+  organizationShortCode?: string;
+  locationId: string;
+  locationName: string;
+  seatId: string;
+  seatDisplayId?: string;
+  seatNumber: string;
+  orderUrl?: string;
+}
+
+export interface GetAssignmentsParams {
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface GetAssignmentsResponse {
+  success: boolean;
+  assignments: SeatAssignmentItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
 }
 
 export interface GetLocationsParams {
@@ -115,7 +155,7 @@ export const locationApi = {
   async assignSeat(
     locationId: string,
     seatId: string,
-    payload: { employeeName?: string; employeeEmail?: string; employee?: string; orderUrl?: string }
+    payload: { employeeId?: string; employeeName?: string; employeeEmail?: string; employee?: string; orderUrl?: string }
   ): Promise<SeatItem> {
     const res = await api.post<{ success: boolean; message: string; seat: SeatItem }>(
       `/api/locations/${locationId}/seats/${encodeURIComponent(seatId)}/assign`,
@@ -129,6 +169,8 @@ export const locationApi = {
       `/api/locations/${locationId}/seats/${encodeURIComponent(seatId)}`
     );
   },
+
+
 };
 
 export const locationService = locationApi;

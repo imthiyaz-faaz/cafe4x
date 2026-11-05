@@ -1,10 +1,15 @@
 import { Hono } from "hono";
 import { userController } from "../controllers/user.controller";
+import { authController } from "../controllers/auth.controller";
 
 const userRoutes = new Hono();
 
 // Public QR token validation endpoint (must be declared before /:id)
 userRoutes.get("/qr-token/:token", userController.validateQrToken);
+
+// Availability checks (must be declared before /:id)
+userRoutes.get("/check-username", authController.checkUsername);
+userRoutes.get("/check-email", authController.checkEmail);
 
 userRoutes.get("/", userController.getUsers);
 userRoutes.get("/:id", userController.getUserById);

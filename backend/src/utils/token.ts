@@ -9,12 +9,18 @@ export interface TempOrderingTokenPayload {
   orgCode: string;
   // Verified employee ID (if assigned) or null for guest seat ordering
   empId?: string | null;
+  // Verified employee name (if assigned)
+  empName?: string | null;
   // Verified location ID
   locId?: string | null;
+  // Verified location name
+  locName?: string | null;
   // Verified seat number (padded string e.g. "01")
   seatNo?: string | null;
-  // Verified seat ID (e.g. "FTS-01")
+  // Verified seat ID (e.g. "OFFICE-0001", "ROOM-0001")
   seatId?: string | null;
+  // Verified seat QR token
+  seatQrToken?: string | null;
   // Issued at (seconds)
   iat: number;
   // Expiration time (seconds)
@@ -53,9 +59,12 @@ export async function createTemporaryOrderToken(
     organizationId: string;
     shortCode: string;
     employeeId?: string | null;
+    employeeName?: string | null;
     locationId?: string | null;
+    locationName?: string | null;
     seatNumber?: string | null;
     seatId?: string | null;
+    seatQrToken?: string | null;
   },
   secret: string,
   durationSeconds: number = 30 * 60
@@ -68,9 +77,12 @@ export async function createTemporaryOrderToken(
     orgId: String(claims.organizationId),
     orgCode: claims.shortCode.toUpperCase(),
     empId: claims.employeeId ? String(claims.employeeId) : null,
+    empName: claims.employeeName ? String(claims.employeeName) : null,
     locId: claims.locationId ? String(claims.locationId) : null,
+    locName: claims.locationName ? String(claims.locationName) : null,
     seatNo: claims.seatNumber ? String(claims.seatNumber).padStart(2, "0") : null,
     seatId: claims.seatId ? String(claims.seatId) : null,
+    seatQrToken: claims.seatQrToken ? String(claims.seatQrToken) : null,
     iat: nowSec,
     exp: expSec,
     typ: "temp_order_token",

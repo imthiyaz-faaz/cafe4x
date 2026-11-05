@@ -1,3 +1,4 @@
+import { formatCurrency, getActiveOrgCurrency } from '../../utils/currencies';
 import { useState, useMemo, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -99,12 +100,7 @@ export default function AdminReportPage() {
   }, [currentShortCode]);
 
   const formatPrice = (amount: number) => {
-    if (!currency) return "";
-
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency,
-    }).format(amount);
+    return formatCurrency(amount, currency || getActiveOrgCurrency(currentShortCode));
   };
 
   // Timezone & working period config

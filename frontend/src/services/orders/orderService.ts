@@ -16,6 +16,7 @@ export interface ProviderOrder {
   id: string;
   displayId?: string;
   seat: string;
+  seatId?: string;
   locationName: string;
   locationId?: string;
   employeeName: string;
@@ -54,10 +55,79 @@ export interface EmployeeOrderSummary {
   latestOrderDate: string;
 }
 
+export interface LocationOrderSummary {
+  id: string;
+  name: string;
+  locationType: string;
+  totalSeats: number;
+  totalEmployees: number;
+  totalOrders: number;
+  totalAmount: number;
+  pendingOrders: number;
+  deliveredOrders: number;
+  status: string;
+}
+
+export interface LocationEmployeeOrderSummary {
+  employeeId: string;
+  employeeName: string;
+  username?: string;
+  employeeEmail?: string;
+  seat: string;
+  seatId?: string;
+  totalOrders: number;
+  totalAmount: number;
+  latestStatus?: string;
+  latestOrderDate?: string;
+}
+
+export interface EmployeeOrderDetailProfile {
+  id: string;
+  name: string;
+  username?: string;
+  email?: string;
+  locationName: string;
+  seatIdentifier: string;
+  totalOrders: number;
+  totalSpend: number;
+  pendingOrders: number;
+  deliveredOrders: number;
+  cancelledOrders: number;
+}
+
+export interface EmployeeOrdersResponse {
+  success: boolean;
+  employee: EmployeeOrderDetailProfile;
+  orders: ProviderOrder[];
+}
+
 export const orderApi = {
   async getOrders(params?: GetOrdersParams, options?: { signal?: AbortSignal }): Promise<ProviderOrder[]> {
     const res = await api.get<{ success: boolean; orders: ProviderOrder[] }>("/api/orders", params, { signal: options?.signal });
     return res.orders || [];
+  },
+
+  async getOrderLocations(params?: { startDate?: string; endDate?: string }, options?: { signal?: AbortSignal }): Promise<LocationOrderSummary[]> {
+    const res = await api.get<{ success: boolean; locations: LocationOrderSummary[] }>("/api/orders/locations", params, { signal: options?.signal });
+    return res.locations || [];
+  },
+
+  async getLocationEmployees(locationId: string, params?: { startDate?: string; endDate?: string }, options?: { signal?: AbortSignal }): Promise<{ location: { id: string; name: string }; employees: LocationEmployeeOrderSummary[] }> {
+    const res = await api.get<{ success: boolean; location: { id: string; name: string }; employees: LocationEmployeeOrderSummary[] }>(
+      `/api/orders/location/${encodeURIComponent(locationId)}/employees`,
+      params,
+      { signal: options?.signal }
+    );
+    return { location: res.location, employees: res.employees || [] };
+  },
+
+  async getEmployeeOrders(employeeId: string, params?: { startDate?: string; endDate?: string }, options?: { signal?: AbortSignal }): Promise<EmployeeOrdersResponse> {
+    const res = await api.get<EmployeeOrdersResponse>(
+      `/api/orders/employee/${encodeURIComponent(employeeId)}`,
+      params,
+      { signal: options?.signal }
+    );
+    return res;
   },
 
   async getOrderEmployees(params?: { startDate?: string; endDate?: string }, options?: { signal?: AbortSignal }): Promise<EmployeeOrderSummary[]> {

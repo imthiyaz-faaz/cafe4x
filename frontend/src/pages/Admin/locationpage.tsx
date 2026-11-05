@@ -49,6 +49,7 @@ interface SeatItem {
   employeeQrToken?: string;
   assignmentId?: string;
   assignedAt?: string;
+  qrToken?: string;
   orderUrl: string;
 }
 
@@ -228,22 +229,11 @@ export default function LocationPage() {
   };
 
   // Helper to resolve an employee's secure permanent QR order URL or seat permanent QR URL
-  const getEmployeeOrderUrl = (employeeIdentifier?: string, _seatId?: string, locId?: string, seatNo?: string) => {
+  const getEmployeeOrderUrl = (_employeeIdentifier?: string, _seatId?: string, locId?: string, seatNo?: string, qrToken?: string) => {
     const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-    if (employeeIdentifier && orgUsers.length > 0) {
-      const cleanIdent = employeeIdentifier.trim().toLowerCase();
-      const matched = orgUsers.find(
-        (u) =>
-          u.email.toLowerCase() === cleanIdent ||
-          u.name.toLowerCase() === cleanIdent ||
-          u.userName.toLowerCase() === cleanIdent ||
-          u.id === cleanIdent
-      );
-      if (matched?.qrToken) {
-        return `${window.location.origin}${orgPrefix}/employee/${matched.qrToken}`;
-      }
+    if (qrToken) {
+      return `${window.location.origin}${orgPrefix}/order/${qrToken}`;
     }
-    // Permanent entry URL for this seat (routes through secure session creation)
     const effectiveLocId = locId || (selectedLocation ? String(selectedLocation.id) : "1");
     const effectiveSeatNo = parseInt(seatNo || "1", 10) || 1;
     return `${window.location.origin}${orgPrefix}/order/${effectiveLocId}/${effectiveSeatNo}`;
@@ -259,17 +249,26 @@ export default function LocationPage() {
       .getSeats(locId)
       .then((backendSeats) => {
         if (Array.isArray(backendSeats)) {
-          const mapped: SeatItem[] = backendSeats.map((s) => ({
-            id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
-            displayId: s.displayId,
-            number: s.number,
-            locationId: locId,
-            employee: s.employee || s.employeeEmail || undefined,
-            employeeName: s.employeeName,
-            employeeEmail: s.employeeEmail,
-            employeeId: s.employeeId,
-            orderUrl: s.orderUrl || getEmployeeOrderUrl(s.employee || s.employeeEmail, s.id, locId, s.number),
-          }));
+          const mapped: SeatItem[] = backendSeats.map((s) => {
+            const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+            const seatUrl = s.qrToken
+              ? `${window.location.origin}${orgPrefix}/order/${s.qrToken}`
+              : (s.orderUrl
+                  ? (s.orderUrl.startsWith("http") ? s.orderUrl : `${window.location.origin}${s.orderUrl.startsWith("/") ? "" : "/"}${s.orderUrl}`)
+                  : `${window.location.origin}${orgPrefix}/order/${locId}/${s.number}`);
+            return {
+              id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
+              displayId: s.displayId,
+              number: s.number,
+              locationId: locId,
+              qrToken: s.qrToken,
+              employee: s.employee || s.employeeEmail || undefined,
+              employeeName: s.employeeName,
+              employeeEmail: s.employeeEmail,
+              employeeId: s.employeeId,
+              orderUrl: seatUrl,
+            };
+          });
           setSeatsByLoc((prev) => {
             const next = { ...prev, [locId]: mapped };
             try {
@@ -307,21 +306,30 @@ export default function LocationPage() {
       .getSeats(locId)
       .then((backendSeats) => {
         if (Array.isArray(backendSeats) && backendSeats.length > 0) {
-          const mapped: SeatItem[] = backendSeats.map((s) => ({
-            id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
-            displayId: s.displayId,
-            number: s.number,
-            locationId: locId,
-            employee: s.employee || s.employeeEmail || undefined,
-            employeeName: s.employeeName,
-            employeeEmail: s.employeeEmail,
-            employeeId: s.employeeId,
-            employeeUserName: s.employeeUserName,
-            employeeQrToken: s.employeeQrToken,
-            assignmentId: s.assignmentId,
-            assignedAt: s.assignedAt,
-            orderUrl: s.orderUrl || getEmployeeOrderUrl(s.employee || s.employeeEmail, s.id, locId, s.number),
-          }));
+          const mapped: SeatItem[] = backendSeats.map((s) => {
+            const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+            const seatUrl = s.qrToken
+              ? `${window.location.origin}${orgPrefix}/order/${s.qrToken}`
+              : (s.orderUrl
+                  ? (s.orderUrl.startsWith("http") ? s.orderUrl : `${window.location.origin}${s.orderUrl.startsWith("/") ? "" : "/"}${s.orderUrl}`)
+                  : `${window.location.origin}${orgPrefix}/order/${locId}/${s.number}`);
+            return {
+              id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
+              displayId: s.displayId,
+              number: s.number,
+              locationId: locId,
+              qrToken: s.qrToken,
+              employee: s.employee || s.employeeEmail || undefined,
+              employeeName: s.employeeName,
+              employeeEmail: s.employeeEmail,
+              employeeId: s.employeeId,
+              employeeUserName: s.employeeUserName,
+              employeeQrToken: s.employeeQrToken,
+              assignmentId: s.assignmentId,
+              assignedAt: s.assignedAt,
+              orderUrl: seatUrl,
+            };
+          });
           saveSeatsByLoc({ ...seatsByLoc, [locId]: mapped });
         }
       })
@@ -1521,12 +1529,14 @@ export default function LocationPage() {
                               )
                             : null;
 
-                          const effectiveOrderUrl = getEmployeeOrderUrl(
-                            currentSeat.employee,
-                            currentSeat.id,
-                            activeLocationId,
-                            currentSeat.number
-                          );
+                          const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+                          const effectiveOrderUrl = currentSeat.qrToken
+                            ? `${window.location.origin}${orgPrefix}/order/${currentSeat.qrToken}`
+                            : (currentSeat.orderUrl && currentSeat.orderUrl.startsWith("http")
+                                ? currentSeat.orderUrl
+                                : (currentSeat.orderUrl
+                                    ? `${window.location.origin}${currentSeat.orderUrl.startsWith("/") ? "" : "/"}${currentSeat.orderUrl}`
+                                    : getEmployeeOrderUrl(currentSeat.employee, currentSeat.id, activeLocationId, currentSeat.number, currentSeat.qrToken)));
 
                           return (
                             <div className="mt-5 space-y-3.5 text-xs">
@@ -1611,7 +1621,7 @@ export default function LocationPage() {
                               {/* Order URL Box */}
                               <div className="flex flex-col gap-1.5">
                                 <span className="font-semibold text-[#8A7667]">
-                                  {matchedEmployee ? "Employee Unique Order URL" : "Order URL"}
+                                  "Order URL"
                                 </span>
                                 <div className="flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] p-2.5">
                                   <span className="truncate text-xs font-mono text-[#70523E]">
@@ -1656,10 +1666,10 @@ export default function LocationPage() {
 
                                   <div className="flex-1 space-y-1">
                                     <p className="text-xs font-bold text-[#342219]">
-                                      {matchedEmployee ? `Employee QR (${matchedEmployee.name})` : `${currentSeat.id || currentSeat.displayId || `Seat ${currentSeat.number}`} QR`}
+                                      ${currentSeat.id || currentSeat.displayId || `Seat ${currentSeat.number}`} QR
                                     </p>
                                     <p className="text-[11px] text-[#8A7667]">
-                                      {matchedEmployee ? "Personal secure QR ordering token" : "Assign an employee to create personal QR link"}
+                                      Permanent QR code for table and ordering
                                     </p>
                                     <div className="pt-1 flex gap-2">
                                       <button
@@ -1670,7 +1680,7 @@ export default function LocationPage() {
                                             effectiveOrderUrl
                                           )}`;
                                           link.target = "_blank";
-                                          link.download = `${matchedEmployee ? matchedEmployee.name.replace(/\s+/g, "_") : `${currentSeat.id || currentSeat.displayId || `seat_${currentSeat.number}`}`}_qr.png`;
+                                          link.download = `${currentSeat.id || currentSeat.displayId || `seat_${currentSeat.number}`}_qr.png`;
                                           link.click();
                                         }}
                                         className="flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#8C5835] border border-[#D5C2B1] hover:bg-[#FAF6F1] cursor-pointer"

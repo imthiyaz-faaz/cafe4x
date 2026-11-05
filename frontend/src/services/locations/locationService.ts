@@ -30,6 +30,7 @@ export interface SeatItem {
   employeeQrToken?: string;
   assignmentId?: string;
   assignedAt?: string;
+  qrToken?: string;
   orderUrl?: string;
 }
 

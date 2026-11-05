@@ -24,9 +24,10 @@ import { qrApi } from "../../services/qrApi";
  *   - If revoked, expired, or invalid, blocks entry and displays a clear security explanation.
  */
 export default function QrEntryPage() {
-  const { shortCode, permanentToken, locationId, seatNumber } = useParams<{
+  const { shortCode, permanentToken, seatToken, locationId, seatNumber } = useParams<{
     shortCode?: string;
     permanentToken?: string;
+    seatToken?: string;
     locationId?: string;
     seatNumber?: string;
   }>();
@@ -42,12 +43,17 @@ export default function QrEntryPage() {
     try {
       let res: any = null;
 
-      if (permanentToken) {
-        // Flow 1: Permanent employee QR credential
+      if (seatToken) {
+        // Flow 1: Permanent unique seat QR token (e.g. /:shortCode/order/:seatToken)
+        res = await qrApi.createSeatSession({
+          shortCode: shortCode || undefined,
+          seatToken,
+        });
+      } else if (permanentToken) {
+        // Flow 2: Permanent employee QR credential
         res = await qrApi.createSession(permanentToken);
       } else if (locationId && seatNumber) {
-        // Flow 2: Seat ordering route
-        // We pass locationId, seatNumber, and optional seatId query param as hint
+        // Flow 3: Legacy seat ordering route
         const querySeatId = searchParams.get("seatId") || undefined;
         res = await qrApi.createSeatSession({
           shortCode: shortCode || undefined,
@@ -103,7 +109,7 @@ export default function QrEntryPage() {
   useEffect(() => {
     createSessionAndRedirect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permanentToken, locationId, seatNumber, shortCode]);
+  }, [seatToken, permanentToken, locationId, seatNumber, shortCode]);
 
   // If ordering window is closed, automatically re-check every 10 seconds
   useEffect(() => {

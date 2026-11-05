@@ -1,194 +1,120 @@
-import { formatCurrency, getActiveOrgCurrency } from '../../utils/currencies';
-import { useState, useMemo, useEffect, useRef } from "react";
+import { formatCurrency, getActiveOrgCurrency } from "../../utils/currencies";
+import { useState, useMemo, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import {
   Search,
-  X,
-  ChevronLeft,
   ChevronRight,
+  MapPin,
+  User,
+  Clock,
+  ArrowLeft,
+  Calendar,
+  RotateCw,
+  Building2,
+  Users,
+  ShoppingBag,
+  DollarSign,
+  CheckCircle2,
+  AlertCircle,
+  FileText,
+  ChevronLeft,
   ChevronsLeft,
   ChevronsRight,
-  MapPin,
-  ShieldCheck,
-  User,
-  Sparkles,
-  Clock,
-  ArrowRight,
-  Coffee,
-  Calendar,
-  Sun,
-  Moon,
-  Receipt,
-  Filter,
-  Layers,
-  ChevronDown,
-  RotateCw,
+  Eye,
+  X,
 } from "lucide-react";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
-import { orderApi, type ProviderOrder, type EmployeeOrderSummary } from "../../services/orderApi";
-import { itemsApi, type MenuItem } from "../../services/itemsApi";
-import { workingHoursApi } from "../../services/workingHoursApi";
 import {
-  classifyOrderPeriod,
-  DEFAULT_ORDER_PERIODS,
-  getDateStringsInTimezone,
-  getTimeInTimezone,
-  type OrderPeriodConfig,
-} from "../../utils/orderTimeClassification";
+  orderApi,
+  type LocationOrderSummary,
+  type LocationEmployeeOrderSummary,
+  type EmployeeOrderDetailProfile,
+  type ProviderOrder,
+} from "../../services/orderApi";
 import { organizationApi } from "../../services/organizationApi";
+import { workingHoursApi } from "../../services/workingHoursApi";
+import { getDateStringsInTimezone } from "../../utils/orderTimeClassification";
 
-export interface OrderItemDetail {
-  itemId?: string;
-  name: string;
-  price: number;
-  qty: number;
-  image: string;
-  preference?: string;
-}
-
-export interface OrderRecord {
-  id: string; // e.g. "#ORD-1001"
-  displayId?: string;
-  employeeName: string;
-  employeeId?: string | null;
-  employeeEmail?: string | null;
-  department: string;
-  avatarInitials: string;
-  avatarBg?: string;
-  items: OrderItemDetail[];
-  itemSummary: string;
-  seat: string;
-  subtotal: number;
-  adjustmentAmount: number;
-  discount: number;
-  total: number;
-  orderTime: string;
-  createdAt: string;
-  status: "Pending" | "Preparing" | "Ready" | "Completed" | "Delivered" | "Canceled";
-  notes?: string;
-  locationName?: string;
-  period: "morning" | "evening" | "other";
-}
-
-export interface EmployeeGroup {
-  employeeKey: string;
-  employeeId: string | null;
-  employeeName: string;
-  employeeEmail: string | null;
-  department: string;
-  avatarInitials: string;
-  avatarBg: string;
-  seat: string;
-  locationName: string;
-  totalOrdersCount: number;
-  totalSpend: number;
-  latestOrderTime: string;
-  latestStatus: OrderRecord["status"];
-  orders: OrderRecord[];
-}
+type ActiveView = "locations" | "employees" | "orders";
+type DateFilterType = "today" | "yesterday" | "custom";
 
 export default function OrdersPage() {
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
-  const ordersStorageKey = currentShortCode ? `cafe4x_admin_orders_${currentShortCode}` : "cafe4x_admin_orders";
-  const [currency, setCurrency] = useState<string | null>(null);
 
+  // Organization Currency & Timezone
+  const [currency, setCurrency] = useState<string | null>(null);
+  const [orgTimezone, setOrgTimezone] = useState<string>("Asia/Dubai");
+
+  // Navigation & Drill-Down State
+  const [activeView, setActiveView] = useState<ActiveView>("locations");
+  const [selectedLocation, setSelectedLocation] = useState<{ id: string; name: string } | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<LocationEmployeeOrderSummary | null>(null);
+
+  // Date Filter State
+  const [dateFilterType, setDateFilterType] = useState<DateFilterType>("today");
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
+
+  // Data States
+  const [locations, setLocations] = useState<LocationOrderSummary[]>([]);
+  const [locationEmployees, setLocationEmployees] = useState<LocationEmployeeOrderSummary[]>([]);
+  const [employeeProfile, setEmployeeProfile] = useState<EmployeeOrderDetailProfile | null>(null);
+  const [employeeOrders, setEmployeeOrders] = useState<ProviderOrder[]>([]);
+
+  // Loading & Error States
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+
+  // Pagination for Employee Orders view
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const pageSize = 10;
+
+  // Modal for Viewing Single Order Details
+  const [inspectedOrder, setInspectedOrder] = useState<ProviderOrder | null>(null);
+
+  // Fetch Organization Info & Working Hours Timezone
   useEffect(() => {
     let isMounted = true;
-
     organizationApi
       .getOrganizations()
       .then((organizations) => {
         if (!isMounted) return;
-
-        const currentOrganization = organizations.find(
-          (org) => org.shortCode.toUpperCase() === currentShortCode
+        const currentOrg = organizations.find(
+          (o) => o.shortCode.toUpperCase() === currentShortCode
         );
-
-        if (currentOrganization?.currency) {
-  setCurrency(currentOrganization.currency);
-} else {
-  setCurrency(null);
-}
+        if (currentOrg?.currency) {
+          setCurrency(currentOrg.currency);
+        } else {
+          setCurrency(null);
+        }
       })
-      .catch((error) => {
-        console.error("Could not fetch organization currency:", error);
-      });
+      .catch(() => {});
+
+    workingHoursApi
+      .getWorkingHours()
+      .then((res) => {
+        if (!isMounted) return;
+        if (res?.workingHours?.timezone) {
+          setOrgTimezone(res.workingHours.timezone);
+        }
+      })
+      .catch(() => {});
 
     return () => {
       isMounted = false;
     };
   }, [currentShortCode]);
 
-  const formatPrice = (amount: number) => {
-    return formatCurrency(amount, currency || getActiveOrgCurrency(currentShortCode));
-  };
-
-  // Timezone & Period Configuration
-  const [orgTimezone, setOrgTimezone] = useState<string>("Asia/Dubai");
-  const [periodConfig] = useState<OrderPeriodConfig>(DEFAULT_ORDER_PERIODS);
-
-  // Date Filter State: "today" | "yesterday" | "custom"
-  const [dateFilterType, setDateFilterType] = useState<"today" | "yesterday" | "custom">("today");
-  const [customStartDate, setCustomStartDate] = useState<string>("");
-  const [customEndDate, setCustomEndDate] = useState<string>("");
-
-  // Orders State
-  const [orders, setOrders] = useState<OrderRecord[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
-
-  // Selected Employee Key for Inspection/Filter
-  const [selectedEmployeeKey, setSelectedEmployeeKey] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [employeeDropdownOpen, setEmployeeDropdownOpen] = useState(false);
-  const [employeeSearchFilter, setEmployeeSearchFilter] = useState("");
-
-  // Pagination State
-  const [pageSize, setPageSize] = useState(10);
-  const [currentPage, setCurrentPage] = useState(1);
-
-  // Maintain item lookup maps from menu items database
-  const [itemsById, setItemsById] = useState<Record<string, MenuItem>>({});
-  const [itemsByName, setItemsByName] = useState<Record<string, MenuItem>>({});
-  const itemsByIdRef = useRef<Record<string, MenuItem>>({});
-  const itemsByNameRef = useRef<Record<string, MenuItem>>({});
-  itemsByIdRef.current = itemsById;
-  itemsByNameRef.current = itemsByName;
-
-  // Available employees with orders in the current date range
-  const [availableEmployees, setAvailableEmployees] = useState<EmployeeOrderSummary[]>([]);
-
-  // 1. Fetch Organization Working Hours to get accurate configured timezone
-  useEffect(() => {
-    workingHoursApi
-      .getWorkingHours()
-      .then((res: any) => {
-        const tz = res?.workingHours?.timezone || res?.timezone;
-        if (tz) {
-          setOrgTimezone(tz);
-        }
-      })
-      .catch(() => {
-        // Fallback default timezone: Asia/Dubai
-      });
-  }, [currentShortCode]);
-
-  // 2. Compute Active Start & End Date Strings in ISO for the server
+  // Compute Active Start and End Dates based on Org Timezone
   const activeDateRange = useMemo(() => {
     const { todayStr, yesterdayStr } = getDateStringsInTimezone(orgTimezone);
-
     if (dateFilterType === "today") {
-      return {
-        startDate: todayStr,
-        endDate: todayStr,
-      };
+      return { startDate: todayStr, endDate: todayStr };
     } else if (dateFilterType === "yesterday") {
-      return {
-        startDate: yesterdayStr,
-        endDate: yesterdayStr,
-      };
+      return { startDate: yesterdayStr, endDate: yesterdayStr };
     } else {
       return {
         startDate: customStartDate || undefined,
@@ -197,1121 +123,883 @@ export default function OrdersPage() {
     }
   }, [dateFilterType, customStartDate, customEndDate, orgTimezone]);
 
-  // 3. Fetch menu items to get exact current images and IDs
-  useEffect(() => {
-    itemsApi
-      .getItems(currentShortCode || undefined)
-      .then((itemsList) => {
-        if (Array.isArray(itemsList)) {
-          const byId: Record<string, MenuItem> = {};
-          const byName: Record<string, MenuItem> = {};
-          itemsList.forEach((it) => {
-            if (it.id) {
-              byId[it.id] = it;
-            }
-            if (it.name) {
-              byName[it.name.trim().toLowerCase()] = it;
-            }
-          });
-          setItemsById(byId);
-          setItemsByName(byName);
-        }
-      })
-      .catch(() => { });
-  }, [currentShortCode]);
+  const formatPrice = (amount: number) => {
+    return formatCurrency(amount, currency || getActiveOrgCurrency(currentShortCode));
+  };
 
-  // 4. Fetch available employees who have orders in this date range
-  useEffect(() => {
-    const controller = new AbortController();
-    orderApi
-      .getOrderEmployees(
-        {
-          startDate: activeDateRange.startDate,
-          endDate: activeDateRange.endDate,
-        },
-        { signal: controller.signal }
-      )
-      .then((list) => {
-        setAvailableEmployees(list || []);
-      })
-      .catch((err) => {
-        if (err.name !== "AbortError") {
-          setAvailableEmployees([]);
-        }
-      });
-
-    return () => {
-      controller.abort();
-    };
-  }, [activeDateRange, currentShortCode]);
-
-  // 5. Fetch real employee orders from backend with date & employee parameters
-  useEffect(() => {
-    const controller = new AbortController();
+  // 1. Fetch Locations with Order Aggregates
+  const fetchLocations = async () => {
     setIsLoading(true);
+    try {
+      const data = await orderApi.getOrderLocations({
+        startDate: activeDateRange.startDate,
+        endDate: activeDateRange.endDate,
+      });
+      setLocations(data || []);
+    } catch (err) {
+      console.error("Failed to fetch order locations:", err);
+      setLocations([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    const loadOrders = (signal?: AbortSignal) => {
-      orderApi
-        .getOrders(
-          {
-            startDate: activeDateRange.startDate,
-            endDate: activeDateRange.endDate,
-          },
-          { signal }
-        )
-        .then((serverOrders) => {
-          if (Array.isArray(serverOrders) && serverOrders.length > 0) {
-            const currentItemsById = itemsByIdRef.current;
-            const currentItemsByName = itemsByNameRef.current;
-
-            const mapped: OrderRecord[] = serverOrders.map((so: ProviderOrder) => {
-              const initials = so.employeeName
-                ? so.employeeName
-                    .split(" ")
-                    .map((p) => p[0])
-                    .join("")
-                    .slice(0, 2)
-                    .toUpperCase()
-                : "EM";
-
-              const itemsMapped = (so.items || []).map((it) => {
-                const fullName = (it.name || "").trim();
-                const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
-                const fullKey = fullName.toLowerCase();
-
-                let exactImage = "";
-                if (it.itemId && currentItemsById[it.itemId]?.image) {
-                  exactImage = currentItemsById[it.itemId].image;
-                } else if (it.image) {
-                  exactImage = it.image;
-                } else if (currentItemsByName[fullKey]?.image) {
-                  exactImage = currentItemsByName[fullKey].image;
-                } else if (currentItemsByName[baseName]?.image) {
-                  exactImage = currentItemsByName[baseName].image;
-                }
-
-                return {
-                  itemId: it.itemId,
-                  name: it.name,
-                  price: it.price,
-                  qty: it.qty,
-                  image: exactImage,
-                  preference: it.preference,
-                };
-              });
-
-              const summary = itemsMapped.map((i) => `${i.name} x${i.qty}`).join(", ");
-              const createdAtStr = so.createdAt || new Date().toISOString();
-              const { displayTime } = getTimeInTimezone(createdAtStr, orgTimezone);
-              const period = classifyOrderPeriod(createdAtStr, orgTimezone, periodConfig);
-
-              return {
-                id: so.displayId || so.id,
-                displayId: so.displayId,
-                employeeName: so.employeeName,
-                employeeId: so.employeeId,
-                employeeEmail: (so as any).employeeEmail || null,
-                department: so.locationName || "Office Team",
-                avatarInitials: initials,
-                avatarBg: "bg-[#754329]",
-                items: itemsMapped,
-                itemSummary: summary || "No items",
-                seat: so.seat?.startsWith("Seat ") ? so.seat : `Seat ${so.seat || "—"}`,
-                subtotal: so.subtotal ?? so.total,
-                adjustmentAmount: so.adjustmentAmount ?? 0,
-                discount: so.discount ?? 0,
-                total: so.total,
-                orderTime: displayTime || so.time || "Recent",
-                createdAt: createdAtStr,
-                status: (so.status as any) || "Pending",
-                notes: so.notes,
-                locationName: so.locationName,
-                period,
-              };
-            });
-
-            setOrders(mapped);
-            try {
-              localStorage.setItem(ordersStorageKey, JSON.stringify(mapped));
-            } catch {}
-          } else {
-            setOrders([]);
-            try {
-              localStorage.removeItem(ordersStorageKey);
-            } catch {}
-          }
-        })
-        .catch((err) => {
-          if (err.name !== "AbortError") {
-            setOrders([]);
-          }
-        })
-        .finally(() => {
-          if (!signal || !signal.aborted) {
-            setIsLoading(false);
-          }
-        });
-    };
-
-    loadOrders(controller.signal);
-
-    const interval = setInterval(() => {
-      loadOrders(controller.signal);
-    }, 10000);
-
-    return () => {
-      controller.abort();
-      clearInterval(interval);
-    };
-  }, [activeDateRange, orgTimezone]);
-
-  // Group Orders by Employee
-  const employeeGroups: EmployeeGroup[] = useMemo(() => {
-    const map = new Map<string, EmployeeGroup>();
-
-    orders.forEach((order) => {
-      // Keyed by employeeId (if exists) or employeeName
-      const key = (order.employeeId ? `id_${order.employeeId}` : order.employeeName || "Guest").trim().toLowerCase();
-      if (!map.has(key)) {
-        map.set(key, {
-          employeeKey: key,
-          employeeId: order.employeeId || null,
-          employeeName: order.employeeName || "Employee",
-          employeeEmail: order.employeeEmail || null,
-          department: order.department || order.locationName || "Office Team",
-          avatarInitials: order.avatarInitials || "EM",
-          avatarBg: order.avatarBg || "bg-[#754329]",
-          seat: order.seat,
-          locationName: order.locationName || "Office",
-          totalOrdersCount: 0,
-          totalSpend: 0,
-          latestOrderTime: order.orderTime,
-          latestStatus: order.status,
-          orders: [],
-        });
+  // 2. Fetch Employees for a Selected Location
+  const fetchLocationEmployees = async (locId: string) => {
+    setIsLoading(true);
+    try {
+      const res = await orderApi.getLocationEmployees(locId, {
+        startDate: activeDateRange.startDate,
+        endDate: activeDateRange.endDate,
+      });
+      setLocationEmployees(res.employees || []);
+      if (res.location) {
+        setSelectedLocation(res.location);
       }
+    } catch (err) {
+      console.error("Failed to fetch location employees:", err);
+      setLocationEmployees([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-      const grp = map.get(key)!;
-      grp.orders.push(order);
-      grp.totalOrdersCount += 1;
-      grp.totalSpend += order.total;
-      // If we have an email on this order, save it
-      if (order.employeeEmail && !grp.employeeEmail) {
-        grp.employeeEmail = order.employeeEmail;
-      }
-    });
+  // 3. Fetch Orders for a Selected Employee
+  const fetchEmployeeOrders = async (empId: string) => {
+    setIsLoading(true);
+    try {
+      const res = await orderApi.getEmployeeOrders(empId, {
+        startDate: activeDateRange.startDate,
+        endDate: activeDateRange.endDate,
+      });
+      setEmployeeProfile(res.employee || null);
+      setEmployeeOrders(res.orders || []);
+      setCurrentPage(1);
+    } catch (err) {
+      console.error("Failed to fetch employee orders:", err);
+      setEmployeeOrders([]);
+      setEmployeeProfile(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    return Array.from(map.values());
-  }, [orders]);
+  // Load Data whenever View, Selected Target, or Date Filter changes
+  useEffect(() => {
+    if (activeView === "locations") {
+      fetchLocations();
+    } else if (activeView === "employees" && selectedLocation) {
+      fetchLocationEmployees(selectedLocation.id);
+    } else if (activeView === "orders" && selectedEmployee) {
+      fetchEmployeeOrders(selectedEmployee.employeeId);
+    }
+  }, [activeView, selectedLocation?.id, selectedEmployee?.employeeId, activeDateRange]);
 
-  // Filter Employee Groups based on search input & employee dropdown filter
-  const filteredEmployees = useMemo(() => {
-    let result = employeeGroups;
+  // Handle Location Click
+  const handleSelectLocation = (loc: LocationOrderSummary) => {
+    setSelectedLocation({ id: loc.id, name: loc.name });
+    setSelectedEmployee(null);
+    setSearchQuery("");
+    setActiveView("employees");
+  };
 
-    if (selectedEmployeeKey) {
-      result = result.filter((emp) => emp.employeeKey === selectedEmployeeKey);
+  // Handle Employee Click
+  const handleSelectEmployee = (emp: LocationEmployeeOrderSummary) => {
+    setSelectedEmployee(emp);
+    setSearchQuery("");
+    setActiveView("orders");
+  };
+
+  // Status Badge Helper
+  const renderStatusBadge = (status?: string) => {
+    const s = (status || "Pending").toLowerCase();
+    let badgeClass = "bg-amber-100 text-amber-800 border-amber-200";
+    if (s === "delivered" || s === "completed") {
+      badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
+    } else if (s === "ready") {
+      badgeClass = "bg-blue-100 text-blue-800 border-blue-200";
+    } else if (s === "preparing") {
+      badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
+    } else if (s === "cancelled" || s === "canceled") {
+      badgeClass = "bg-rose-100 text-rose-800 border-rose-200";
+    } else if (s === "none") {
+      badgeClass = "bg-stone-100 text-stone-600 border-stone-200";
     }
 
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return result;
-
-    return result.filter(
-      (emp) =>
-        emp.employeeName.toLowerCase().includes(q) ||
-        (emp.employeeEmail && emp.employeeEmail.toLowerCase().includes(q)) ||
-        emp.department.toLowerCase().includes(q) ||
-        emp.seat.toLowerCase().includes(q) ||
-        emp.orders.some((o) =>
-          o.id.toLowerCase().includes(q) ||
-          o.items.some((i) => i.name.toLowerCase().includes(q))
-        )
+    return (
+      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
+        {status || "Pending"}
+      </span>
     );
-  }, [employeeGroups, selectedEmployeeKey, searchQuery]);
+  };
 
-  // Selected Employee object (when an employee is explicitly selected)
-  const selectedEmployee = useMemo(() => {
-    if (!selectedEmployeeKey) return null;
-    return employeeGroups.find((eg) => eg.employeeKey === selectedEmployeeKey) || null;
-  }, [employeeGroups, selectedEmployeeKey]);
+  // Filtered Locations
+  const filteredLocations = useMemo(() => {
+    if (!searchQuery.trim()) return locations;
+    const q = searchQuery.toLowerCase();
+    return locations.filter((loc) => loc.name.toLowerCase().includes(q));
+  }, [locations, searchQuery]);
 
-  // Orders for the selected employee, classified into Morning, Evening, and Other
-  const { morningOrders, eveningOrders, otherOrders } = useMemo(() => {
-    if (!selectedEmployee) {
-      return {
-        morningOrders: [] as OrderRecord[],
-        eveningOrders: [] as OrderRecord[],
-        otherOrders: [] as OrderRecord[],
-        financialSummary: {
-          totalOrders: 0,
-          morningCount: 0,
-          eveningCount: 0,
-          otherCount: 0,
-          totalItems: 0,
-          morningAmount: 0,
-          eveningAmount: 0,
-          grossAmount: 0,
-          completedAmount: 0,
-          pendingAmount: 0,
-          cancelledAmount: 0,
-          discounts: 0,
-          adjustments: 0,
-          netAmount: 0,
-        },
-      };
-    }
-
-    const employeeOrders = selectedEmployee.orders;
-    const morning: OrderRecord[] = [];
-    const evening: OrderRecord[] = [];
-    const other: OrderRecord[] = [];
-
-    let totalItems = 0;
-    let morningAmount = 0;
-    let eveningAmount = 0;
-    let grossAmount = 0;
-    let completedAmount = 0;
-    let pendingAmount = 0;
-    let cancelledAmount = 0;
-    let totalDiscounts = 0;
-    let totalAdjustments = 0;
-
-    employeeOrders.forEach((o) => {
-      // Items count
-      const orderItemCount = o.items.reduce((acc, it) => acc + (it.qty || 1), 0);
-      totalItems += orderItemCount;
-
-      // Exclude cancelled orders from sales totals according to business rules
-      const isCancelled = o.status === "Canceled";
-
-      if (!isCancelled) {
-        grossAmount += o.total;
-        totalDiscounts += o.discount || 0;
-        totalAdjustments += o.adjustmentAmount || 0;
-      }
-
-      // Status breakdown
-      if (o.status === "Delivered" || o.status === "Completed") {
-        completedAmount += o.total;
-      } else if (isCancelled) {
-        cancelledAmount += o.total;
-      } else {
-        pendingAmount += o.total;
-      }
-
-      // Period breakdown
-      if (o.period === "morning") {
-        morning.push(o);
-        if (!isCancelled) {
-          morningAmount += o.total;
-        }
-      } else if (o.period === "evening") {
-        evening.push(o);
-        if (!isCancelled) {
-          eveningAmount += o.total;
-        }
-      } else {
-        other.push(o);
-      }
-    });
-
-    // Net Amount: Total value of completed/delivered sales
-    const netAmount = completedAmount;
-
-    return {
-      morningOrders: morning,
-      eveningOrders: evening,
-      otherOrders: other,
-      financialSummary: {
-        totalOrders: employeeOrders.length,
-        morningCount: morning.length,
-        eveningCount: evening.length,
-        otherCount: other.length,
-        totalItems,
-        morningAmount,
-        eveningAmount,
-        grossAmount,
-        completedAmount,
-        pendingAmount,
-        cancelledAmount,
-        discounts: totalDiscounts,
-        adjustments: totalAdjustments,
-        netAmount,
-      },
-    };
-  }, [selectedEmployee]);
-
-  // Pagination calculation for Directory Table
-  const totalRecords = filteredEmployees.length;
-  const totalPages = Math.max(1, Math.ceil(totalRecords / pageSize));
-  const validCurrentPage = Math.min(currentPage, totalPages);
-  const paginatedEmployees = useMemo(() => {
-    const start = (validCurrentPage - 1) * pageSize;
-    return filteredEmployees.slice(start, start + pageSize);
-  }, [filteredEmployees, validCurrentPage, pageSize]);
-
-  // Filter available employees for dropdown search
-  const filteredDropdownEmployees = useMemo(() => {
-    const q = employeeSearchFilter.trim().toLowerCase();
-    if (!q) return availableEmployees;
-    return availableEmployees.filter(
+  // Filtered Location Employees
+  const filteredEmployees = useMemo(() => {
+    if (!searchQuery.trim()) return locationEmployees;
+    const q = searchQuery.toLowerCase();
+    return locationEmployees.filter(
       (e) =>
         e.employeeName.toLowerCase().includes(q) ||
-        (e.employeeEmail && e.employeeEmail.toLowerCase().includes(q)) ||
-        e.department.toLowerCase().includes(q) ||
-        e.seat.toLowerCase().includes(q)
+        (e.username && e.username.toLowerCase().includes(q)) ||
+        (e.seat && e.seat.toLowerCase().includes(q))
     );
-  }, [availableEmployees, employeeSearchFilter]);
+  }, [locationEmployees, searchQuery]);
+
+  // Filtered Employee Orders
+  const filteredOrders = useMemo(() => {
+    if (!searchQuery.trim()) return employeeOrders;
+    const q = searchQuery.toLowerCase();
+    return employeeOrders.filter(
+      (o) =>
+        o.id.toLowerCase().includes(q) ||
+        (o.displayId && o.displayId.toLowerCase().includes(q)) ||
+        (o.seat && o.seat.toLowerCase().includes(q)) ||
+        o.items.some((it) => it.name.toLowerCase().includes(q))
+    );
+  }, [employeeOrders, searchQuery]);
+
+  // Paginated Orders
+  const paginatedOrders = useMemo(() => {
+    const startIndex = (currentPage - 1) * pageSize;
+    return filteredOrders.slice(startIndex, startIndex + pageSize);
+  }, [filteredOrders, currentPage, pageSize]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
 
   return (
     <Background>
-      <div className="flex min-h-screen flex-col pt-20">
+      <div className="flex min-h-screen flex-col pt-20 text-[#4A3E3D]">
         <Navbar />
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-7xl">
-            {/* Top Toolbar: Filters, Employee Selection, and Search */}
-            <div className="mb-6 rounded-2xl border border-[#EEE5DC] bg-white/95 p-4 shadow-sm backdrop-blur-md">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                {/* Header Title */}
-                <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#FAF4ED] text-[#754329] border border-[#E8DED4]">
-                    <User size={22} />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-bold text-[#342219]">Employee Orders</h2>
-                    <p className="text-xs text-[#8A7667]">
-                      Filter by employee and date to inspect morning & evening orders and financial summaries
-                    </p>
-                  </div>
-                </div>
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-16">
+        {/* Top Header & Breadcrumbs */}
+        <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            {/* Breadcrumb Navigation */}
+            <nav className="flex items-center text-sm font-medium text-stone-500 mb-2 space-x-2">
+              <button
+                onClick={() => {
+                  setActiveView("locations");
+                  setSelectedLocation(null);
+                  setSelectedEmployee(null);
+                }}
+                className={`hover:text-[#8C6D58] transition-colors ${
+                  activeView === "locations" ? "text-[#8C6D58] font-bold" : ""
+                }`}
+              >
+                Orders
+              </button>
 
-                {/* Filter Controls Bar */}
-                <div className="flex flex-wrap items-center gap-2.5">
-                  {/* 1. Date Filter (Today / Yesterday / Custom) */}
-                  <div className="flex items-center rounded-xl border border-[#E8DED4] bg-[#FAF8F5] p-1 text-xs">
-                    <button
-                      type="button"
-                      onClick={() => setDateFilterType("today")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "today"
-                        ? "bg-[#754329] text-white shadow-2xs"
-                        : "text-[#704225] hover:bg-[#EFE6DC]"
-                        }`}
-                    >
-                      <Calendar size={13} />
-                      Today
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDateFilterType("yesterday")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "yesterday"
-                        ? "bg-[#754329] text-white shadow-2xs"
-                        : "text-[#704225] hover:bg-[#EFE6DC]"
-                        }`}
-                    >
-                      Yesterday
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDateFilterType("custom")}
-                      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold transition ${dateFilterType === "custom"
-                        ? "bg-[#754329] text-white shadow-2xs"
-                        : "text-[#704225] hover:bg-[#EFE6DC]"
-                        }`}
-                    >
-                      Custom
-                    </button>
-                  </div>
+              {selectedLocation && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-stone-400" />
+                  <button
+                    onClick={() => {
+                      setActiveView("employees");
+                      setSelectedEmployee(null);
+                    }}
+                    className={`hover:text-[#8C6D58] transition-colors ${
+                      activeView === "employees" ? "text-[#8C6D58] font-bold" : ""
+                    }`}
+                  >
+                    {selectedLocation.name}
+                  </button>
+                </>
+              )}
 
-                  {/* Custom Date Pickers (Shown if Custom is selected) */}
-                  {dateFilterType === "custom" && (
-                    <div className="flex items-center gap-2 rounded-xl border border-[#E8DED4] bg-white px-2.5 py-1 text-xs shadow-2xs">
-                      <input
-                        type="date"
-                        value={customStartDate}
-                        onChange={(e) => setCustomStartDate(e.target.value)}
-                        className="text-xs text-gray-700 outline-none"
-                        title="Start Date"
-                      />
-                      <span className="text-gray-400">to</span>
-                      <input
-                        type="date"
-                        value={customEndDate}
-                        onChange={(e) => setCustomEndDate(e.target.value)}
-                        className="text-xs text-gray-700 outline-none"
-                        title="End Date"
-                      />
-                    </div>
-                  )}
+              {selectedEmployee && (
+                <>
+                  <ChevronRight className="w-4 h-4 text-stone-400" />
+                  <span className="text-[#8C6D58] font-bold">{selectedEmployee.employeeName}</span>
+                </>
+              )}
+            </nav>
 
-                  {/* 2. Searchable Employee Dropdown */}
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setEmployeeDropdownOpen(!employeeDropdownOpen)}
-                      className={`flex items-center gap-2 rounded-xl border px-3.5 py-2 text-xs font-semibold transition shadow-2xs ${selectedEmployeeKey
-                        ? "border-[#754329] bg-[#FAF4ED] text-[#754329]"
-                        : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
-                        }`}
-                    >
-                      <Filter size={14} className="text-[#8C5835]" />
-                      <span className="max-w-[140px] truncate sm:max-w-[180px]">
-                        {selectedEmployee ? selectedEmployee.employeeName : "All Employees"}
-                      </span>
-                      <ChevronDown size={14} className="text-gray-400" />
-                    </button>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-[#382D2C] tracking-tight flex items-center gap-3">
+              {activeView === "locations" && (
+                <>
+                  <Building2 className="w-8 h-8 text-[#8C6D58]" />
+                  <span>Orders by Location</span>
+                </>
+              )}
+              {activeView === "employees" && (
+                <>
+                  <Users className="w-8 h-8 text-[#8C6D58]" />
+                  <span>{selectedLocation?.name} – Employees</span>
+                </>
+              )}
+              {activeView === "orders" && (
+                <>
+                  <ShoppingBag className="w-8 h-8 text-[#8C6D58]" />
+                  <span>Orders – {employeeProfile?.name || selectedEmployee?.employeeName}</span>
+                </>
+              )}
+            </h1>
+            <p className="text-xs sm:text-sm text-stone-500 mt-1">
+              {activeView === "locations" && "Select a location to inspect assigned employee orders and total spending."}
+              {activeView === "employees" && `Displaying all employees and active order tallies for ${selectedLocation?.name}.`}
+              {activeView === "orders" && `Seat: ${employeeProfile?.seatIdentifier || selectedEmployee?.seat} • Location: ${employeeProfile?.locationName || selectedLocation?.name}`}
+            </p>
+          </div>
 
-                    {/* Employee Dropdown Popover */}
-                    {employeeDropdownOpen && (
-                      <div className="absolute left-0 mt-2 z-50 w-80 rounded-2xl border border-[#EEE5DC] bg-white p-2.5 shadow-xl animate-in fade-in slide-in-from-top-2">
-                        <div className="relative mb-2">
-                          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                          <input
-                            type="text"
-                            placeholder="Search employee by name, seat..."
-                            value={employeeSearchFilter}
-                            onChange={(e) => setEmployeeSearchFilter(e.target.value)}
-                            className="w-full rounded-xl border border-gray-200 py-1.5 pl-8 pr-3 text-xs outline-none focus:border-[#754329]"
-                            autoFocus
-                          />
+          {/* Date Range Selector & Back Button */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Date Filters: Today | Yesterday | Custom */}
+            <div className="inline-flex rounded-xl bg-white p-1 shadow-sm border border-stone-200">
+              <button
+                onClick={() => setDateFilterType("today")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  dateFilterType === "today"
+                    ? "bg-[#8C6D58] text-white shadow-sm"
+                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
+                }`}
+              >
+                Today
+              </button>
+              <button
+                onClick={() => setDateFilterType("yesterday")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  dateFilterType === "yesterday"
+                    ? "bg-[#8C6D58] text-white shadow-sm"
+                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
+                }`}
+              >
+                Yesterday
+              </button>
+              <button
+                onClick={() => setDateFilterType("custom")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                  dateFilterType === "custom"
+                    ? "bg-[#8C6D58] text-white shadow-sm"
+                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
+                }`}
+              >
+                Custom
+              </button>
+            </div>
+
+            {/* Custom Date Pickers */}
+            {dateFilterType === "custom" && (
+              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200 shadow-sm text-xs">
+                <Calendar className="w-3.5 h-3.5 text-stone-400" />
+                <input
+                  type="date"
+                  value={customStartDate}
+                  onChange={(e) => setCustomStartDate(e.target.value)}
+                  className="bg-transparent border-none text-stone-700 focus:outline-none text-xs"
+                />
+                <span className="text-stone-300">to</span>
+                <input
+                  type="date"
+                  value={customEndDate}
+                  onChange={(e) => setCustomEndDate(e.target.value)}
+                  className="bg-transparent border-none text-stone-700 focus:outline-none text-xs"
+                />
+              </div>
+            )}
+
+            {/* Back Button (if inside sub-view) */}
+            {activeView === "employees" && (
+              <button
+                onClick={() => {
+                  setActiveView("locations");
+                  setSelectedLocation(null);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-700 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back to Locations
+              </button>
+            )}
+
+            {activeView === "orders" && (
+              <button
+                onClick={() => {
+                  setActiveView("employees");
+                  setSelectedEmployee(null);
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-700 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                Back to Employees
+              </button>
+            )}
+
+            {/* Refresh Button */}
+            <button
+              onClick={() => {
+                if (activeView === "locations") fetchLocations();
+                else if (activeView === "employees" && selectedLocation) fetchLocationEmployees(selectedLocation.id);
+                else if (activeView === "orders" && selectedEmployee) fetchEmployeeOrders(selectedEmployee.employeeId);
+              }}
+              title="Refresh Data"
+              className="p-2 text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
+            >
+              <RotateCw className={`w-4 h-4 ${isLoading ? "animate-spin text-[#8C6D58]" : ""}`} />
+            </button>
+          </div>
+        </div>
+
+        {/* Search Bar */}
+        <div className="mb-6 flex items-center justify-between">
+          <div className="relative w-full max-w-md">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={
+                activeView === "locations"
+                  ? "Search locations..."
+                  : activeView === "employees"
+                  ? "Search employees or seat..."
+                  : "Search order ID, item name..."
+              }
+              className="w-full pl-10 pr-4 py-2 bg-white border border-stone-200 rounded-xl text-xs sm:text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[#8C6D58] focus:border-transparent shadow-sm"
+            />
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* VIEW 1: LOCATIONS LIST VIEW                                              */}
+        {/* ========================================================================= */}
+        {activeView === "locations" && (
+          <div>
+            {isLoading ? (
+              <div className="py-24 text-center">
+                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
+                <p className="text-stone-500 text-sm">Loading location order summaries from database...</p>
+              </div>
+            ) : filteredLocations.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center shadow-sm">
+                <Building2 className="w-12 h-12 text-stone-300 mx-auto mb-3" />
+                <h3 className="text-base font-bold text-stone-800 mb-1">No Locations Found</h3>
+                <p className="text-xs text-stone-500">
+                  {searchQuery ? "No locations match your search query." : "No locations exist for this organization."}
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {filteredLocations.map((loc) => (
+                  <div
+                    key={loc.id}
+                    onClick={() => handleSelectLocation(loc)}
+                    className="group cursor-pointer bg-white rounded-2xl border border-stone-200 p-6 shadow-sm hover:shadow-md hover:border-[#8C6D58]/40 transition-all duration-200 flex flex-col justify-between"
+                  >
+                    <div>
+                      {/* Location Header */}
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="w-12 h-12 rounded-xl bg-[#FAF7F2] border border-[#8C6D58]/20 flex items-center justify-center text-[#8C6D58] group-hover:scale-105 transition-transform">
+                          <Building2 className="w-6 h-6" />
+                        </div>
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-stone-100 text-stone-600">
+                          {loc.status || "Active"}
+                        </span>
+                      </div>
+
+                      <h3 className="text-lg font-bold text-stone-900 group-hover:text-[#8C6D58] transition-colors mb-1">
+                        {loc.name}
+                      </h3>
+                      <p className="text-xs text-stone-500 mb-4">{loc.locationType}</p>
+
+                      {/* Metrics List */}
+                      <div className="space-y-2 pt-2 border-t border-stone-100 text-xs">
+                        <div className="flex items-center justify-between text-stone-600">
+                          <span className="flex items-center gap-1.5">
+                            <Users className="w-3.5 h-3.5 text-stone-400" />
+                            Assigned Employees:
+                          </span>
+                          <span className="font-semibold text-stone-800">{loc.totalEmployees}</span>
                         </div>
 
-                        <div className="max-h-60 overflow-y-auto space-y-1">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedEmployeeKey(null);
-                              setEmployeeDropdownOpen(false);
-                            }}
-                            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold transition ${!selectedEmployeeKey
-                              ? "bg-[#FAF4ED] text-[#754329]"
-                              : "text-gray-700 hover:bg-gray-50"
-                              }`}
-                          >
-                            All Employees ({availableEmployees.length})
-                          </button>
+                        <div className="flex items-center justify-between text-stone-600">
+                          <span className="flex items-center gap-1.5">
+                            <ShoppingBag className="w-3.5 h-3.5 text-stone-400" />
+                            Total Orders:
+                          </span>
+                          <span className="font-semibold text-stone-900">{loc.totalOrders}</span>
+                        </div>
 
-                          {filteredDropdownEmployees.length === 0 ? (
-                            <div className="py-4 text-center text-xs text-gray-400">
-                              No employees found with orders
-                            </div>
-                          ) : (
-                            filteredDropdownEmployees.map((emp) => {
-                              const empKey = (emp.employeeId ? `id_${emp.employeeId}` : emp.employeeName).trim().toLowerCase();
-                              const isSelected = selectedEmployeeKey === empKey;
+                        <div className="flex items-center justify-between text-stone-600">
+                          <span className="flex items-center gap-1.5">
+                            <DollarSign className="w-3.5 h-3.5 text-stone-400" />
+                            Total Amount:
+                          </span>
+                          <span className="font-bold text-[#8C6D58]">{formatPrice(loc.totalAmount)}</span>
+                        </div>
 
-                              return (
-                                <button
-                                  key={empKey}
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedEmployeeKey(empKey);
-                                    setEmployeeDropdownOpen(false);
-                                  }}
-                                  className={`w-full text-left px-3 py-2 rounded-xl text-xs transition flex items-center justify-between ${isSelected
-                                    ? "bg-[#FAF4ED] text-[#754329] font-bold"
-                                    : "text-gray-700 hover:bg-gray-50"
-                                    }`}
-                                >
-                                  <div className="truncate pr-2">
-                                    <p className="font-bold text-gray-900 truncate">{emp.employeeName}</p>
-                                    <p className="text-[10px] text-gray-400 truncate">
-                                      {emp.department} &bull; {emp.seat}
-                                    </p>
-                                  </div>
-                                  <span className="shrink-0 rounded-full bg-[#FAF4ED] px-2 py-0.5 text-[10px] font-bold text-[#754329] border border-[#E8DED4]">
-                                    {emp.orderCount} orders
-                                  </span>
-                                </button>
-                              );
-                            })
-                          )}
+                        <div className="flex items-center justify-between text-stone-600 pt-1">
+                          <span className="flex items-center gap-1.5 text-amber-700">
+                            <AlertCircle className="w-3.5 h-3.5" />
+                            Pending:
+                          </span>
+                          <span className="font-semibold text-amber-800">{loc.pendingOrders}</span>
+                        </div>
+
+                        <div className="flex items-center justify-between text-stone-600">
+                          <span className="flex items-center gap-1.5 text-emerald-700">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Delivered:
+                          </span>
+                          <span className="font-semibold text-emerald-800">{loc.deliveredOrders}</span>
                         </div>
                       </div>
+                    </div>
+
+                    <div className="mt-5 pt-3 border-t border-stone-100 flex items-center justify-between text-xs font-semibold text-[#8C6D58] group-hover:translate-x-0.5 transition-transform">
+                      <span>View Employees</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 2: LOCATION EMPLOYEES VIEW                                          */}
+        {/* ========================================================================= */}
+        {activeView === "employees" && (
+          <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+            <div className="p-5 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FCFAF7]">
+              <div>
+                <h2 className="text-lg font-bold text-stone-900 flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-[#8C6D58]" />
+                  <span>{selectedLocation?.name} – Employees & Seat Orders</span>
+                </h2>
+                <p className="text-xs text-stone-500 mt-0.5">
+                  Showing all employees assigned to seats or ordering in this location.
+                </p>
+              </div>
+              <div className="text-xs text-stone-500 font-medium">
+                {filteredEmployees.length} {filteredEmployees.length === 1 ? "Employee" : "Employees"} Listed
+              </div>
+            </div>
+
+            {isLoading ? (
+              <div className="py-20 text-center">
+                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
+                <p className="text-stone-500 text-sm">Loading employees for {selectedLocation?.name}...</p>
+              </div>
+            ) : filteredEmployees.length === 0 ? (
+              <div className="py-16 text-center text-stone-500">
+                <User className="w-10 h-10 text-stone-300 mx-auto mb-2" />
+                <p className="text-sm font-semibold text-stone-700">No employees found for this location.</p>
+                <p className="text-xs text-stone-400 mt-1">Assign employees to seats in Location Management.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-[#FAF7F2] text-stone-600 text-xs font-semibold uppercase tracking-wider border-b border-stone-200">
+                    <tr>
+                      <th className="px-6 py-3.5">Employee</th>
+                      <th className="px-6 py-3.5">Seat</th>
+                      <th className="px-6 py-3.5 text-center">Total Orders</th>
+                      <th className="px-6 py-3.5 text-right">Total Amount</th>
+                      <th className="px-6 py-3.5 text-center">Latest Status</th>
+                      <th className="px-6 py-3.5 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100 text-stone-800">
+                    {filteredEmployees.map((emp) => (
+                      <tr
+                        key={emp.employeeId}
+                        onClick={() => handleSelectEmployee(emp)}
+                        className="hover:bg-[#FAF7F2]/60 cursor-pointer transition-colors"
+                      >
+                        {/* Employee Name & Username */}
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-9 h-9 rounded-full bg-[#8C6D58]/10 text-[#8C6D58] flex items-center justify-center font-bold text-xs uppercase">
+                              {emp.employeeName.substring(0, 2)}
+                            </div>
+                            <div>
+                              <div className="font-bold text-stone-900">{emp.employeeName}</div>
+                              <div className="text-xs text-stone-400">
+                                {emp.username ? `@${emp.username}` : emp.employeeEmail || "Active Employee"}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+
+                        {/* Seat Identifier */}
+                        <td className="px-6 py-4">
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-stone-100 text-stone-700 border border-stone-200">
+                            {emp.seat}
+                          </span>
+                        </td>
+
+                        {/* Total Orders */}
+                        <td className="px-6 py-4 text-center">
+                          <span className="font-semibold text-stone-900">{emp.totalOrders}</span>
+                        </td>
+
+                        {/* Total Amount */}
+                        <td className="px-6 py-4 text-right">
+                          <span className="font-bold text-[#8C6D58]">{formatPrice(emp.totalAmount)}</span>
+                        </td>
+
+                        {/* Latest Status */}
+                        <td className="px-6 py-4 text-center">
+                          {renderStatusBadge(emp.latestStatus)}
+                        </td>
+
+                        {/* Action Link */}
+                        <td className="px-6 py-4 text-right">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleSelectEmployee(emp);
+                            }}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#8C6D58] hover:underline"
+                          >
+                            <span>View Orders</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* VIEW 3: EMPLOYEE ORDER DETAILS VIEW                                      */}
+        {/* ========================================================================= */}
+        {activeView === "orders" && (
+          <div className="space-y-6">
+            {/* Employee Summary Profile Banner */}
+            <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-2xl bg-[#8C6D58]/15 text-[#8C6D58] flex items-center justify-center font-extrabold text-lg uppercase shadow-inner">
+                  {(employeeProfile?.name || selectedEmployee?.employeeName || "E").substring(0, 2)}
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold text-stone-900">
+                    {employeeProfile?.name || selectedEmployee?.employeeName}
+                  </h2>
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500 mt-1">
+                    {employeeProfile?.username && (
+                      <span className="text-stone-700 font-medium">@{employeeProfile.username}</span>
                     )}
+                    <span>•</span>
+                    <span className="font-mono bg-stone-100 px-2 py-0.5 rounded border border-stone-200 text-stone-700">
+                      {employeeProfile?.seatIdentifier || selectedEmployee?.seat}
+                    </span>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 text-stone-600">
+                      <MapPin className="w-3.5 h-3.5 text-[#8C6D58]" />
+                      {employeeProfile?.locationName || selectedLocation?.name}
+                    </span>
                   </div>
+                </div>
+              </div>
 
-                  {/* Clear Filter Button */}
-                  {selectedEmployeeKey && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedEmployeeKey(null)}
-                      className="flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100 transition"
-                      title="Clear employee filter"
-                    >
-                      <X size={14} />
-                      Clear
-                    </button>
-                  )}
-
-                  {/* 3. Global Search Input */}
-                  <div className="relative w-full sm:w-60">
-                    <Search
-                      size={14}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Search orders, items..."
-                      value={searchQuery}
-                      onChange={(e) => {
-                        setSearchQuery(e.target.value);
-                        setCurrentPage(1);
-                      }}
-                      className="w-full rounded-xl border border-gray-200 bg-white py-2 pl-8 pr-3 text-xs text-gray-800 outline-none transition placeholder-gray-400 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 shadow-2xs"
-                    />
+              {/* Quick Metrics Badges */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+                <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200">
+                  <div className="text-xs text-stone-500">Total Orders</div>
+                  <div className="text-lg font-bold text-stone-900">{employeeProfile?.totalOrders ?? 0}</div>
+                </div>
+                <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200">
+                  <div className="text-xs text-stone-500">Total Spend</div>
+                  <div className="text-lg font-bold text-[#8C6D58]">
+                    {formatPrice(employeeProfile?.totalSpend ?? 0)}
                   </div>
+                </div>
+                <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-200/60">
+                  <div className="text-xs text-amber-700">Pending</div>
+                  <div className="text-lg font-bold text-amber-900">{employeeProfile?.pendingOrders ?? 0}</div>
+                </div>
+                <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-200/60">
+                  <div className="text-xs text-emerald-700">Delivered</div>
+                  <div className="text-lg font-bold text-emerald-900">{employeeProfile?.deliveredOrders ?? 0}</div>
                 </div>
               </div>
             </div>
 
-            {/* IF AN EMPLOYEE IS SELECTED: DISPLAY DETAILED SUMMARY & MORNING/EVENING ORDERS */}
-            {selectedEmployee ? (
-              <div className="space-y-6">
-                {/* 1. Selected Employee Profile Header Card */}
-                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm">
-                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl font-bold text-lg text-white shadow-md ${selectedEmployee.avatarBg}`}
-                      >
-                        {selectedEmployee.avatarInitials}
-                      </div>
-                      <div>
-                        <div className="flex items-center gap-2.5">
-                          <h3 className="text-xl font-black text-gray-900">
-                            {selectedEmployee.employeeName}
-                          </h3>
-                          <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800 border border-emerald-200">
-                            Active
-                          </span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                          {selectedEmployee.employeeEmail && (
-                            <span className="font-medium text-gray-600">
-                              {selectedEmployee.employeeEmail}
-                            </span>
-                          )}
-                          <span className="text-gray-300">&bull;</span>
-                          <span className="rounded-md bg-[#FAF4ED] px-2 py-0.5 font-semibold text-[#754329] border border-[#EEDFCE]">
-                            {selectedEmployee.department}
-                          </span>
-                          <span className="text-gray-300">&bull;</span>
-                          <div className="flex items-center gap-1 font-semibold text-gray-700">
-                            <MapPin size={13} className="text-[#8C5835]" />
-                            <span>{selectedEmployee.seat}</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Back to All Employees Action */}
-                    <button
-                      type="button"
-                      onClick={() => setSelectedEmployeeKey(null)}
-                      className="flex items-center justify-center gap-1.5 rounded-xl border border-gray-200 bg-white px-4 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 transition shadow-2xs self-start sm:self-auto"
-                    >
-                      <X size={15} />
-                      Back to All Employees
-                    </button>
-                  </div>
-                </div>
-
-                {/* 2. SYMMETRICAL SESSIONS GRID: MORNING & EVENING SESSIONS SIDE-BY-SIDE */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-                  {/* MORNING ORDERS SESSION */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs flex flex-col h-full">
-                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
-                          <Sun size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#342219]">Morning Orders</h4>
-                          <p className="text-[11px] text-gray-400">
-                            {periodConfig.morningStart} AM - {periodConfig.morningEnd} AM
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800 border border-amber-200">
-                        {morningOrders.length} {morningOrders.length === 1 ? "Order" : "Orders"}
-                      </span>
-                    </div>
-
-                    {morningOrders.length === 0 ? (
-                      <div className="flex flex-1 flex-col items-center justify-center py-8 text-center text-xs text-gray-400">
-                        <Sun className="mb-1.5 h-6 w-6 text-amber-200" />
-                        <p className="font-medium text-gray-500">No morning orders</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {morningOrders.map((order) => (
-                          <OrderCard
-                            key={order.id}
-                            order={order}
-                            itemsById={itemsById}
-                            itemsByName={itemsByName}
-                            formatPrice={formatPrice}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* EVENING ORDERS SESSION */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs flex flex-col h-full">
-                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          <Moon size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#342219]">Evening Orders</h4>
-                          <p className="text-[11px] text-gray-400">
-                            04:00 PM - 11:59 PM
-                          </p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-indigo-50 px-2.5 py-0.5 text-[11px] font-bold text-indigo-800 border border-indigo-200">
-                        {eveningOrders.length} {eveningOrders.length === 1 ? "Order" : "Orders"}
-                      </span>
-                    </div>
-
-                    {eveningOrders.length === 0 ? (
-                      <div className="flex flex-1 flex-col items-center justify-center py-8 text-center text-xs text-gray-400">
-                        <Moon className="mb-1.5 h-6 w-6 text-indigo-200" />
-                        <p className="font-medium text-gray-500">No evening orders</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        {eveningOrders.map((order) => (
-                          <OrderCard
-                            key={order.id}
-                            order={order}
-                            itemsById={itemsById}
-                            itemsByName={itemsByName}
-                            formatPrice={formatPrice}
-                          />))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* 3. SECTION C: OTHER ORDERS (If any exist outside standard periods) */}
-                {otherOrders.length > 0 && (
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4 sm:p-5 shadow-xs">
-                    <div className="mb-3 flex items-center justify-between border-b border-[#F0E6DB] pb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gray-100 text-gray-700 border border-gray-200">
-                          <Layers size={16} />
-                        </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-[#342219]">Other Orders</h4>
-                          <p className="text-[11px] text-gray-400">Outside standard hours</p>
-                        </div>
-                      </div>
-                      <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-[11px] font-bold text-gray-700 border border-gray-200">
-                        {otherOrders.length} {otherOrders.length === 1 ? "Order" : "Orders"}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {otherOrders.map((order) => (
-                        <OrderCard
-                          key={order.id}
-                          order={order}
-                          itemsById={itemsById}
-                          itemsByName={itemsByName}
-                          formatPrice={formatPrice}
-                        />))}
-                    </div>
-                  </div>
-                )}
-
-                {/* 5. Total Amount Calculated at the End */}
-                <div className="rounded-2xl border border-[#EEE5DC] bg-white p-5 shadow-sm">
-                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#FAF4ED] text-[#754329] border border-[#EEDFCE]">
-                        <Receipt size={22} />
-                      </div>
-                      <div>
-                        <h4 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
-                          Total Amount Calculated
-                        </h4>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {selectedEmployee.orders.length} {selectedEmployee.orders.length === 1 ? "order" : "orders"} &bull; {selectedEmployee.orders.reduce((acc, o) => acc + o.items.reduce((sum, it) => sum + (it.qty || 1), 0), 0)} items
-                        </p>
-                      </div>
-                    </div>
-                    <div className="text-left sm:text-right">
-                      <span className="text-xs text-gray-400 font-medium">Total Spend</span>
-                      <p className="text-3xl font-black text-[#754329]">
-                        {formatPrice(selectedEmployee.totalSpend)}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              /* IF NO EMPLOYEE SELECTED: DISPLAY ALL EMPLOYEES DIRECTORY TABLE */
-              <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b border-[#EEE5DC] bg-[#FAF8F5] text-[#704225]">
-                      <tr>
-                        <th className="px-5 py-3.5 font-bold">Employee</th>
-                        <th className="px-4 py-3.5 font-bold">Department / Location</th>
-                        <th className="px-4 py-3.5 font-bold">Seat</th>
-                        <th className="px-4 py-3.5 font-bold text-center">Total Orders</th>
-                        <th className="px-4 py-3.5 font-bold text-right">Total Amount</th>
-                        <th className="px-4 py-3.5 font-bold">Latest Status</th>
-                        <th className="w-10 px-4 py-3.5 text-center">Action</th>
-                      </tr>
-                    </thead>
-
-                    <tbody className="divide-y divide-[#F5EFE8] text-gray-700">
-                      {isLoading ? (
-                        <tr>
-                          <td colSpan={7} className="py-14 text-center text-xs text-gray-500">
-                            <RotateCw className="mx-auto mb-2 h-7 w-7 text-[#8E6548] animate-spin" />
-                            <p className="font-semibold text-gray-700">Loading orders...</p>
-                            <p className="text-[11px] text-gray-400 mt-0.5">
-                              Fetching employee order records for the selected period.
-                            </p>
-                          </td>
-                        </tr>
-                      ) : paginatedEmployees.length === 0 ? (
-                        <tr>
-                          <td colSpan={7} className="py-14 text-center text-xs text-gray-500">
-                            <Sparkles className="mx-auto mb-2 h-8 w-8 text-[#A08C7D]" />
-                            <p className="font-semibold text-gray-700">No employee orders found for this date range</p>
-                            <p className="text-[11px] text-gray-400 mt-0.5">
-                              Orders placed by employees will appear here in real-time.
-                            </p>
-                          </td>
-                        </tr>
-                      ) : (
-                        paginatedEmployees.map((emp) => {
-                          return (
-                            <tr
-                              key={emp.employeeKey}
-                              onClick={() => setSelectedEmployeeKey(emp.employeeKey)}
-                              className="cursor-pointer transition duration-150 hover:bg-[#FAF6F2]"
-                            >
-                              {/* Employee Info (Avatar + Name + Email) */}
-                              <td className="px-5 py-3.5">
-                                <div className="flex items-center gap-3">
-                                  <div
-                                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-bold text-xs text-white shadow-2xs ${emp.avatarBg}`}
-                                  >
-                                    {emp.avatarInitials}
-                                  </div>
-                                  <div>
-                                    <p className="font-bold text-gray-900 leading-tight">
-                                      {emp.employeeName}
-                                    </p>
-                                    {emp.employeeEmail ? (
-                                      <p className="text-[10px] text-gray-400 mt-0.5">{emp.employeeEmail}</p>
-                                    ) : (
-                                      <p className="text-[10px] text-gray-400 mt-0.5">
-                                        Last active: {emp.latestOrderTime}
-                                      </p>
-                                    )}
-                                  </div>
-                                </div>
-                              </td>
-
-                              {/* Department / Location */}
-                              <td className="px-4 py-3.5">
-                                <span className="rounded-md bg-[#FAF4ED] px-2.5 py-1 text-[11px] font-semibold text-[#754329] border border-[#EEDFCE]">
-                                  {emp.department}
-                                </span>
-                              </td>
-
-                              {/* Seat */}
-                              <td className="px-4 py-3.5 font-semibold text-gray-800">
-                                <div className="flex items-center gap-1.5">
-                                  <MapPin size={13} className="text-[#8C5835]" />
-                                  <span>{emp.seat}</span>
-                                </div>
-                              </td>
-
-                              {/* Total Orders Count */}
-                              <td className="px-4 py-3.5 text-center">
-                                <span className="inline-flex items-center justify-center rounded-full bg-[#EFE6DC] px-2.5 py-0.5 text-xs font-bold text-[#704225]">
-                                  {emp.totalOrdersCount}
-                                </span>
-                              </td>
-
-                              {/* Total Amount */}
-                              <td className="px-4 py-3.5 font-bold text-gray-900 text-right">
-                                {formatPrice(emp.totalSpend)}
-                              </td>
-
-                              {/* Latest Status */}
-                              <td className="px-4 py-3.5">
-                                <span
-                                  className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold ${emp.latestStatus === "Pending"
-                                    ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                    : emp.latestStatus === "Preparing"
-                                      ? "bg-blue-100 text-blue-800 border border-blue-200"
-                                      : emp.latestStatus === "Ready"
-                                        ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                                        : emp.latestStatus === "Completed" || emp.latestStatus === "Delivered"
-                                          ? "bg-green-100 text-green-800 border border-green-200"
-                                          : "bg-rose-100 text-rose-800 border border-rose-200"
-                                    }`}
-                                >
-                                  {emp.latestStatus}
-                                </span>
-                              </td>
-
-                              {/* Action Arrow */}
-                              <td className="px-4 py-3.5 text-center">
-                                <div className="flex items-center justify-center text-[#8C5835] hover:text-[#754329]">
-                                  <ArrowRight size={16} />
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Table Footer with Pagination */}
-                <div className="flex flex-col gap-3 border-t border-[#EEE5DC] bg-white px-4 py-3 text-xs text-gray-600 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2">
-                    <select
-                      value={pageSize}
-                      onChange={(e) => {
-                        setPageSize(Number(e.target.value));
-                        setCurrentPage(1);
-                      }}
-                      className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs outline-none"
-                    >
-                      <option value={10}>10</option>
-                      <option value={20}>20</option>
-                      <option value={50}>50</option>
-                    </select>
-
-                    <button
-                      type="button"
-                      onClick={() => setCurrentPage(1)}
-                      disabled={validCurrentPage === 1}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                    >
-                      <ChevronsLeft size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={validCurrentPage === 1}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                    >
-                      <ChevronLeft size={16} />
-                    </button>
-
-                    <span className="flex items-center gap-1 font-semibold text-gray-700">
-                      <input
-                        type="number"
-                        min={1}
-                        max={totalPages}
-                        value={validCurrentPage}
-                        onChange={(e) => {
-                          const val = Number(e.target.value);
-                          if (val >= 1 && val <= totalPages) setCurrentPage(val);
-                        }}
-                        className="w-10 rounded border border-gray-300 py-0.5 text-center text-xs"
-                      />
-                      <span>of {totalPages}</span>
-                    </span>
-
-                    <button
-                      type="button"
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={validCurrentPage === totalPages}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                    >
-                      <ChevronRight size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setCurrentPage(totalPages)}
-                      disabled={validCurrentPage === totalPages}
-                      className="rounded p-1 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
-                    >
-                      <ChevronsRight size={16} />
-                    </button>
-                  </div>
-
-                  <div className="font-semibold text-gray-600">
-                    Total Employees with Orders:{" "}
-                    <span className="font-bold text-gray-900">{employeeGroups.length}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </main>
-
-        {/* Footer */}
-        <footer className="mt-auto px-4 py-6 text-center text-xs text-[#9A8778]">
-          <div className="mx-auto flex max-w-7xl items-center justify-center gap-2">
-            <ShieldCheck size={15} />
-            <span>Good Food. Better Days. © {new Date().getFullYear()} Cafe4X. All rights reserved.</span>
-          </div>
-        </footer>
-      </div>
-    </Background>
-  );
-}
-
-// Sub-component: Order Card with full items breakdown
-function OrderCard({
-  order,
-  itemsById,
-  itemsByName,
-  formatPrice,
-}: {
-  order: OrderRecord;
-  itemsById: Record<string, MenuItem>;
-  itemsByName: Record<string, MenuItem>;
-  formatPrice: (amount: number) => string;
-}) {
-  return (
-    <div className="flex flex-col justify-between rounded-xl border border-gray-200 bg-white p-4 transition hover:border-[#754329] hover:shadow-md">
-      <div>
-        {/* Order Card Header */}
-        <div className="flex items-center justify-between border-b border-[#F0E6DB] pb-2.5">
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-bold text-xs text-[#754329]">
-              {order.id}
-            </span>
-            <span className="text-[11px] text-gray-300">&bull;</span>
-            <span className="flex items-center gap-1 text-[11px] font-medium text-gray-500">
-              <Clock size={11} />
-              {order.orderTime}
-            </span>
-          </div>
-
-          <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${order.status === "Pending"
-              ? "bg-amber-100 text-amber-800"
-              : order.status === "Preparing"
-                ? "bg-blue-100 text-blue-800"
-                : order.status === "Ready"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : order.status === "Completed" || order.status === "Delivered"
-                    ? "bg-green-100 text-green-800"
-                    : "bg-rose-100 text-rose-800"
-              }`}
-          >
-            {order.status}
-          </span>
-        </div>
-
-        {/* Seat / Location */}
-        <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
-          <div className="flex items-center gap-1 font-semibold text-gray-700">
-            <MapPin size={12} className="text-[#8C5835]" />
-            <span>{order.seat}</span>
-          </div>
-          {order.locationName && (
-            <span className="text-[10px] text-gray-400">{order.locationName}</span>
-          )}
-        </div>
-
-        {/* Ordered Items Table / List */}
-        <div className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-100 bg-[#FAF8F5]/50 p-2 text-xs">
-          {order.items.map((item, idx) => {
-            const fullName = (item.name || "").trim();
-            const baseName = fullName.replace(/\s*\(.*?\)\s*$/, "").trim().toLowerCase();
-            const fullKey = fullName.toLowerCase();
-            const resolvedImage =
-              item.image ||
-              (item.itemId && itemsById[item.itemId]?.image) ||
-              itemsByName[fullKey]?.image ||
-              itemsByName[baseName]?.image ||
-              "";
-
-            return (
-              <div key={idx} className="flex items-center justify-between py-2 first:pt-1 last:pb-1">
-                <div className="flex items-center gap-2">
-                  <div className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#E8DED4] bg-white overflow-hidden shadow-2xs">
-                    {resolvedImage ? (
-                      <img
-                        src={resolvedImage}
-                        alt={item.name}
-                        className="h-full w-full object-cover"
-                        onError={(e) => {
-                          (e.currentTarget as HTMLElement).style.display = "none";
-                          const parent = (e.currentTarget as HTMLElement).parentElement;
-                          if (parent) {
-                            const placeholder = parent.querySelector(".order-neutral-placeholder");
-                            if (placeholder) (placeholder as HTMLElement).style.display = "flex";
-                          }
-                        }}
-                      />
-                    ) : null}
-                    <div
-                      className={`order-neutral-placeholder flex h-full w-full items-center justify-center text-[#8C5835] ${resolvedImage ? "hidden" : "flex"
-                        }`}
-                    >
-                      <Coffee size={14} />
-                    </div>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-gray-900 leading-tight">{item.name}</p>
-                    <div className="flex items-center gap-1.5 text-[10px] text-gray-500">
-                      <span>Qty: {item.qty}</span>
-                      <span>&bull;</span>
-                      <span>{formatPrice(item.price)} each</span>
-                      {item.preference && (
-                        <>
-                          <span>&bull;</span>
-                          <span className="font-medium text-[#754329] bg-[#FAF4ED] px-1 rounded">
-                            {item.preference}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <span className="font-bold text-gray-900">
-                  {formatPrice(item.price * item.qty)}
+            {/* Individual Orders Table */}
+            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+              <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-[#FCFAF7]">
+                <h3 className="text-sm font-bold text-stone-800 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-[#8C6D58]" />
+                  <span>Order History</span>
+                </h3>
+                <span className="text-xs text-stone-500">
+                  {filteredOrders.length} {filteredOrders.length === 1 ? "order" : "orders"} found
                 </span>
               </div>
-            );
-          })}
-        </div>
 
-        {/* Special Instructions / Notes */}
-        {order.notes && (
-          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50/70 p-2 text-[10px] text-amber-900">
-            <span className="font-bold">Note: </span>
-            {order.notes}
+              {isLoading ? (
+                <div className="py-20 text-center">
+                  <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
+                  <p className="text-stone-500 text-sm">Loading order details...</p>
+                </div>
+              ) : filteredOrders.length === 0 ? (
+                <div className="py-16 text-center text-stone-500">
+                  <ShoppingBag className="w-10 h-10 text-stone-300 mx-auto mb-2" />
+                  <p className="text-sm font-semibold text-stone-700">No orders found for this employee.</p>
+                  <p className="text-xs text-stone-400 mt-1">Try selecting a different date range or placing an order.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-[#FAF7F2] text-stone-600 text-xs font-semibold uppercase tracking-wider border-b border-stone-200">
+                      <tr>
+                        <th className="px-6 py-3.5">Order ID</th>
+                        <th className="px-6 py-3.5">Date & Time</th>
+                        <th className="px-6 py-3.5">Items</th>
+                        <th className="px-6 py-3.5 text-right">Subtotal</th>
+                        <th className="px-6 py-3.5 text-right">Total</th>
+                        <th className="px-6 py-3.5 text-center">Status</th>
+                        <th className="px-6 py-3.5 text-right">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-stone-100 text-stone-800">
+                      {paginatedOrders.map((order) => (
+                        <tr
+                          key={order.id}
+                          onClick={() => setInspectedOrder(order)}
+                          className="hover:bg-[#FAF7F2]/60 cursor-pointer transition-colors"
+                        >
+                          {/* Order ID */}
+                          <td className="px-6 py-4">
+                            <span className="font-mono font-bold text-stone-900 text-xs">
+                              {order.displayId || order.id}
+                            </span>
+                          </td>
+
+                          {/* Date & Time */}
+                          <td className="px-6 py-4 text-xs text-stone-600">
+                            <div>{order.createdAt ? order.createdAt.substring(0, 10) : "Today"}</div>
+                            <div className="text-stone-400 flex items-center gap-1 mt-0.5">
+                              <Clock className="w-3 h-3" />
+                              {order.time || "Recent"}
+                            </div>
+                          </td>
+
+                          {/* Items List Preview */}
+                          <td className="px-6 py-4">
+                            <div className="space-y-1">
+                              {order.items && order.items.length > 0 ? (
+                                order.items.map((item, idx) => (
+                                  <div key={idx} className="text-xs text-stone-700 flex items-center gap-1.5">
+                                    <span className="font-semibold text-stone-900">{item.name}</span>
+                                    <span className="text-stone-400">×{item.qty}</span>
+                                    {item.preference && (
+                                      <span className="text-[10px] bg-stone-100 text-stone-600 px-1 rounded">
+                                        {item.preference}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))
+                              ) : (
+                                <span className="text-xs text-stone-400">Standard Order</span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Subtotal */}
+                          <td className="px-6 py-4 text-right text-xs text-stone-600">
+                            {formatPrice(order.subtotal ?? order.total)}
+                          </td>
+
+                          {/* Total */}
+                          <td className="px-6 py-4 text-right">
+                            <span className="font-bold text-[#8C6D58] text-sm">
+                              {formatPrice(order.total)}
+                            </span>
+                          </td>
+
+                          {/* Status */}
+                          <td className="px-6 py-4 text-center">
+                            {renderStatusBadge(order.status)}
+                          </td>
+
+                          {/* View Detail Action */}
+                          <td className="px-6 py-4 text-right">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setInspectedOrder(order);
+                              }}
+                              className="p-1.5 text-stone-400 hover:text-[#8C6D58] transition-colors rounded-lg hover:bg-white"
+                              title="Inspect Order Details"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Pagination Footer */}
+                  {totalPages > 1 && (
+                    <div className="p-4 border-t border-stone-200 flex items-center justify-between text-xs text-stone-600 bg-[#FCFAF7]">
+                      <div>
+                        Page {currentPage} of {totalPages}
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <button
+                          onClick={() => setCurrentPage(1)}
+                          disabled={currentPage === 1}
+                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <ChevronsLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <span className="px-2 font-medium text-stone-800">{currentPage}</span>
+                        <button
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages}
+                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => setCurrentPage(totalPages)}
+                          disabled={currentPage === totalPages}
+                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          <ChevronsRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
-      </div>
+      </main>
 
-      {/* Order Total & Subtotal Breakdown */}
-      <div className="mt-3 border-t border-[#F0E6DB] pt-2">
-        {(order.discount > 0 || order.adjustmentAmount !== 0) && (
-          <div className="mb-1 flex justify-between text-[10px] text-gray-400">
-            <span>Subtotal: {formatPrice(order.subtotal)}</span>
-            {order.discount > 0 && <span className="text-emerald-600">-{formatPrice(order.discount)}</span>}
+      {/* ========================================================================= */}
+      {/* MODAL: SINGLE ORDER ITEM INSPECTION                                      */}
+      {/* ========================================================================= */}
+      {inspectedOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 relative animate-scale-up">
+            {/* Close Button */}
+            <button
+              onClick={() => setInspectedOrder(null)}
+              className="absolute right-5 top-5 p-1.5 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Modal Header */}
+            <div className="mb-4">
+              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#8C6D58]/10 text-[#8C6D58]">
+                Order Details
+              </span>
+              <h3 className="text-xl font-bold text-stone-900 mt-1">
+                {inspectedOrder.displayId || inspectedOrder.id}
+              </h3>
+              <p className="text-xs text-stone-500">
+                Placed by {inspectedOrder.employeeName} • {inspectedOrder.time}
+              </p>
+            </div>
+
+            {/* Context Info Cards */}
+            <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
+              <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200/80">
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Location</span>
+                <span className="font-semibold text-stone-800">{inspectedOrder.locationName}</span>
+              </div>
+              <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200/80">
+                <span className="text-stone-400 block text-[10px] uppercase font-bold">Seat</span>
+                <span className="font-mono font-semibold text-stone-800">
+                  {inspectedOrder.seatId || inspectedOrder.seat}
+                </span>
+              </div>
+            </div>
+
+            {/* Items Breakdown */}
+            <div className="mb-5">
+              <h4 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5">
+                Ordered Items
+              </h4>
+              <div className="divide-y divide-stone-100 max-h-60 overflow-y-auto pr-1">
+                {inspectedOrder.items && inspectedOrder.items.length > 0 ? (
+                  inspectedOrder.items.map((item, idx) => (
+                    <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
+                      <div>
+                        <div className="font-semibold text-stone-900">{item.name}</div>
+                        {item.preference && (
+                          <span className="text-[10px] text-stone-500">Sugar: {item.preference}</span>
+                        )}
+                        <span className="text-stone-400 ml-1">× {item.qty}</span>
+                      </div>
+                      <div className="font-bold text-stone-800">
+                        {formatPrice(item.price * item.qty)}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-xs text-stone-400 py-3 text-center">No detailed items recorded.</div>
+                )}
+              </div>
+            </div>
+
+            {/* Financial Summary */}
+            <div className="pt-4 border-t border-stone-200 space-y-1.5 text-xs text-stone-600 mb-6">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span>{formatPrice(inspectedOrder.subtotal ?? inspectedOrder.total)}</span>
+              </div>
+              {inspectedOrder.adjustmentAmount !== undefined && inspectedOrder.adjustmentAmount !== 0 && (
+                <div className="flex justify-between text-stone-500">
+                  <span>Adjustment</span>
+                  <span>{formatPrice(inspectedOrder.adjustmentAmount)}</span>
+                </div>
+              )}
+              {inspectedOrder.discount !== undefined && inspectedOrder.discount > 0 && (
+                <div className="flex justify-between text-emerald-600 font-medium">
+                  <span>Discount</span>
+                  <span>-{formatPrice(inspectedOrder.discount)}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-sm font-bold text-stone-900 pt-2 border-t border-stone-100">
+                <span>Total Amount</span>
+                <span className="text-[#8C6D58]">{formatPrice(inspectedOrder.total)}</span>
+              </div>
+            </div>
+
+            {/* Status Footer */}
+            <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-stone-500">Status:</span>
+                {renderStatusBadge(inspectedOrder.status)}
+              </div>
+              <button
+                onClick={() => setInspectedOrder(null)}
+                className="px-4 py-2 bg-[#8C6D58] hover:bg-[#785C49] text-white text-xs font-semibold rounded-xl shadow-sm transition-colors"
+              >
+                Close Details
+              </button>
+            </div>
           </div>
-        )}
-        <div className="flex items-center justify-between text-xs">
-          <span className="font-bold text-gray-600">Order Total</span>
-          <span className="text-sm font-black text-[#754329]">
-            {formatPrice(order.total)}
-            </span>
         </div>
+      )}
       </div>
-    </div>
+    </Background>
   );
 }

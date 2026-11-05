@@ -615,7 +615,7 @@ export default function ProviderPendingOrdersPage() {
                                 </span>{" "}
                                 • Seat:{" "}
                                 <span className="font-semibold text-stone-800">
-                                  {order.seat || "—"}
+                                  {order.seat || (order as any).seatId || "—"}
                                 </span>
                               </p>
                               <p className="text-[11px] text-[#A08C7D]">

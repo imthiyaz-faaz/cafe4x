@@ -134,7 +134,13 @@ export default function UserOrderPage() {
           if (res.seat) {
             if (res.seat.id) setSeatId(res.seat.id);
             if (res.seat.locationName) setLocationName(res.seat.locationName);
-            if (res.seat.locationId && res.seat.number) {
+            if (res.seat.employeeName) {
+              setEmployeeName(res.seat.employeeName);
+            }
+            if (res.seat.qrToken) {
+              const code = res.organization?.shortCode || "FTS";
+              setPermanentQrHref(`/${code}/order/${res.seat.qrToken}`);
+            } else if (res.seat.locationId && res.seat.number) {
               const code = res.organization?.shortCode || "FTS";
               setPermanentQrHref(`/${code}/order/${res.seat.locationId}/${parseInt(res.seat.number, 10) || 1}`);
             }
@@ -520,10 +526,11 @@ export default function UserOrderPage() {
     const orderIdNum = Math.floor(1000 + Math.random() * 9000);
     const orderData = {
       id: `#ORD-${orderIdNum}`,
-      seat: activeSeatNumber ? String(activeSeatNumber).padStart(2, "0") : (seatId || ""),
+      seat: seatId || (activeSeatNumber ? String(activeSeatNumber).padStart(2, "0") : ""),
+      seatId: seatId || undefined,
       locationName: locationName || "Office",
       locationId: activeLocationId || undefined,
-      employeeName: employeeName || employeeEmail || (activeSeatNumber ? `Seat ${activeSeatNumber}` : "Employee"),
+      employeeName: employeeName || employeeEmail || (seatId ? seatId : "Employee"),
       qrToken: effectiveToken || undefined,
       tempSessionToken: effectiveToken || undefined,
       items: selectedItems.map((it) => {
@@ -559,7 +566,8 @@ export default function UserOrderPage() {
     try {
       const created = await orderApi.createOrder({
         id: orderData.id,
-        seat: orderData.seat,
+        seat: seatId || orderData.seat,
+        seatId: seatId || undefined,
         locationName: orderData.locationName,
         locationId: activeLocationId || undefined,
         employeeName: orderData.employeeName,

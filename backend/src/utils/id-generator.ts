@@ -43,6 +43,21 @@ export function generateSecureQrToken(length: number = 16): string {
 }
 
 /**
+ * Generates a permanent, cryptographically unpredictable token for a seat's ordering QR code.
+ * Example: "seat_7f8c12a4b3d9e01f"
+ */
+export function generateSeatQrToken(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let token = "";
+  for (let i = 0; i < bytes.length; i++) {
+    token += chars[bytes[i] % chars.length];
+  }
+  return `seat_${token}`;
+}
+
+/**
  * Verify password against stored hash or fallback to legacy plaintext
  */
 export async function verifyPassword(password: string, storedHashOrPlain: string): Promise<boolean> {

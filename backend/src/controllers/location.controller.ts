@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
-import { getNextId, generateId, generateLocationSeatId, normalizeLocationPrefix } from "../utils/id-generator";
+import { getNextId, generateId, generateLocationSeatId, normalizeLocationPrefix, generateSeatQrToken } from "../utils/id-generator";
 
 export interface LocationModel {
   id: string;
@@ -46,6 +46,21 @@ export async function ensureSeatAssignmentsTable(db: any): Promise<void> {
       INSERT INTO id_sequences (scope, last_val) VALUES ('EMPLOYEE_SEAT_ASSIGNMENTS', 0)
       ON CONFLICT(scope) DO NOTHING;
     `);
+
+    // Ensure qr_token exists on seats table
+    try {
+      await db.exec(`ALTER TABLE seats ADD COLUMN qr_token TEXT;`);
+    } catch {}
+    try {
+      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_seats_qr_token ON seats(qr_token);`);
+    } catch {}
+    // Ensure seat_id exists on orders table
+    try {
+      await db.exec(`ALTER TABLE orders ADD COLUMN seat_id TEXT;`);
+    } catch {}
+    try {
+      await db.exec(`CREATE INDEX IF NOT EXISTS idx_orders_seat_id ON orders(seat_id);`);
+    } catch {}
   } catch {}
 }
 
@@ -466,6 +481,7 @@ export const locationController = {
                s.location_id as locationId, 
                s.organization_id as organizationId,
                s.number, 
+               s.qr_token as qrToken,
                COALESCE(u.email, s.employee_email, s.employee) as employee, 
                COALESCE(u.name, s.employee_name) as employeeName, 
                COALESCE(u.email, s.employee_email) as employeeEmail, 
@@ -487,12 +503,36 @@ export const locationController = {
         rows = (await db
           .prepare(
             `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
-                    number, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId,
+                    number, qr_token as qrToken, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId,
                     order_url as orderUrl
              FROM seats WHERE location_id = ? OR location_id = ? ORDER BY CAST(number AS INTEGER) ASC`
           )
           .bind(targetLocId, locId)
           .all()) as any[];
+      }
+
+      // Ensure every seat has a permanent, unique QR token and permanent order URL
+      for (const seat of (rows || [])) {
+        if (!seat.qrToken) {
+          const generatedToken = generateSeatQrToken();
+          const targetUrl = `/${effectiveShortCode}/order/${generatedToken}`;
+          seat.qrToken = generatedToken;
+          seat.orderUrl = targetUrl;
+          try {
+            await db
+              .prepare(`UPDATE seats SET qr_token = ?, order_url = ? WHERE location_id = ? AND id = ?`)
+              .bind(generatedToken, targetUrl, targetLocId, seat.id)
+              .run();
+          } catch {}
+        } else if (!seat.orderUrl || !seat.orderUrl.includes(seat.qrToken)) {
+          seat.orderUrl = `/${effectiveShortCode}/order/${seat.qrToken}`;
+          try {
+            await db
+              .prepare(`UPDATE seats SET order_url = ? WHERE location_id = ? AND id = ?`)
+              .bind(seat.orderUrl, targetLocId, seat.id)
+              .run();
+          } catch {}
+        }
       }
 
       // Compute next candidate sequence for this location
@@ -605,7 +645,8 @@ export const locationController = {
         .bind(`SEAT_LOC_${effectiveLocId}`, seqVal, seqVal)
         .run();
       const now = new Date().toISOString();
-      let orderUrl = `${orgPrefix}/order/${effectiveLocId}/${parseInt(number, 10) || 1}`;
+      const qrToken = generateSeatQrToken();
+      const orderUrl = `${orgPrefix}/order/${qrToken}`;
 
       // Employee assignment if requested
       const employeeIdentifier = body.employeeId || body.employeeEmail || body.employeeUserName || body.employee;
@@ -647,17 +688,14 @@ export const locationController = {
           }
 
           assignmentId = await generateId(db, "ESA");
-          if (matchedUser.qrToken) {
-            orderUrl = `${orgPrefix}/employee/${matchedUser.qrToken}`;
-          }
         }
       }
 
-      // Insert seat record
+      // Insert seat record with unique qr_token and permanent seat order_url
       await db
         .prepare(
-          `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, employee_name, employee_email, employee_id, order_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, employee_name, employee_email, employee_id, qr_token, order_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           seatId,
@@ -669,6 +707,7 @@ export const locationController = {
           matchedUser ? matchedUser.name : (body.employeeName || null),
           matchedUser ? matchedUser.email : null,
           matchedUser ? matchedUser.id : null,
+          qrToken,
           orderUrl,
           now,
           now
@@ -701,6 +740,7 @@ export const locationController = {
           locationId: effectiveLocId,
           organizationId: org.organizationId,
           number,
+          qrToken,
           employee: matchedUser ? matchedUser.email : null,
           employeeName: matchedUser ? matchedUser.name : (body.employeeName || null),
           employeeEmail: matchedUser ? matchedUser.email : null,
@@ -756,12 +796,28 @@ export const locationController = {
 
       // Verify seat exists in D1
       let seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
         .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
         .get()) as any;
 
       if (!seat) {
         return c.json({ success: false, message: "Seat not found in this location" }, 404);
+      }
+
+      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
+      if (!seat.qrToken) {
+        seat.qrToken = generateSeatQrToken();
+        seat.orderUrl = `${orgPrefix}/order/${seat.qrToken}`;
+        await db
+          .prepare(`UPDATE seats SET qr_token = ?, order_url = ? WHERE location_id = ? AND id = ?`)
+          .bind(seat.qrToken, seat.orderUrl, effectiveLocId, seat.id)
+          .run();
+      } else if (!seat.orderUrl || !seat.orderUrl.includes(seat.qrToken)) {
+        seat.orderUrl = `${orgPrefix}/order/${seat.qrToken}`;
+        await db
+          .prepare(`UPDATE seats SET order_url = ? WHERE location_id = ? AND id = ?`)
+          .bind(seat.orderUrl, effectiveLocId, seat.id)
+          .run();
       }
 
       // Check if seat already has an active assignment
@@ -813,10 +869,7 @@ export const locationController = {
       }
 
       const now = new Date().toISOString();
-      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      const orderUrl = user.qrToken
-        ? `${orgPrefix}/employee/${user.qrToken}`
-        : `${orgPrefix}/order/${effectiveLocId}/${parseInt(seat.number, 10) || 1}`;
+      const orderUrl = seat.orderUrl;
 
       // Upsert into employee_seat_assignments
       let assignmentId = existingSeatAssignment?.id;
@@ -840,7 +893,7 @@ export const locationController = {
           .run();
       }
 
-      // Update seats table
+      // Update seats table (preserving permanent seat order_url and qr_token)
       await db
         .prepare(
           `UPDATE seats 
@@ -848,11 +901,10 @@ export const locationController = {
                employee_name = ?, 
                employee_email = ?, 
                employee_id = ?, 
-               order_url = ?, 
                updated_at = ? 
-           WHERE id = ?`
+           WHERE location_id = ? AND id = ?`
         )
-        .bind(user.email, user.name, user.email, user.id, orderUrl, now, seat.id)
+        .bind(user.email, user.name, user.email, user.id, now, effectiveLocId, seat.id)
         .run();
 
       return c.json({
@@ -862,6 +914,7 @@ export const locationController = {
           id: seat.id,
           displayId: seat.displayId,
           number: seat.number,
+          qrToken: seat.qrToken,
           locationId: effectiveLocId,
           organizationId: org.organizationId,
           employee: user.email,
@@ -911,8 +964,8 @@ export const locationController = {
       const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
 
       // Find the seat
-      const seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
+      let seat = (await db
+        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
         .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
         .get()) as any;
 
@@ -922,7 +975,21 @@ export const locationController = {
 
       const now = new Date().toISOString();
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-      const defaultOrderUrl = `${orgPrefix}/order/${effectiveLocId}/${parseInt(seat.number, 10) || 1}`;
+      if (!seat.qrToken) {
+        seat.qrToken = generateSeatQrToken();
+        seat.orderUrl = `${orgPrefix}/order/${seat.qrToken}`;
+        await db
+          .prepare(`UPDATE seats SET qr_token = ?, order_url = ? WHERE location_id = ? AND id = ?`)
+          .bind(seat.qrToken, seat.orderUrl, effectiveLocId, seat.id)
+          .run();
+      } else if (!seat.orderUrl || !seat.orderUrl.includes(seat.qrToken)) {
+        seat.orderUrl = `${orgPrefix}/order/${seat.qrToken}`;
+        await db
+          .prepare(`UPDATE seats SET order_url = ? WHERE location_id = ? AND id = ?`)
+          .bind(seat.orderUrl, effectiveLocId, seat.id)
+          .run();
+      }
+      const orderUrl = seat.orderUrl;
 
       // Delete only the assignment record from employee_seat_assignments
       await db
@@ -930,19 +997,18 @@ export const locationController = {
         .bind(seat.id)
         .run();
 
-      // Clear employee information on seats table
+      // Clear employee information on seats table (keeping permanent qr_token and order_url intact)
       await db
         .prepare(
           `UPDATE seats 
            SET employee = NULL, 
                employee_name = NULL, 
                employee_email = NULL, 
-               employee_id = NULL,
-               order_url = ?, 
+               employee_id = NULL, 
                updated_at = ? 
-           WHERE id = ?`
+           WHERE location_id = ? AND id = ?`
         )
-        .bind(defaultOrderUrl, now, seat.id)
+        .bind(now, effectiveLocId, seat.id)
         .run();
 
       return c.json({
@@ -952,6 +1018,7 @@ export const locationController = {
           id: seat.id,
           displayId: seat.displayId,
           number: seat.number,
+          qrToken: seat.qrToken,
           locationId: effectiveLocId,
           employee: null,
           employeeName: null,
@@ -961,7 +1028,7 @@ export const locationController = {
           employeeQrToken: null,
           assignmentId: null,
           assignedAt: null,
-          orderUrl: defaultOrderUrl,
+          orderUrl,
         },
       });
     } catch (err: any) {

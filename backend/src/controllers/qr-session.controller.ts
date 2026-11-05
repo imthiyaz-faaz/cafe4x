@@ -2,7 +2,7 @@ import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
-import { generateSecureQrToken, normalizeLocationPrefix } from "../utils/id-generator";
+import { generateSecureQrToken, normalizeLocationPrefix, generateSeatQrToken } from "../utils/id-generator";
 import { getSigningSecret, createTemporaryOrderToken, verifyTemporaryOrderToken } from "../utils/token";
 import { validateOrderingWindow } from "../utils/session-window";
 
@@ -165,7 +165,8 @@ export const qrSessionController = {
         201
       );
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -197,151 +198,303 @@ export const qrSessionController = {
       const rawLocationId = (body.locationId || "").toString().trim();
       const rawSeatNumber = (body.seatNumber || "").toString().trim();
       const rawSeatId = (body.seatId || "").toString().trim();
+      const rawSeatToken = (body.seatToken || body.qrToken || "").toString().trim();
 
-      if (!rawLocationId || (!rawSeatNumber && !rawSeatId)) {
+      if (!rawSeatToken && !rawLocationId && !rawSeatNumber && !rawSeatId) {
         return c.json(
-          { success: false, message: "locationId and seatNumber are required to create an ordering session." },
+          { success: false, message: "seatToken or locationId and seatNumber are required to create an ordering session." },
           400
         );
       }
 
       const db = getUniversalDb(c.env?.DB);
 
-      // 1. Resolve Organization
+      // Self-healing check for table schema
+      try {
+        await db.exec(`
+          CREATE TABLE IF NOT EXISTS employee_seat_assignments (
+            id TEXT PRIMARY KEY,
+            organization_id TEXT NOT NULL,
+            location_id TEXT NOT NULL,
+            seat_id TEXT NOT NULL,
+            employee_id TEXT NOT NULL,
+            assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+            FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+            FOREIGN KEY (seat_id) REFERENCES seats(id) ON DELETE CASCADE,
+            FOREIGN KEY (employee_id) REFERENCES users(id) ON DELETE CASCADE,
+            UNIQUE(location_id, seat_id),
+            UNIQUE(organization_id, employee_id)
+          );
+        `);
+      } catch {}
+      try {
+        await db.exec(`ALTER TABLE seats ADD COLUMN qr_token TEXT;`);
+      } catch {}
+      try {
+        await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_seats_qr_token ON seats(qr_token);`);
+      } catch {}
+
       let orgRow: any = null;
-      if (rawShortCode) {
-        orgRow = await db
-          .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = ?`)
-          .bind(rawShortCode)
-          .get();
-      }
+      let locRow: any = null;
+      let seatRow: any = null;
+      let assignedUser: any = null;
 
-      // If shortCode was not supplied or not found, try finding via locationId
-      if (!orgRow) {
-        const locOrg = await db
-          .prepare(
-            `SELECT o.id, o.name, o.short_code as shortCode
-             FROM locations l
-             JOIN organizations o ON l.organization_id = o.id
-             WHERE l.id = ? OR l.display_id = ?`
-          )
-          .bind(rawLocationId, rawLocationId)
-          .get() as any;
+      // Case A: Look up authoritative seat by unique permanent seat QR token
+      if (rawSeatToken) {
+        let found: any = null;
+        try {
+          found = (await db
+            .prepare(
+              `SELECT 
+                 s.id, 
+                 s.display_id as displayId, 
+                 s.location_id as locationId, 
+                 s.organization_id as organizationId,
+                 s.number, 
+                 s.qr_token as qrToken,
+                 s.order_url as orderUrl,
+                 COALESCE(u.email, s.employee_email, s.employee) as employee, 
+                 COALESCE(u.name, s.employee_name) as employeeName, 
+                 COALESCE(u.email, s.employee_email) as employeeEmail, 
+                 COALESCE(u.id, esa.employee_id, s.employee_id) as employeeId,
+                 u.qr_token as employeeQrToken,
+                 u.qr_token_status as qrTokenStatus,
+                 u.perm_token_status as permTokenStatus,
+                 l.id as locId,
+                 l.name as locName,
+                 l.status as locStatus,
+                 l.total_seats as locTotalSeats,
+                 o.id as orgId,
+                 o.short_code as orgShortCode,
+                 o.name as orgName
+               FROM seats s
+               JOIN locations l ON s.location_id = l.id
+               JOIN organizations o ON s.organization_id = o.id
+               LEFT JOIN employee_seat_assignments esa ON s.id = esa.seat_id AND s.location_id = esa.location_id
+               LEFT JOIN users u ON (esa.employee_id = u.id OR s.employee_id = u.id)
+               WHERE s.qr_token = ? OR s.id = ? OR s.display_id = ?
+               LIMIT 1`
+            )
+            .bind(rawSeatToken, rawSeatToken, rawSeatToken)
+            .get()) as any;
+        } catch {
+          // Fallback if employee_seat_assignments table is not present in D1 instance
+          found = (await db
+            .prepare(
+              `SELECT 
+                 s.id, 
+                 s.display_id as displayId, 
+                 s.location_id as locationId, 
+                 s.organization_id as organizationId,
+                 s.number, 
+                 s.qr_token as qrToken,
+                 s.order_url as orderUrl,
+                 COALESCE(u.email, s.employee_email, s.employee) as employee, 
+                 COALESCE(u.name, s.employee_name) as employeeName, 
+                 COALESCE(u.email, s.employee_email) as employeeEmail, 
+                 COALESCE(u.id, s.employee_id) as employeeId,
+                 u.qr_token as employeeQrToken,
+                 u.qr_token_status as qrTokenStatus,
+                 u.perm_token_status as permTokenStatus,
+                 l.id as locId,
+                 l.name as locName,
+                 l.status as locStatus,
+                 l.total_seats as locTotalSeats,
+                 o.id as orgId,
+                 o.short_code as orgShortCode,
+                 o.name as orgName
+               FROM seats s
+               JOIN locations l ON s.location_id = l.id
+               JOIN organizations o ON s.organization_id = o.id
+               LEFT JOIN users u ON (s.employee_id = u.id)
+               WHERE s.qr_token = ? OR s.id = ? OR s.display_id = ?
+               LIMIT 1`
+            )
+            .bind(rawSeatToken, rawSeatToken, rawSeatToken)
+            .get()) as any;
+        }
 
-        if (locOrg) {
-          orgRow = locOrg;
+        if (found) {
+          seatRow = {
+            id: found.id,
+            displayId: found.displayId || found.id,
+            locationId: found.locationId,
+            organizationId: found.organizationId,
+            number: found.number,
+            qrToken: found.qrToken,
+            orderUrl: found.orderUrl,
+            employee: found.employee,
+            employeeName: found.employeeName,
+            employeeEmail: found.employeeEmail,
+            employeeId: found.employeeId,
+          };
+          orgRow = {
+            id: found.orgId,
+            shortCode: found.orgShortCode,
+            name: found.orgName,
+          };
+          locRow = {
+            id: found.locId,
+            name: found.locName,
+            status: found.locStatus,
+            totalSeats: found.locTotalSeats,
+          };
+          if (found.employeeId) {
+            assignedUser = {
+              id: found.employeeId,
+              name: found.employeeName,
+              email: found.employeeEmail,
+              qrTokenStatus: found.qrTokenStatus,
+              permTokenStatus: found.permTokenStatus,
+            };
+          }
+        } else {
+          return c.json({ success: false, message: "Seat not found for the provided QR token." }, 404);
         }
       }
 
-      // Fallback default organization (FTS) if still unresolved
-      if (!orgRow) {
-        orgRow = await db
-          .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = 'FTS' LIMIT 1`)
-          .get();
-      }
+      // Case B: Fallback to locationId + seatNumber/seatId
+      if (!seatRow) {
+        if (!rawLocationId || (!rawSeatNumber && !rawSeatId)) {
+          return c.json(
+            { success: false, message: "locationId and seatNumber are required to create an ordering session." },
+            400
+          );
+        }
 
-      if (!orgRow) {
-        return c.json({ success: false, message: "Organization could not be determined." }, 404);
-      }
+        // 1. Resolve Organization
+        if (rawShortCode) {
+          orgRow = await db
+            .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = ?`)
+            .bind(rawShortCode)
+            .get();
+        }
 
-      // 2. Validate Location belongs to Organization
-      const locRow = await db
-        .prepare(
-          `SELECT id, name, status, total_seats as totalSeats
-           FROM locations
-           WHERE (id = ? OR display_id = ? OR LOWER(name) = LOWER(?))
-             AND organization_id = ?`
-        )
-        .bind(rawLocationId, rawLocationId, rawLocationId, orgRow.id)
-        .get() as any;
+        if (!orgRow) {
+          const locOrg = (await db
+            .prepare(
+              `SELECT o.id, o.name, o.short_code as shortCode
+               FROM locations l
+               JOIN organizations o ON l.organization_id = o.id
+               WHERE l.id = ? OR l.display_id = ?`
+            )
+            .bind(rawLocationId, rawLocationId)
+            .get()) as any;
 
-      if (!locRow) {
-        return c.json({ success: false, message: "Specified location was not found in this organization." }, 404);
+          if (locOrg) orgRow = locOrg;
+        }
+
+        if (!orgRow) {
+          orgRow = await db
+            .prepare(`SELECT id, name, short_code as shortCode FROM organizations WHERE UPPER(short_code) = 'FTS' LIMIT 1`)
+            .get();
+        }
+
+        if (!orgRow) {
+          return c.json({ success: false, message: "Organization could not be determined." }, 404);
+        }
+
+        // 2. Validate Location
+        locRow = (await db
+          .prepare(
+            `SELECT id, name, status, total_seats as totalSeats
+             FROM locations
+             WHERE (id = ? OR display_id = ? OR LOWER(name) = LOWER(?))
+               AND organization_id = ?`
+          )
+          .bind(rawLocationId, rawLocationId, rawLocationId, orgRow.id)
+          .get()) as any;
+
+        if (!locRow) {
+          return c.json({ success: false, message: "Specified location was not found in this organization." }, 404);
+        }
+
+        // 3. Resolve and Validate Seat
+        const parsedSeatNum = parseInt(rawSeatNumber, 10);
+        const paddedSeatNum = !isNaN(parsedSeatNum) ? String(parsedSeatNum).padStart(2, "0") : rawSeatNumber;
+
+        seatRow = (await db
+          .prepare(
+            `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
+                    number, qr_token as qrToken, order_url as orderUrl,
+                    employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId
+             FROM seats
+             WHERE location_id = ?
+               AND (number = ? OR number = ? OR id = ? OR display_id = ?)
+             LIMIT 1`
+          )
+          .bind(locRow.id, rawSeatNumber, paddedSeatNum, rawSeatId || rawSeatNumber, rawSeatId || rawSeatNumber)
+          .get()) as any;
+
+        if (!seatRow && !isNaN(parsedSeatNum) && parsedSeatNum >= 1 && parsedSeatNum <= (locRow.totalSeats || 12)) {
+          const locPrefix = normalizeLocationPrefix(locRow.name);
+          const generatedSeatId = `${locPrefix}-${String(parsedSeatNum).padStart(4, "0")}`;
+          const generatedDisplayId = generatedSeatId;
+          const generatedToken = generateSeatQrToken();
+          const targetUrl = `/${orgRow.shortCode}/order/${generatedToken}`;
+          const nowIso = new Date().toISOString();
+          try {
+            await db
+              .prepare(
+                `INSERT INTO seats (id, display_id, location_id, organization_id, number, qr_token, order_url, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              )
+              .bind(generatedSeatId, generatedDisplayId, locRow.id, orgRow.id, paddedSeatNum, generatedToken, targetUrl, nowIso, nowIso)
+              .run();
+
+            seatRow = {
+              id: generatedSeatId,
+              displayId: generatedDisplayId,
+              locationId: locRow.id,
+              organizationId: orgRow.id,
+              number: paddedSeatNum,
+              qrToken: generatedToken,
+              orderUrl: targetUrl,
+              employee: null,
+              employeeName: null,
+              employeeEmail: null,
+              employeeId: null,
+            };
+          } catch {
+            seatRow = await db
+              .prepare(`SELECT * FROM seats WHERE location_id = ? AND number = ?`)
+              .bind(locRow.id, paddedSeatNum)
+              .get();
+          }
+        }
+
+        if (!seatRow) {
+          return c.json({ success: false, message: "Requested seat does not exist in this location." }, 404);
+        }
+
+        // 4. Resolve Employee Assignment
+        const employeeIdentifier = seatRow.employeeEmail || seatRow.employee || "";
+        const employeeId = seatRow.employeeId || "";
+
+        if (employeeId || employeeIdentifier) {
+          assignedUser = (await db
+            .prepare(
+              `SELECT u.id, u.display_id as displayId, u.name, u.email, u.qr_token as qrToken,
+                      u.qr_token_status as qrTokenStatus, u.perm_token_hash as permTokenHash,
+                      u.perm_token_status as permTokenStatus
+               FROM users u
+               JOIN user_organizations uo ON u.id = uo.user_id
+               WHERE uo.organization_id = ?
+                 AND (u.id = ? OR LOWER(u.email) = LOWER(?) OR LOWER(u.name) = LOWER(?))
+               LIMIT 1`
+            )
+            .bind(orgRow.id, employeeId || employeeIdentifier, employeeIdentifier, employeeIdentifier)
+            .get()) as any;
+        }
       }
 
       if (locRow.status === "Inactive") {
         return c.json({ success: false, message: "This location is currently inactive." }, 403);
       }
 
-      // 3. Resolve and Validate Seat
-      // Normalize seat number representation (e.g. "1" -> "01")
-      const parsedSeatNum = parseInt(rawSeatNumber, 10);
-      const paddedSeatNum = !isNaN(parsedSeatNum) ? String(parsedSeatNum).padStart(2, "0") : rawSeatNumber;
-
-      let seatRow = await db
-        .prepare(
-          `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
-                  number, employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId
-           FROM seats
-           WHERE location_id = ?
-             AND (number = ? OR number = ? OR id = ? OR display_id = ?)
-           LIMIT 1`
-        )
-        .bind(locRow.id, rawSeatNumber, paddedSeatNum, rawSeatId || rawSeatNumber, rawSeatId || rawSeatNumber)
-        .get() as any;
-
-      // If seat not explicitly in seats table, check if it's within location's totalSeats
-      if (!seatRow && !isNaN(parsedSeatNum) && parsedSeatNum >= 1 && parsedSeatNum <= (locRow.totalSeats || 12)) {
-        // Automatically ensure seat record exists
-        const locPrefix = normalizeLocationPrefix(locRow.name);
-        const generatedSeatId = `${locPrefix}-${String(parsedSeatNum).padStart(4, "0")}`;
-        const generatedDisplayId = generatedSeatId;
-        const nowIso = new Date().toISOString();
-        try {
-          await db
-            .prepare(
-              `INSERT INTO seats (id, display_id, location_id, organization_id, number, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`
-            )
-            .bind(generatedSeatId, generatedDisplayId, locRow.id, orgRow.id, paddedSeatNum, nowIso, nowIso)
-            .run();
-
-          seatRow = {
-            id: generatedSeatId,
-            displayId: generatedDisplayId,
-            locationId: locRow.id,
-            organizationId: orgRow.id,
-            number: paddedSeatNum,
-            employee: null,
-            employeeName: null,
-            employeeEmail: null,
-            employeeId: null,
-          };
-        } catch {
-          // If already created concurrently, retrieve it
-          seatRow = await db
-            .prepare(`SELECT * FROM seats WHERE location_id = ? AND number = ?`)
-            .bind(locRow.id, paddedSeatNum)
-            .get();
-        }
-      }
-
-      if (!seatRow) {
-        return c.json({ success: false, message: "Requested seat does not exist in this location." }, 404);
-      }
-
-      // 4. Resolve Employee Assignment (if any)
-      let assignedUser: any = null;
-      const employeeIdentifier = seatRow.employeeEmail || seatRow.employee || "";
-      const employeeId = seatRow.employeeId || "";
-
-      if (employeeId || employeeIdentifier) {
-        assignedUser = await db
-          .prepare(
-            `SELECT u.id, u.display_id as displayId, u.name, u.email, u.qr_token as qrToken,
-                    u.qr_token_status as qrTokenStatus, u.perm_token_hash as permTokenHash,
-                    u.perm_token_status as permTokenStatus
-             FROM users u
-             JOIN user_organizations uo ON u.id = uo.user_id
-             WHERE uo.organization_id = ?
-               AND (u.id = ? OR LOWER(u.email) = LOWER(?) OR LOWER(u.name) = LOWER(?))
-             LIMIT 1`
-          )
-          .bind(orgRow.id, employeeId || employeeIdentifier, employeeIdentifier, employeeIdentifier)
-          .get() as any;
-      }
-
-      // Check if employee's QR credentials were explicitly revoked
       if (assignedUser) {
         const legacyRevoked = assignedUser.qrTokenStatus && assignedUser.qrTokenStatus !== "active";
         const newRevoked = assignedUser.permTokenStatus && assignedUser.permTokenStatus !== "active";
@@ -375,9 +528,11 @@ export const qrSessionController = {
       const now = new Date();
       const expiresAt = new Date(now.getTime() + SESSION_EXPIRY_MS);
 
-      const boundEmployeeId = assignedUser ? String(assignedUser.id) : null;
+      const boundEmployeeId = assignedUser ? String(assignedUser.id) : (seatRow.employeeId ? String(seatRow.employeeId) : null);
+      const boundEmployeeName = assignedUser ? assignedUser.name : (seatRow.employeeName || null);
       const boundSeatNumber = seatRow.number ? String(seatRow.number).padStart(2, "0") : null;
       const boundSeatId = seatRow.id || (boundSeatNumber ? `${orgRow.shortCode}-${boundSeatNumber}` : null);
+      const boundSeatQrToken = seatRow.qrToken || seatRow.qr_token || null;
 
       const signedToken = await createTemporaryOrderToken(
         {
@@ -385,9 +540,12 @@ export const qrSessionController = {
           organizationId: String(orgRow.id),
           shortCode: orgRow.shortCode,
           employeeId: boundEmployeeId,
+          employeeName: boundEmployeeName,
           locationId: locRow.id,
+          locationName: locRow.name,
           seatNumber: boundSeatNumber,
           seatId: boundSeatId,
+          seatQrToken: boundSeatQrToken,
         },
         secret,
         SESSION_EXPIRY_MS / 1000
@@ -400,20 +558,31 @@ export const qrSessionController = {
           token: signedToken,
           expiresAt: expiresAt.toISOString(),
           shortCode: orgRow.shortCode,
-          isAssignedEmployee: !!assignedUser,
+          isAssignedEmployee: !!boundEmployeeName,
           windowStatus: windowCheck,
           seat: {
             id: boundSeatId,
+            displayId: boundSeatId,
             number: boundSeatNumber,
+            qrToken: boundSeatQrToken,
+            orderUrl: seatRow.orderUrl || seatRow.order_url || `/${orgRow.shortCode}/order/${boundSeatQrToken}`,
             locationId: locRow.id,
             locationName: locRow.name,
-            employeeName: assignedUser ? assignedUser.name : (seatRow.employeeName || null),
+            employeeName: boundEmployeeName,
           },
+          employee: boundEmployeeName
+            ? {
+                id: boundEmployeeId,
+                name: boundEmployeeName,
+                email: assignedUser?.email || seatRow.employeeEmail || seatRow.employee || null,
+              }
+            : null,
         },
         201
       );
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -544,13 +713,16 @@ export const qrSessionController = {
           success: true,
           sessionId: payload.sub,
           expiresAt: new Date(payload.exp * 1000).toISOString(),
-          employee,
+          employee: employee || (payload.empName ? { id: payload.empId, name: payload.empName } : null),
           windowStatus: windowCheck,
           seat: {
             id: payload.seatId || null,
+            displayId: payload.seatId || null,
             number: payload.seatNo || null,
             locationId: payload.locId || null,
-            locationName,
+            locationName: locationName || payload.locName || null,
+            qrToken: payload.seatQrToken || null,
+            employeeName: employee?.name || payload.empName || null,
           },
           organization: {
             id: String(orgRow.id),
@@ -571,7 +743,8 @@ export const qrSessionController = {
         401
       );
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -591,7 +764,8 @@ export const qrSessionController = {
         message: "Session revoked. Temporary tokens expire automatically after 30 minutes.",
       });
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -665,7 +839,8 @@ export const qrSessionController = {
         user: userRow,
       }, 201);
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -710,7 +885,8 @@ export const qrSessionController = {
 
       return c.json({ success: true, message: "Permanent QR credential revoked" });
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 
@@ -727,7 +903,8 @@ export const qrSessionController = {
 
       return c.json({ success: true, sessions: [] });
     } catch (err: any) {
-      return c.json({ success: false, message: err.message }, 500);
+      console.error("Error in createSeatSession:", err);
+      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
     }
   },
 };

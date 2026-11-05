@@ -8,7 +8,7 @@ const userRoutes = new Hono();
 userRoutes.get("/qr-token/:token", userController.validateQrToken);
 
 // Availability checks (must be declared before /:id)
-userRoutes.get("/check-username", authController.checkUsername);
+userRoutes.get("/check-username", userController.checkUsername);
 userRoutes.get("/check-email", authController.checkEmail);
 
 userRoutes.get("/", userController.getUsers);

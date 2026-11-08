@@ -37,7 +37,7 @@ export const workingHoursController = {
           .get();
       }
 
-      let breakSessions: BreakSession[] = DEFAULT_BREAK_SESSIONS;
+      let breakSessions: BreakSession[] = [];
       if (row) {
         if (row.break_sessions_json != null) {
           try {
@@ -63,8 +63,6 @@ export const workingHoursController = {
           } catch (e) {
             console.warn("Could not parse break_sessions_json from DB:", e);
           }
-        } else {
-          breakSessions = [];
         }
       }
 
@@ -124,7 +122,7 @@ export const workingHoursController = {
       const closeTime = body.closeTime?.trim() || "20:00";
       const timezone = body.timezone?.trim() || "Asia/Dubai";
       const isEmergencyClosed = body.isEmergencyClosed ? 1 : 0;
-      const rawBreaks = Array.isArray(body.breakSessions) ? body.breakSessions : DEFAULT_BREAK_SESSIONS;
+      const rawBreaks = Array.isArray(body.breakSessions) ? body.breakSessions : [];
 
       // Limit to max 5 break sessions and sanitize each session
       if (rawBreaks.length > 5) {
@@ -132,8 +130,9 @@ export const workingHoursController = {
       }
 
       const sanitizedBreaks: BreakSession[] = rawBreaks.slice(0, 5).map((b: any, index: number) => {
-        const startTime = (b.startTime || "09:00").trim();
-        const endTime = (b.endTime || "09:15").trim();
+        const name = (b.name || "").trim();
+        const startTime = (b.startTime || "").trim();
+        const endTime = (b.endTime || "").trim();
         const durationMinutes =
           typeof b.durationMinutes === "number" && b.durationMinutes > 0
             ? b.durationMinutes
@@ -147,7 +146,7 @@ export const workingHoursController = {
 
         return {
           id: b.id ? String(b.id) : `break_${Date.now()}_${index + 1}`,
-          name: (b.name || `Break ${index + 1}`).trim(),
+          name: name || `Break ${index + 1}`,
           startTime,
           endTime,
           durationMinutes,
@@ -155,13 +154,19 @@ export const workingHoursController = {
         };
       });
 
-      // Validation 1: Break start time must precede end time (or handle overnight)
+      // Validation 1: Required fields & time order
       for (const b of sanitizedBreaks) {
-        if (!b.startTime || !b.endTime) {
-          return c.json({ success: false, message: `Please provide start and end time for ${b.name}.` }, 400);
+        if (!b.name || !b.name.trim()) {
+          return c.json({ success: false, message: "Break name cannot be empty." }, 400);
         }
-        if (b.startTime === b.endTime) {
-          return c.json({ success: false, message: `${b.name} start time and end time cannot be identical.` }, 400);
+        if (!b.startTime) {
+          return c.json({ success: false, message: `Start time is required for "${b.name}".` }, 400);
+        }
+        if (!b.endTime) {
+          return c.json({ success: false, message: `End time is required for "${b.name}".` }, 400);
+        }
+        if (b.startTime >= b.endTime) {
+          return c.json({ success: false, message: `End time must be later than start time for "${b.name}".` }, 400);
         }
       }
 

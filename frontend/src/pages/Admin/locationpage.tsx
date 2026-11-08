@@ -34,6 +34,7 @@ import AssignCard, { type LocationItem } from "../../components/locations/assign
 import { locationApi } from "../../services/locations";
 import { userApi, type UserItem } from "../../services/userApi";
 import CreateFormModal, { FormRow } from "../../components/common/CreateFormModal";
+import { formatSeatIdentifier } from "../../utils/seatFormatter";
 
 interface SeatItem {
   number: string;
@@ -1285,7 +1286,7 @@ export default function LocationPage() {
                                             ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
                                             : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
                                           }`}>
-                                          {seat.id || seat.displayId || `Seat-${seat.number}`}
+                                          {formatSeatIdentifier(seat.id || seat.displayId) || `Seat-${seat.number}`}
                                         </span>
                                         {isAssigned ? (
                                           <span
@@ -1306,7 +1307,7 @@ export default function LocationPage() {
                                         <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
                                           <div className="flex items-center justify-center gap-1.5 text-amber-300">
                                             <span>Seat {seat.number}</span>
-                                            <span className="text-stone-400 font-mono">({seat.id || seat.displayId})</span>
+                                            <span className="text-stone-400 font-mono">({formatSeatIdentifier(seat.id || seat.displayId)})</span>
                                           </div>
                                           <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
                                             {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
@@ -1380,7 +1381,7 @@ export default function LocationPage() {
                                             ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
                                             : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
                                           }`}>
-                                          {seat.id || seat.displayId || `Seat-${seat.number}`}
+                                          {formatSeatIdentifier(seat.id || seat.displayId) || `Seat-${seat.number}`}
                                         </span>
                                       </div>
 
@@ -1428,7 +1429,7 @@ export default function LocationPage() {
                                         <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
                                           <div className="flex items-center justify-center gap-1.5 text-amber-300">
                                             <span>Seat {seat.number}</span>
-                                            <span className="text-stone-400 font-mono">({seat.id || seat.displayId})</span>
+                                            <span className="text-stone-400 font-mono">({formatSeatIdentifier(seat.id || seat.displayId)})</span>
                                           </div>
                                           <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
                                             {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
@@ -1614,7 +1615,7 @@ export default function LocationPage() {
                               <div className="flex items-center justify-between rounded-2xl border border-[#EEE5DC] bg-white p-3 shadow-2xs">
                                 <span className="font-semibold text-[#8A7667]">Seat Identifier</span>
                                 <span className="font-mono font-bold text-sm text-[#342219]">
-                                  {currentSeat.id}
+                                  {formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}
                                 </span>
                               </div>
 
@@ -1666,7 +1667,7 @@ export default function LocationPage() {
 
                                   <div className="flex-1 space-y-1">
                                     <p className="text-xs font-bold text-[#342219]">
-                                      ${currentSeat.id || currentSeat.displayId || `Seat ${currentSeat.number}`} QR
+                                      {formatSeatIdentifier(currentSeat.id || currentSeat.displayId) || `Seat ${currentSeat.number}`} QR
                                     </p>
                                     <p className="text-[11px] text-[#8A7667]">
                                       Permanent QR code for table and ordering
@@ -1680,7 +1681,7 @@ export default function LocationPage() {
                                             effectiveOrderUrl
                                           )}`;
                                           link.target = "_blank";
-                                          link.download = `${currentSeat.id || currentSeat.displayId || `seat_${currentSeat.number}`}_qr.png`;
+                                          link.download = `${formatSeatIdentifier(currentSeat.id || currentSeat.displayId) || `seat_${currentSeat.number}`}_qr.png`;
                                           link.click();
                                         }}
                                         className="flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#8C5835] border border-[#D5C2B1] hover:bg-[#FAF6F1] cursor-pointer"
@@ -1764,43 +1765,8 @@ export default function LocationPage() {
                         {/* Action Buttons: Context-aware for Assigned vs Available Seats */}
                         <div className="mt-5 border-t border-[#EEE5DC] pt-4">
                           {Boolean(currentSeat.employee || currentSeat.employeeEmail || currentSeat.employeeName) ? (
-                            <div className="space-y-2.5">
-                              <div className="grid grid-cols-2 gap-2.5">
-                                {/* Change Employee */}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const cleanIdent = (currentSeat.employee || currentSeat.employeeEmail || "").trim().toLowerCase();
-                                    const matched = cleanIdent
-                                      ? orgUsers.find((u) => u.email.toLowerCase() === cleanIdent || u.name.toLowerCase() === cleanIdent)
-                                      : null;
-                                    setSelectedEmployeeToAssign(matched || null);
-                                    setEditSeatForm({
-                                      employeeName: currentSeat.employeeName || matched?.name || "",
-                                      employeeEmail: currentSeat.employeeEmail || currentSeat.employee || matched?.email || "",
-                                      orderUrl: currentSeat.orderUrl || "",
-                                    });
-                                    setEditSeatError(null);
-                                    setIsEditSeatOpen(true);
-                                  }}
-                                  className="flex items-center justify-center gap-1.5 rounded-2xl border border-[#D5C2B1] bg-white py-2.5 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs cursor-pointer"
-                                >
-                                  <UserPlus size={14} className="text-[#8C5835]" />
-                                  <span>Change Employee</span>
-                                </button>
-
-                                {/* Remove Employee */}
-                                <button
-                                  type="button"
-                                  onClick={() => setIsUnassignConfirmOpen(true)}
-                                  className="flex items-center justify-center gap-1.5 rounded-2xl border border-rose-200 bg-rose-50 py-2.5 text-xs font-bold text-rose-800 transition hover:bg-rose-100 shadow-2xs cursor-pointer"
-                                >
-                                  <UserMinus size={14} className="text-rose-600" />
-                                  <span>Remove Employee</span>
-                                </button>
-                              </div>
-
-                              {/* Delete Seat (Blocked if occupied) */}
+                            <div>
+                              {/* Delete Seat */}
                               <button
                                 type="button"
                                 onClick={() => handleDeleteSeatClick(currentSeat)}
@@ -1986,7 +1952,7 @@ export default function LocationPage() {
                 readOnly
                 type="text"
                 placeholder="Seat Identifier"
-                value={newSeatForm.seatId}
+                value={formatSeatIdentifier(newSeatForm.seatId)}
                 className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-700 font-mono font-bold outline-none cursor-not-allowed"
                 title="Automatically generated using organization shortcode and sequential seat number"
               />
@@ -2128,7 +2094,7 @@ export default function LocationPage() {
                       {currentSeat.employee || currentSeat.employeeEmail ? "Change Assigned Employee" : "Assign Employee to Seat"}
                     </h3>
                     <p className="text-xs text-[#8A7667]">
-                      Seat <span className="font-bold text-[#342219]">{currentSeat.number}</span> &bull; <span className="font-mono text-[#6F4228]">{currentSeat.id}</span>
+                      Seat <span className="font-bold text-[#342219]">{currentSeat.number}</span> &bull; <span className="font-mono text-[#6F4228]">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</span>
                     </p>
                   </div>
                 </div>
@@ -2332,7 +2298,7 @@ export default function LocationPage() {
               <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50/70 p-3.5 text-xs text-gray-700 space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-[#8A7667]">Seat Identifier:</span>
-                  <strong className="font-mono text-[#342219]">{currentSeat.id}</strong>
+                  <strong className="font-mono text-[#342219]">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[#8A7667]">Assigned Employee:</span>
@@ -2350,7 +2316,7 @@ export default function LocationPage() {
                 <p className="font-semibold text-amber-950">What will happen:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-[#735133]">
                   <li>The employee assignment will be cleared.</li>
-                  <li>Seat <strong className="font-mono">{currentSeat.id}</strong> will remain in the seating plan as <strong>Available</strong>.</li>
+                  <li>Seat <strong className="font-mono">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</strong> will remain in the seating plan as <strong>Available</strong>.</li>
                   <li>The seat and location records are NOT deleted.</li>
                   <li>Another employee can be assigned to this seat at any time.</li>
                 </ul>
@@ -2407,7 +2373,7 @@ export default function LocationPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#8A7667]">Seat Identifier:</span>
-                    <span className="font-mono font-bold text-[#342219]">{seatToDelete.displayId || seatToDelete.id}</span>
+                    <span className="font-mono font-bold text-[#342219]">{formatSeatIdentifier(seatToDelete.displayId || seatToDelete.id)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#8A7667]">Location:</span>

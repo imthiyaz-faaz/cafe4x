@@ -36,6 +36,7 @@ import {
 import { organizationApi } from "../../services/organizationApi";
 import { workingHoursApi } from "../../services/workingHoursApi";
 import { getDateStringsInTimezone } from "../../utils/orderTimeClassification";
+import { formatSeatIdentifier } from "../../utils/seatFormatter";
 
 type ActiveView = "locations" | "employees" | "orders";
 type DateFilterType = "today" | "yesterday" | "custom";
@@ -317,7 +318,11 @@ export default function OrdersPage() {
               {selectedEmployee && (
                 <>
                   <ChevronRight className="w-4 h-4 text-stone-400" />
-                  <span className="text-[#8C6D58] font-bold">{selectedEmployee.employeeName}</span>
+                  <span className="text-[#8C6D58] font-bold">
+                    {employeeProfile?.name || selectedEmployee.employeeName}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-stone-400" />
+                  <span className="text-stone-500 font-semibold">Employee Orders</span>
                 </>
               )}
             </nav>
@@ -345,7 +350,7 @@ export default function OrdersPage() {
             <p className="text-xs sm:text-sm text-stone-500 mt-1">
               {activeView === "locations" && "Select a location to inspect assigned employee orders and total spending."}
               {activeView === "employees" && `Displaying all employees and active order tallies for ${selectedLocation?.name}.`}
-              {activeView === "orders" && `Seat: ${employeeProfile?.seatIdentifier || selectedEmployee?.seat} • Location: ${employeeProfile?.locationName || selectedLocation?.name}`}
+              {activeView === "orders" && `Seat: ${formatSeatIdentifier(employeeProfile?.seatIdentifier || selectedEmployee?.seat)} • Location: ${employeeProfile?.locationName || selectedLocation?.name}`}
             </p>
           </div>
 
@@ -491,71 +496,106 @@ export default function OrdersPage() {
                   <div
                     key={loc.id}
                     onClick={() => handleSelectLocation(loc)}
-                    className="group cursor-pointer bg-white rounded-2xl border border-stone-200 p-6 shadow-sm hover:shadow-md hover:border-[#8C6D58]/40 transition-all duration-200 flex flex-col justify-between"
+                    className="group relative cursor-pointer overflow-hidden rounded-3xl border border-[#EADBCE] bg-white p-5 shadow-xs hover:shadow-xl hover:border-[#8C6D58]/50 transition-all duration-300 flex flex-col justify-between"
                   >
                     <div>
-                      {/* Location Header */}
+                      {/* Top Bar: Icon + Status Pill */}
                       <div className="flex items-center justify-between mb-4">
-                        <div className="w-12 h-12 rounded-xl bg-[#FAF7F2] border border-[#8C6D58]/20 flex items-center justify-center text-[#8C6D58] group-hover:scale-105 transition-transform">
-                          <Building2 className="w-6 h-6" />
+                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FDF8F3] to-[#F3E7DC] text-[#784D34] border border-[#E6D4C3] shadow-xs group-hover:scale-105 transition-transform duration-200">
+                          <Building2 className="w-5 h-5 text-[#8C5835]" />
                         </div>
-                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-stone-100 text-stone-600">
-                          {loc.status || "Active"}
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase shadow-2xs ${
+                            loc.status?.toLowerCase() === "inactive"
+                              ? "bg-stone-100 text-stone-600 border border-stone-200"
+                              : "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                          }`}
+                        >
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              loc.status?.toLowerCase() === "inactive" ? "bg-stone-400" : "bg-emerald-500"
+                            }`}
+                          />
+                          <span>{loc.status || "ACTIVE"}</span>
                         </span>
                       </div>
 
-                      <h3 className="text-lg font-bold text-stone-900 group-hover:text-[#8C6D58] transition-colors mb-1">
-                        {loc.name}
-                      </h3>
-                      <p className="text-xs text-stone-500 mb-4">{loc.locationType}</p>
+                      {/* Location Name & Subtitle */}
+                      <div className="mb-4">
+                        <h3 className="text-lg font-extrabold text-[#342219] group-hover:text-[#8C5835] transition-colors leading-snug truncate">
+                          {loc.name}
+                        </h3>
+                        <p className="text-xs font-medium text-[#8A7667] mt-0.5 truncate">
+                          {loc.locationType || "Office / Dining Area"}
+                        </p>
+                      </div>
 
-                      {/* Metrics List */}
-                      <div className="space-y-2 pt-2 border-t border-stone-100 text-xs">
-                        <div className="flex items-center justify-between text-stone-600">
-                          <span className="flex items-center gap-1.5">
-                            <Users className="w-3.5 h-3.5 text-stone-400" />
-                            Assigned Employees:
+                      {/* Primary Metrics Card */}
+                      <div className="rounded-2xl border border-[#EEE5DC] bg-[#FAF8F5]/70 p-3.5 space-y-2.5 text-xs">
+                        {/* Assigned Employees */}
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
+                            <Users className="w-4 h-4 text-[#A8907E]" />
+                            <span>Assigned Employees:</span>
                           </span>
-                          <span className="font-semibold text-stone-800">{loc.totalEmployees}</span>
+                          <span className="font-bold text-[#342219]">{loc.totalEmployees}</span>
                         </div>
 
-                        <div className="flex items-center justify-between text-stone-600">
-                          <span className="flex items-center gap-1.5">
-                            <ShoppingBag className="w-3.5 h-3.5 text-stone-400" />
-                            Total Orders:
+                        {/* Total Orders */}
+                        <div className="flex items-center justify-between">
+                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
+                            <ShoppingBag className="w-4 h-4 text-[#A8907E]" />
+                            <span>Total Orders:</span>
                           </span>
-                          <span className="font-semibold text-stone-900">{loc.totalOrders}</span>
+                          <span className="font-bold text-[#342219]">{loc.totalOrders}</span>
                         </div>
 
-                        <div className="flex items-center justify-between text-stone-600">
-                          <span className="flex items-center gap-1.5">
-                            <DollarSign className="w-3.5 h-3.5 text-stone-400" />
-                            Total Amount:
+                        {/* Total Amount */}
+                        <div className="flex items-center justify-between pt-1 border-t border-[#EADBCE]/60">
+                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
+                            <DollarSign className="w-4 h-4 text-[#8C5835]" />
+                            <span>Total Amount:</span>
                           </span>
-                          <span className="font-bold text-[#8C6D58]">{formatPrice(loc.totalAmount)}</span>
+                          <span className="font-black text-sm text-[#784D34]">
+                            {formatPrice(loc.totalAmount)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Order Status Breakdown: Pending & Delivered */}
+                      <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
+                        {/* Pending Orders */}
+                        <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2">
+                          <span className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900">
+                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                            <span>Pending</span>
+                          </span>
+                          <span className="font-extrabold text-amber-900 text-xs">
+                            {loc.pendingOrders}
+                          </span>
                         </div>
 
-                        <div className="flex items-center justify-between text-stone-600 pt-1">
-                          <span className="flex items-center gap-1.5 text-amber-700">
-                            <AlertCircle className="w-3.5 h-3.5" />
-                            Pending:
+                        {/* Delivered Orders */}
+                        <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+                          <span className="flex items-center gap-1.5 font-bold text-[11px] text-emerald-900">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                            <span>Delivered</span>
                           </span>
-                          <span className="font-semibold text-amber-800">{loc.pendingOrders}</span>
-                        </div>
-
-                        <div className="flex items-center justify-between text-stone-600">
-                          <span className="flex items-center gap-1.5 text-emerald-700">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Delivered:
+                          <span className="font-extrabold text-emerald-900 text-xs">
+                            {loc.deliveredOrders}
                           </span>
-                          <span className="font-semibold text-emerald-800">{loc.deliveredOrders}</span>
                         </div>
                       </div>
                     </div>
 
-                    <div className="mt-5 pt-3 border-t border-stone-100 flex items-center justify-between text-xs font-semibold text-[#8C6D58] group-hover:translate-x-0.5 transition-transform">
-                      <span>View Employees</span>
-                      <ChevronRight className="w-4 h-4" />
+                    {/* Footer: View Employees Action */}
+                    <div className="mt-5 pt-3.5 border-t border-[#EEE5DC] flex items-center justify-between">
+                      <span className="text-xs font-bold text-[#8C5835] group-hover:text-[#6F4228] transition-colors">
+                        View Employees
+                      </span>
+                      <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-[#FAF6F1] text-[#8C5835] group-hover:bg-[#8C5835] group-hover:text-white transition-all shadow-2xs">
+                        <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -568,32 +608,34 @@ export default function OrdersPage() {
         {/* VIEW 2: LOCATION EMPLOYEES VIEW                                          */}
         {/* ========================================================================= */}
         {activeView === "employees" && (
-          <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-            <div className="p-5 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FCFAF7]">
+          <div className="bg-white rounded-3xl border border-[#EEE5DC] shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-[#EEE5DC] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FCFAF7]">
               <div>
-                <h2 className="text-lg font-bold text-stone-900 flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-[#8C6D58]" />
-                  <span>{selectedLocation?.name} – Employees & Seat Orders</span>
+                <h2 className="text-lg font-bold text-[#342219] flex items-center gap-2">
+                  <MapPin className="w-4 h-4 text-[#8C5835]" />
+                  <span>{selectedLocation?.name} – Employee Orders</span>
                 </h2>
-                <p className="text-xs text-stone-500 mt-0.5">
-                  Showing all employees assigned to seats or ordering in this location.
+                <p className="text-xs text-[#8A7667] mt-0.5">
+                  Displaying employees who have placed orders for {selectedLocation?.name} within the selected date range.
                 </p>
               </div>
-              <div className="text-xs text-stone-500 font-medium">
-                {filteredEmployees.length} {filteredEmployees.length === 1 ? "Employee" : "Employees"} Listed
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#FAF6F1] text-[#70452D] border border-[#EADBCE]">
+                <span>{filteredEmployees.length} {filteredEmployees.length === 1 ? "Employee" : "Employees"} Ordered</span>
               </div>
             </div>
 
             {isLoading ? (
               <div className="py-20 text-center">
-                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
-                <p className="text-stone-500 text-sm">Loading employees for {selectedLocation?.name}...</p>
+                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C5835] mb-3" />
+                <p className="text-[#8A7667] text-sm">Loading ordering employees for {selectedLocation?.name}...</p>
               </div>
             ) : filteredEmployees.length === 0 ? (
-              <div className="py-16 text-center text-stone-500">
-                <User className="w-10 h-10 text-stone-300 mx-auto mb-2" />
-                <p className="text-sm font-semibold text-stone-700">No employees found for this location.</p>
-                <p className="text-xs text-stone-400 mt-1">Assign employees to seats in Location Management.</p>
+              <div className="py-16 text-center text-[#8A7667] space-y-2">
+                <User className="w-12 h-12 text-[#D5C2B1] mx-auto" />
+                <p className="text-sm font-bold text-[#342219]">No employee orders found for this location.</p>
+                <p className="text-xs text-[#8A7667] max-w-sm mx-auto">
+                  Only employees who have placed at least one order within the selected date range appear in this list.
+                </p>
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -633,7 +675,7 @@ export default function OrdersPage() {
                         {/* Seat Identifier */}
                         <td className="px-6 py-4">
                           <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-stone-100 text-stone-700 border border-stone-200">
-                            {emp.seat}
+                            {formatSeatIdentifier(emp.seat)}
                           </span>
                         </td>
 
@@ -695,7 +737,7 @@ export default function OrdersPage() {
                     )}
                     <span>•</span>
                     <span className="font-mono bg-stone-100 px-2 py-0.5 rounded border border-stone-200 text-stone-700">
-                      {employeeProfile?.seatIdentifier || selectedEmployee?.seat}
+                      {formatSeatIdentifier(employeeProfile?.seatIdentifier || selectedEmployee?.seat)}
                     </span>
                     <span>•</span>
                     <span className="flex items-center gap-1 text-stone-600">
@@ -927,7 +969,7 @@ export default function OrdersPage() {
               <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200/80">
                 <span className="text-stone-400 block text-[10px] uppercase font-bold">Seat</span>
                 <span className="font-mono font-semibold text-stone-800">
-                  {inspectedOrder.seatId || inspectedOrder.seat}
+                  {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat)}
                 </span>
               </div>
             </div>

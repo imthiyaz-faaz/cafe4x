@@ -13,13 +13,13 @@ import {
   Coffee,
   Info,
   RotateCw,
+  X,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import {
   workingHoursService,
   type BreakSession,
-  DEFAULT_BREAK_SESSIONS,
 } from "../../services/working-hours";
 
 const popularTimezones = [
@@ -62,8 +62,18 @@ function calculateDuration(startTime: string, endTime: string): number {
 }
 
 /**
- * Formats duration into human readable string e.g. "15 minutes" or "1 hour"
+ * Formats 24-hour time "HH:MM" to 12-hour "hh:mm AM/PM"
  */
+function formatTime12(time24: string): string {
+  if (!time24) return "";
+  const [h, m] = time24.split(":").map(Number);
+  if (isNaN(h) || isNaN(m)) return time24;
+  const period = h >= 12 ? "PM" : "AM";
+  const displayHours = h % 12 === 0 ? 12 : h % 12;
+  const padHours = String(displayHours).padStart(2, "0");
+  const padMins = String(m).padStart(2, "0");
+  return `${padHours}:${padMins} ${period}`;
+}
 function formatDuration(minutes: number): string {
   if (minutes <= 0) return "0 minutes";
   const hours = Math.floor(minutes / 60);
@@ -85,7 +95,14 @@ export default function WorkingHoursPage() {
   const [closeTime, setCloseTime] = useState("20:00");
   const [timezone, setTimezone] = useState("Asia/Dubai");
   const [isEmergencyClosed, setIsEmergencyClosed] = useState(false);
-  const [breakSessions, setBreakSessions] = useState<BreakSession[]>(DEFAULT_BREAK_SESSIONS);
+  const [breakSessions, setBreakSessions] = useState<BreakSession[]>([]);
+
+  // Modal State for Manual Break Creation
+  const [isAddBreakModalOpen, setIsAddBreakModalOpen] = useState(false);
+  const [newBreakName, setNewBreakName] = useState("");
+  const [newBreakStartTime, setNewBreakStartTime] = useState("");
+  const [newBreakEndTime, setNewBreakEndTime] = useState("");
+  const [modalError, setModalError] = useState<string | null>(null);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -159,48 +176,86 @@ export default function WorkingHoursPage() {
   };
 
   const handleDeleteBreak = (id: string) => {
-    setBreakSessions((prev) => {
-      const filtered = prev.filter((b) => b.id !== id);
-      // Renumber break names e.g. Break 1, Break 2...
-      return filtered.map((b, idx) => ({
-        ...b,
-        name: `Break ${idx + 1}`,
-      }));
-    });
+    setBreakSessions((prev) => prev.filter((b) => b.id !== id));
   };
 
-  const handleAddBreak = () => {
-    if (breakSessions.length >= 5) return;
-    const nextIndex = breakSessions.length + 1;
-    // Suggest a smart default start and end time after the last break
-    let suggestedStart = "18:30";
-    let suggestedEnd = "18:45";
+  const handleOpenAddBreakModal = () => {
+    if (breakSessions.length >= 5) {
+      setErrorMessage("Maximum 5 break sessions are allowed.");
+      return;
+    }
+    setNewBreakName("");
+    setNewBreakStartTime("");
+    setNewBreakEndTime("");
+    setModalError(null);
+    setIsAddBreakModalOpen(true);
+  };
 
-    if (breakSessions.length > 0) {
-      const last = breakSessions[breakSessions.length - 1];
-      const [lh, lm] = last.endTime.split(":").map(Number);
-      if (!isNaN(lh) && !isNaN(lm)) {
-        const nextStartMins = (lh * 60 + lm + 90) % (24 * 60);
-        const nextEndMins = (nextStartMins + 15) % (24 * 60);
-        suggestedStart = `${String(Math.floor(nextStartMins / 60)).padStart(2, "0")}:${String(
-          nextStartMins % 60
-        ).padStart(2, "0")}`;
-        suggestedEnd = `${String(Math.floor(nextEndMins / 60)).padStart(2, "0")}:${String(
-          nextEndMins % 60
-        ).padStart(2, "0")}`;
+  const handleCloseAddBreakModal = () => {
+    setIsAddBreakModalOpen(false);
+    setNewBreakName("");
+    setNewBreakStartTime("");
+    setNewBreakEndTime("");
+    setModalError(null);
+  };
+
+  const handleSaveNewBreak = (e: React.FormEvent) => {
+    e.preventDefault();
+    setModalError(null);
+
+    const trimmedName = newBreakName.trim();
+    if (!trimmedName) {
+      setModalError("Break name cannot be empty.");
+      return;
+    }
+
+    if (!newBreakStartTime) {
+      setModalError("Start time is required.");
+      return;
+    }
+
+    if (!newBreakEndTime) {
+      setModalError("End time is required.");
+      return;
+    }
+
+    if (newBreakStartTime >= newBreakEndTime) {
+      setModalError("End time must be later than start time.");
+      return;
+    }
+
+    // Check duplicate break name (case-insensitive)
+    const duplicateName = breakSessions.some(
+      (b) => b.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicateName) {
+      setModalError(`A break session named "${trimmedName}" already exists.`);
+      return;
+    }
+
+    // Check overlap with existing enabled sessions
+    for (const b of breakSessions) {
+      if (b.isEnabled) {
+        if (newBreakStartTime < b.endTime && b.startTime < newBreakEndTime) {
+          setModalError(
+            `Break time conflicts with "${b.name}" (${b.startTime} - ${b.endTime}). Sessions must not overlap.`
+          );
+          return;
+        }
       }
     }
 
-    const newBreak: BreakSession = {
+    const createdBreak: BreakSession = {
       id: `break_${Date.now()}`,
-      name: `Break ${nextIndex}`,
-      startTime: suggestedStart,
-      endTime: suggestedEnd,
-      durationMinutes: calculateDuration(suggestedStart, suggestedEnd),
+      name: trimmedName,
+      startTime: newBreakStartTime,
+      endTime: newBreakEndTime,
+      durationMinutes: calculateDuration(newBreakStartTime, newBreakEndTime),
       isEnabled: true,
     };
 
-    setBreakSessions((prev) => [...prev, newBreak]);
+    setBreakSessions((prev) => [...prev, createdBreak]);
+    handleCloseAddBreakModal();
   };
 
   // Validation function
@@ -211,16 +266,14 @@ export default function WorkingHoursPage() {
 
     // Validate each break session
     for (const b of breakSessions) {
+      if (!b.name || !b.name.trim()) {
+        return "Break name cannot be empty.";
+      }
       if (!b.startTime || !b.endTime) {
         return `Please specify both start and end time for ${b.name}.`;
       }
-      if (b.startTime === b.endTime) {
-        return `${b.name} start and end time cannot be identical.`;
-      }
-      if (openTime <= closeTime) {
-        if (b.startTime < openTime || b.endTime > closeTime) {
-          return `${b.name} (${b.startTime} - ${b.endTime}) must be within cafe open hours (${openTime} - ${closeTime}).`;
-        }
+      if (b.startTime >= b.endTime) {
+        return `End time must be later than start time for ${b.name}.`;
       }
     }
 
@@ -281,22 +334,45 @@ export default function WorkingHoursPage() {
     }
   };
 
-  // Timeline computation (08:00 to 20:00 normalized to percentages)
-  const timelineSegments = useMemo(() => {
-    const [oh, om] = openTime.split(":").map(Number);
-    const [ch, cm] = closeTime.split(":").map(Number);
-    if (isNaN(oh) || isNaN(om) || isNaN(ch) || isNaN(cm)) return [];
+  // Timeline computation encompassing full span of operating hours and breaks
+  const { timelineSegments, timelineStartLabel, timelineEndLabel } = useMemo(() => {
+    const toMinutes = (timeStr: string) => {
+      const [h, m] = timeStr.split(":").map(Number);
+      return isNaN(h) || isNaN(m) ? 0 : h * 60 + m;
+    };
 
-    let totalDayMinutes = ch * 60 + cm - (oh * 60 + om);
-    if (totalDayMinutes <= 0) totalDayMinutes += 24 * 60; // overnight handling
-    if (totalDayMinutes <= 0) totalDayMinutes = 12 * 60;
+    const toTimeStr = (totalMins: number) => {
+      const normalized = ((totalMins % 1440) + 1440) % 1440;
+      const h = Math.floor(normalized / 60);
+      const m = normalized % 60;
+      return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+    };
 
-    const startMinutes = oh * 60 + om;
+    const openMins = toMinutes(openTime || "08:00");
+    let closeMins = toMinutes(closeTime || "20:00");
+    if (closeMins <= openMins) {
+      closeMins += 24 * 60; // overnight operating window
+    }
 
-    // Filter and sort enabled break sessions that fall inside open hours
-    const sortedBreaks = [...breakSessions]
-      .filter((b) => b.isEnabled)
-      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+    const enabledBreaks = breakSessions.filter((b) => b.isEnabled && b.startTime && b.endTime);
+
+    // Calculate dynamic span encompassing openTime, closeTime, and all break boundaries
+    let minMinute = openMins;
+    let maxMinute = closeMins;
+
+    for (const b of enabledBreaks) {
+      const bStart = toMinutes(b.startTime);
+      let bEnd = toMinutes(b.endTime);
+      if (bEnd <= bStart) bEnd += 24 * 60;
+
+      if (bStart < minMinute) minMinute = bStart;
+      if (bEnd > maxMinute) maxMinute = bEnd;
+    }
+
+    const totalSpan = Math.max(maxMinute - minMinute, 60);
+
+    // Sort enabled breaks in ascending start time
+    const sortedBreaks = [...enabledBreaks].sort((a, b) => a.startTime.localeCompare(b.startTime));
 
     const segments: Array<{
       type: "order" | "closed";
@@ -306,25 +382,20 @@ export default function WorkingHoursPage() {
       timeRange?: string;
     }> = [];
 
-    let currentCursorMinutes = startMinutes;
+    let currentCursor = minMinute;
 
     for (const b of sortedBreaks) {
-      const [bsh, bsm] = b.startTime.split(":").map(Number);
-      const [beh, bem] = b.endTime.split(":").map(Number);
-      if (isNaN(bsh) || isNaN(bsm) || isNaN(beh) || isNaN(bem)) continue;
-
-      let bStart = bsh * 60 + bsm;
-      let bEnd = beh * 60 + bem;
-      if (bStart < startMinutes) bStart += 24 * 60;
-      if (bEnd < bStart) bEnd += 24 * 60;
+      const bStart = toMinutes(b.startTime);
+      let bEnd = toMinutes(b.endTime);
+      if (bEnd <= bStart) bEnd += 24 * 60;
 
       // Closed segment prior to break
-      if (bStart > currentCursorMinutes) {
-        const closedMins = bStart - currentCursorMinutes;
+      if (bStart > currentCursor) {
+        const closedMins = bStart - currentCursor;
         segments.push({
           type: "closed",
-          startPct: ((currentCursorMinutes - startMinutes) / totalDayMinutes) * 100,
-          widthPct: (closedMins / totalDayMinutes) * 100,
+          startPct: ((currentCursor - minMinute) / totalSpan) * 100,
+          widthPct: (closedMins / totalSpan) * 100,
         });
       }
 
@@ -332,25 +403,28 @@ export default function WorkingHoursPage() {
       const breakMins = bEnd - bStart;
       segments.push({
         type: "order",
-        startPct: ((bStart - startMinutes) / totalDayMinutes) * 100,
-        widthPct: (breakMins / totalDayMinutes) * 100,
+        startPct: ((bStart - minMinute) / totalSpan) * 100,
+        widthPct: (breakMins / totalSpan) * 100,
         label: b.name,
-        timeRange: `${b.startTime} - ${b.endTime}`,
+        timeRange: `${formatTime12(b.startTime)} - ${formatTime12(b.endTime)}`,
       });
 
-      currentCursorMinutes = Math.max(currentCursorMinutes, bEnd);
+      currentCursor = Math.max(currentCursor, bEnd);
     }
 
-    const endMinutes = startMinutes + totalDayMinutes;
-    if (currentCursorMinutes < endMinutes) {
+    if (currentCursor < maxMinute) {
       segments.push({
         type: "closed",
-        startPct: ((currentCursorMinutes - startMinutes) / totalDayMinutes) * 100,
-        widthPct: ((endMinutes - currentCursorMinutes) / totalDayMinutes) * 100,
+        startPct: ((currentCursor - minMinute) / totalSpan) * 100,
+        widthPct: ((maxMinute - currentCursor) / totalSpan) * 100,
       });
     }
 
-    return segments;
+    return {
+      timelineSegments: segments,
+      timelineStartLabel: toTimeStr(minMinute),
+      timelineEndLabel: toTimeStr(maxMinute),
+    };
   }, [openTime, closeTime, breakSessions]);
 
   return (
@@ -499,11 +573,11 @@ export default function WorkingHoursPage() {
                       {breakSessions.length < 5 && (
                         <button
                           type="button"
-                          onClick={handleAddBreak}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
+                          onClick={handleOpenAddBreakModal}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
                         >
                           <Plus size={14} />
-                          <span>Add Break</span>
+                          <span>+ Add Break</span>
                         </button>
                       )}
                     </div>
@@ -516,11 +590,23 @@ export default function WorkingHoursPage() {
                       </span>
                     </div>
 
-                    {/* Break Sessions List */}
+                    {/* Break Sessions List / Table */}
                     <div className="space-y-3">
                       {breakSessions.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-gray-300 p-6 text-center text-xs text-gray-500">
-                          No break sessions configured. Click &quot;Add Break&quot; above to add a break session.
+                        <div className="rounded-2xl border border-dashed border-[#D5C2B1] bg-[#FAF8F5] p-8 text-center text-xs text-gray-500 space-y-3">
+                          <Coffee size={24} className="mx-auto text-[#B39B88]" />
+                          <p className="font-semibold text-gray-700">No break sessions configured yet.</p>
+                          <p className="text-[11px] text-gray-500 max-w-sm mx-auto">
+                            Click &quot;+ Add Break&quot; to configure scheduled employee ordering windows.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleOpenAddBreakModal}
+                            className="inline-flex items-center gap-1.5 rounded-xl bg-[#8E6548] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#785339] transition cursor-pointer"
+                          >
+                            <Plus size={14} />
+                            <span>+ Add Break</span>
+                          </button>
                         </div>
                       ) : (
                         breakSessions.map((b, index) => {
@@ -542,7 +628,7 @@ export default function WorkingHoursPage() {
                                 </span>
                               </div>
 
-                              {/* Start Time - End Time Inputs */}
+                              {/* Start Time - End Time Display & Inputs */}
                               <div className="flex items-center gap-2">
                                 <input
                                   type="time"
@@ -557,6 +643,9 @@ export default function WorkingHoursPage() {
                                   onChange={(e) => handleTimeChange(b.id, "endTime", e.target.value)}
                                   className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
                                 />
+                                <span className="hidden sm:inline-block text-[11px] font-medium text-gray-500 ml-1">
+                                  ({formatTime12(b.startTime)} – {formatTime12(b.endTime)})
+                                </span>
                               </div>
 
                               {/* Calculated Duration Display */}
@@ -733,24 +822,145 @@ export default function WorkingHoursPage() {
 
               {/* Time markers beneath the timeline */}
               <div className="relative mt-2 text-[11px] font-medium text-gray-600 flex justify-between">
-                <span>{openTime}</span>
+                <span>{timelineStartLabel || openTime}</span>
                 {timelineSegments
                   .filter((s) => s.type === "order")
                   .map((s, idx) => (
                     <span
                       key={idx}
                       style={{ left: `${s.startPct}%` }}
-                      className="absolute -translate-x-1/2"
+                      className="absolute -translate-x-1/2 whitespace-nowrap text-[10px]"
                     >
                       {s.timeRange?.split(" - ")[0]}
                     </span>
                   ))}
-                <span>{closeTime}</span>
+                <span>{timelineEndLabel || closeTime}</span>
               </div>
             </div>
           </div>
           </div>
         </main>
+
+        {/* Modal: + Add Break */}
+        {isAddBreakModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
+            <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-[#EEE5DC] bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="flex items-center justify-between pb-3 border-b border-gray-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#F8F2EC] text-[#8E6548]">
+                    <Coffee size={18} />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-[#342219]">Add Break Session</h3>
+                    <p className="text-[11px] text-gray-500">Configure a scheduled ordering time window</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseAddBreakModal}
+                  className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition cursor-pointer"
+                  aria-label="Close modal"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Form */}
+              <form onSubmit={handleSaveNewBreak} className="mt-4 space-y-4">
+                {modalError && (
+                  <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 p-3 text-xs font-semibold text-red-800">
+                    <AlertCircle size={16} className="text-red-600 shrink-0" />
+                    <span>{modalError}</span>
+                  </div>
+                )}
+
+                {/* Field 1: Break Name */}
+                <div>
+                  <label className="block text-xs font-bold text-gray-800 mb-1.5">
+                    Break Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Breakfast Break, Lunch Break, Tea Break"
+                    value={newBreakName}
+                    onChange={(e) => setNewBreakName(e.target.value)}
+                    className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20 bg-white placeholder:text-gray-400"
+                    autoFocus
+                  />
+                </div>
+
+                {/* Field 2 & 3: From Time and To Time */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-800 mb-1.5">
+                      From Time <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={newBreakStartTime}
+                      onChange={(e) => setNewBreakStartTime(e.target.value)}
+                      className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20 bg-white"
+                    />
+                    {newBreakStartTime && (
+                      <p className="text-[10px] text-gray-500 mt-1 font-medium">
+                        {formatTime12(newBreakStartTime)}
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-gray-800 mb-1.5">
+                      To Time <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={newBreakEndTime}
+                      onChange={(e) => setNewBreakEndTime(e.target.value)}
+                      className="w-full rounded-xl border border-gray-300 px-3 py-2 text-xs text-gray-900 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20 bg-white"
+                    />
+                    {newBreakEndTime && (
+                      <p className="text-[10px] text-gray-500 mt-1 font-medium">
+                        {formatTime12(newBreakEndTime)}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Duration Preview */}
+                {newBreakStartTime && newBreakEndTime && (
+                  <div className="rounded-xl border border-[#EEE5DC] bg-[#FAF8F5] p-2.5 flex items-center justify-between text-xs">
+                    <span className="text-gray-600 font-medium">Estimated Duration:</span>
+                    <span className="font-bold text-[#8E6548]">
+                      {formatDuration(calculateDuration(newBreakStartTime, newBreakEndTime))}
+                    </span>
+                  </div>
+                )}
+
+                {/* Buttons: Cancel & Save Break */}
+                <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-gray-100">
+                  <button
+                    type="button"
+                    onClick={handleCloseAddBreakModal}
+                    className="rounded-xl border border-gray-200 px-4 py-2 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 rounded-xl bg-[#8E6548] px-5 py-2 text-xs font-bold text-white shadow-md shadow-[#8E6548]/20 hover:bg-[#785339] transition cursor-pointer"
+                  >
+                    <Plus size={14} />
+                    <span>Save Break</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <footer className="mt-auto px-4 py-6 text-center text-xs text-[#9A8778]">

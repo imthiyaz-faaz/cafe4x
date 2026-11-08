@@ -30,6 +30,7 @@ import {
   getTimeInTimezone,
   type OrderPeriodConfig,
 } from "../../utils/orderTimeClassification";
+import { formatSeatIdentifier } from "../../utils/seatFormatter";
 
 // Order item detail with preference & seat
 export interface DailyOrderItemDetail {
@@ -802,7 +803,7 @@ export default function ProviderReportPage() {
                                         {item.orders.map((ord, oIdx) => (
                                           <tr key={oIdx} className="text-[#342219]">
                                             <td className="py-1.5 pl-1 font-mono font-semibold text-[#75472D]">
-                                              {ord.seatId}
+                                              {formatSeatIdentifier(ord.seatId)}
                                             </td>
                                             <td className="py-1.5 text-[#8A7667]">{ord.orderTime}</td>
                                             <td className="py-1.5">{ord.qty}</td>
@@ -918,7 +919,7 @@ export default function ProviderReportPage() {
                                         {item.orders.map((ord, oIdx) => (
                                           <tr key={oIdx} className="text-[#342219]">
                                             <td className="py-1.5 pl-1 font-mono font-semibold text-[#75472D]">
-                                              {ord.seatId}
+                                              {formatSeatIdentifier(ord.seatId)}
                                             </td>
                                             <td className="py-1.5 text-[#8A7667]">{ord.orderTime}</td>
                                             <td className="py-1.5">{ord.qty}</td>

@@ -36,14 +36,17 @@ const popularTimezones = [
   "UTC",
 ];
 
-// Break badge color styles matching reference UI
-const breakBadgeColors: Record<number, { bg: string; text: string; border: string }> = {
-  0: { bg: "bg-[#FDF1EE]", text: "text-[#D94F3D]", border: "border-[#FADBD6]" }, // Break 1 (Pink/Reddish)
-  1: { bg: "bg-[#FEF7E6]", text: "text-[#D99A1A]", border: "border-[#FCEBC1]" }, // Break 2 (Yellow/Orange)
-  2: { bg: "bg-[#EEF4FF]", text: "text-[#3D6BD9]", border: "border-[#D6E3FA]" }, // Break 3 (Blue)
-  3: { bg: "bg-[#F3EEFE]", text: "text-[#7B3DD9]", border: "border-[#E1D6FA]" }, // Break 4 (Purple)
-  4: { bg: "bg-[#EDF8F1]", text: "text-[#2E9B56]", border: "border-[#CEF0DA]" }, // Break 5 (Green)
-};
+// Break badge color styles matching reference UI (cycles for unlimited breaks)
+const breakBadgeColors: Array<{ bg: string; text: string; border: string }> = [
+  { bg: "bg-[#FDF1EE]", text: "text-[#D94F3D]", border: "border-[#FADBD6]" }, // Break 1 (Pink/Reddish)
+  { bg: "bg-[#FEF7E6]", text: "text-[#D99A1A]", border: "border-[#FCEBC1]" }, // Break 2 (Yellow/Orange)
+  { bg: "bg-[#EEF4FF]", text: "text-[#3D6BD9]", border: "border-[#D6E3FA]" }, // Break 3 (Blue)
+  { bg: "bg-[#F3EEFE]", text: "text-[#7B3DD9]", border: "border-[#E1D6FA]" }, // Break 4 (Purple)
+  { bg: "bg-[#EDF8F1]", text: "text-[#2E9B56]", border: "border-[#CEF0DA]" }, // Break 5 (Green)
+  { bg: "bg-[#FFF4E5]", text: "text-[#D97706]", border: "border-[#FED7AA]" }, // Break 6 (Amber)
+  { bg: "bg-[#F0FDF4]", text: "text-[#15803D]", border: "border-[#BBF7D0]" }, // Break 7 (Emerald)
+  { bg: "bg-[#F5F3FF]", text: "text-[#6D28D9]", border: "border-[#DDD6FE]" }, // Break 8 (Violet)
+];
 
 /**
  * Calculates duration in minutes between start time and end time (HH:MM format)
@@ -180,10 +183,6 @@ export default function WorkingHoursPage() {
   };
 
   const handleOpenAddBreakModal = () => {
-    if (breakSessions.length >= 5) {
-      setErrorMessage("Maximum 5 break sessions are allowed.");
-      return;
-    }
     setNewBreakName("");
     setNewBreakStartTime("");
     setNewBreakEndTime("");
@@ -569,24 +568,22 @@ export default function WorkingHoursPage() {
                         </p>
                       </div>
 
-                      {/* Add Break Button if < 5 */}
-                      {breakSessions.length < 5 && (
-                        <button
-                          type="button"
-                          onClick={handleOpenAddBreakModal}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
-                        >
-                          <Plus size={14} />
-                          <span>+ Add Break</span>
-                        </button>
-                      )}
+                      {/* Add Break Button */}
+                      <button
+                        type="button"
+                        onClick={handleOpenAddBreakModal}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
+                      >
+                        <Plus size={14} />
+                        <span>+ Add Break</span>
+                      </button>
                     </div>
 
                     {/* Blue Info Notice matching reference */}
                     <div className="flex items-center gap-2.5 rounded-xl border border-sky-200 bg-sky-50/70 px-4 py-2.5 text-xs text-sky-800">
                       <Info size={16} className="text-sky-600 shrink-0" />
                       <span>
-                        You can set up to 5 break sessions. Only employees can order during these times.
+                        Employees can only place orders during active break sessions. Outside these hours, orders are restricted to admin/provider.
                       </span>
                     </div>
 
@@ -610,7 +607,7 @@ export default function WorkingHoursPage() {
                         </div>
                       ) : (
                         breakSessions.map((b, index) => {
-                          const badgeColor = breakBadgeColors[index % 5] || breakBadgeColors[0];
+                          const badgeColor = breakBadgeColors[index % breakBadgeColors.length];
                           return (
                             <div
                               key={b.id}

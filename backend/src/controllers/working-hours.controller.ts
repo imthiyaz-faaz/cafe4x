@@ -4,7 +4,6 @@ import { generateId } from "../utils/id-generator";
 import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
 import {
   BreakSession,
-  DEFAULT_BREAK_SESSIONS,
   validateOrderingWindow,
   calculateDurationMinutes,
 } from "../utils/session-window";
@@ -124,12 +123,7 @@ export const workingHoursController = {
       const isEmergencyClosed = body.isEmergencyClosed ? 1 : 0;
       const rawBreaks = Array.isArray(body.breakSessions) ? body.breakSessions : [];
 
-      // Limit to max 5 break sessions and sanitize each session
-      if (rawBreaks.length > 5) {
-        return c.json({ success: false, message: "Maximum 5 break sessions are allowed." }, 400);
-      }
-
-      const sanitizedBreaks: BreakSession[] = rawBreaks.slice(0, 5).map((b: any, index: number) => {
+      const sanitizedBreaks: BreakSession[] = rawBreaks.map((b: any, index: number) => {
         const name = (b.name || "").trim();
         const startTime = (b.startTime || "").trim();
         const endTime = (b.endTime || "").trim();

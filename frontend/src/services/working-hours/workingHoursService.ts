@@ -31,14 +31,6 @@ export interface WorkingHoursModel {
   updatedAt?: string;
 }
 
-export const DEFAULT_BREAK_SESSIONS: BreakSession[] = [
-  { id: "break_1", name: "Break 1", startTime: "09:30", endTime: "09:45", durationMinutes: 15, isEnabled: true },
-  { id: "break_2", name: "Break 2", startTime: "11:30", endTime: "11:45", durationMinutes: 15, isEnabled: true },
-  { id: "break_3", name: "Break 3", startTime: "13:30", endTime: "14:00", durationMinutes: 30, isEnabled: true },
-  { id: "break_4", name: "Break 4", startTime: "16:00", endTime: "16:15", durationMinutes: 15, isEnabled: true },
-  { id: "break_5", name: "Break 5", startTime: "18:00", endTime: "18:15", durationMinutes: 15, isEnabled: true },
-];
-
 export const workingHoursApi = {
   async getWorkingHours(options?: { signal?: AbortSignal }): Promise<{
     workingHours: WorkingHoursModel;

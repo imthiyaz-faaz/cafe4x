@@ -1447,39 +1447,12 @@ export default function LocationPage() {
                       )}
                     </div>
 
-                    {/* Bottom Action / Add Seat Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#EEE5DC] pt-4 text-xs font-semibold">
-                      <div className="flex items-center gap-2 text-[#70523E]">
-                        <span>Total Configured Seats:</span>
-                        <span className="rounded-lg bg-[#FAF4ED] px-2.5 py-1 font-bold text-[#8C5835] border border-[#EAD5C0] shadow-2xs">
-                          {currentSeats.length} Seats
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const locId = selectedLocation.id;
-                          const locSeats = seatsByLoc[locId] || [];
-                          const nextInfo = getNextAvailableSeatInfo(locSeats, selectedLocation.name);
-                          const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-                          setNewSeatForm({
-                            location: selectedLocation.name || locId,
-                            seatId: nextInfo.seatId,
-                            seatNo: nextInfo.number,
-                            assignNow: true,
-                            employeeName: "",
-                            employeeEmail: "",
-                            orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
-                          });
-                          setCreateSeatError(null);
-                          setIsCreateSeatOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[#8C5835] transition hover:text-[#6F3F24] hover:underline"
-                      >
-                        <Plus size={14} />
-                        <span>Add another seat to this layout</span>
-                      </button>
+                    {/* Bottom Action Bar */}
+                    <div className="flex items-center gap-2 border-t border-[#EEE5DC] pt-4 text-xs font-semibold text-[#70523E]">
+                      <span>Total Configured Seats:</span>
+                      <span className="rounded-lg bg-[#FAF4ED] px-2.5 py-1 font-bold text-[#8C5835] border border-[#EAD5C0] shadow-2xs">
+                        {currentSeats.length} Seats
+                      </span>
                     </div>
                   </div>
 

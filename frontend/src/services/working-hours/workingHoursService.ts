@@ -50,13 +50,13 @@ export const workingHoursApi = {
       windowStatus?: OrderingWindowStatus;
     }>("/api/working-hours", undefined, { signal: options?.signal, cache: "no-store" });
 
-    // Guarantee complete working hours with default breaks if configuration missing
+    // Guarantee complete working hours with empty breaks if configuration missing
     const defaultWH: WorkingHoursModel = {
       openTime: "08:00",
       closeTime: "20:00",
       timezone: "Asia/Dubai",
       isEmergencyClosed: false,
-      breakSessions: DEFAULT_BREAK_SESSIONS,
+      breakSessions: [],
     };
 
     const wh: WorkingHoursModel = res.workingHours
@@ -65,7 +65,7 @@ export const workingHoursApi = {
           ...res.workingHours,
           breakSessions: Array.isArray(res.workingHours.breakSessions)
             ? res.workingHours.breakSessions
-            : DEFAULT_BREAK_SESSIONS,
+            : [],
         }
       : defaultWH;
 

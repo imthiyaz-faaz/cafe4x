@@ -84,7 +84,7 @@ export async function validateOrderingWindow(
   const timezone = row?.timezone || "Asia/Dubai";
   const isEmergencyClosed = Boolean(row?.is_emergency_closed);
 
-  let breakSessions: BreakSession[] = DEFAULT_BREAK_SESSIONS;
+  let breakSessions: BreakSession[] = [];
   if (row) {
     if (row.break_sessions_json != null) {
       try {
@@ -108,8 +108,6 @@ export async function validateOrderingWindow(
       } catch (e) {
         console.warn("Could not parse break_sessions_json:", e);
       }
-    } else {
-      breakSessions = [];
     }
   }
 

@@ -24,6 +24,7 @@ import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
 import { orderApi, type ProviderOrder } from "../../services/orders";
 import { itemsApi } from "../../services/items";
+import { formatSeatIdentifier } from "../../utils/seatFormatter";
 
 export default function ProviderPendingOrdersPage() {
   const { currencySymbol } = useOrgCurrency();
@@ -615,7 +616,7 @@ export default function ProviderPendingOrdersPage() {
                                 </span>{" "}
                                 • Seat:{" "}
                                 <span className="font-semibold text-stone-800">
-                                  {order.seat || (order as any).seatId || "—"}
+                                  {formatSeatIdentifier(order.seat || (order as any).seatId) || "—"}
                                 </span>
                               </p>
                               <p className="text-[11px] text-[#A08C7D]">

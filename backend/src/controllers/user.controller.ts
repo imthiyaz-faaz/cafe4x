@@ -517,47 +517,66 @@ export const userController = {
         .bind(targetUserId)
         .run();
 
-      // 2. Unassign from seats (set employee_id, employee_name, employee_email, employee to NULL)
-      await db
-        .prepare(
-          `UPDATE seats 
-           SET employee_id = NULL, employee_name = NULL, employee_email = NULL, employee = NULL 
-           WHERE employee_id = ?`
-        )
-        .bind(targetUserId)
-        .run();
+      // 2. Unassign from seats and seat assignments
+      try {
+        await db
+          .prepare(
+            `UPDATE seats 
+             SET employee_id = NULL, employee_name = NULL, employee_email = NULL, employee = NULL 
+             WHERE employee_id = ?`
+          )
+          .bind(targetUserId)
+          .run();
+      } catch (seatErr: any) {
+        console.warn("Could not unassign user from seats:", seatErr?.message);
+      }
+
+      try {
+        await db
+          .prepare(`DELETE FROM employee_seat_assignments WHERE employee_id = ?`)
+          .bind(targetUserId)
+          .run();
+      } catch (esaErr: any) {
+        // Safe to ignore if table does not exist
+      }
 
       // 3. Clear owner reference in organizations if matching
-      await db
-        .prepare(`UPDATE organizations SET owner_user_id = NULL WHERE owner_user_id = ?`)
-        .bind(targetUserId)
-        .run();
+      try {
+        await db
+          .prepare(`UPDATE organizations SET owner_user_id = NULL WHERE owner_user_id = ?`)
+          .bind(targetUserId)
+          .run();
+      } catch (orgErr: any) {
+        console.warn("Could not clear organization owner_user_id:", orgErr?.message);
+      }
 
       // 4. Delete user sessions (immediately revokes all active auth tokens)
-      await db
-        .prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
-        .bind(targetUserId)
-        .run();
+      try {
+        await db
+          .prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
+          .bind(targetUserId)
+          .run();
+      } catch (sessErr: any) {
+        console.warn("Could not delete user sessions:", sessErr?.message);
+      }
 
       // 5. Delete provider locations
-      await db
-        .prepare(`DELETE FROM provider_locations WHERE provider_id = ?`)
-        .bind(targetUserId)
-        .run();
+      try {
+        await db
+          .prepare(`DELETE FROM provider_locations WHERE provider_id = ?`)
+          .bind(targetUserId)
+          .run();
+      } catch (provErr: any) {
+        console.warn("Could not delete provider locations:", provErr?.message);
+      }
 
-      // 6. Delete ordering sessions
-      await db
-        .prepare(`DELETE FROM ordering_sessions WHERE employee_id = ?`)
-        .bind(targetUserId)
-        .run();
-
-      // 7. Delete organization link
+      // 6. Delete organization link
       await db
         .prepare(`DELETE FROM user_organizations WHERE user_id = ?`)
         .bind(targetUserId)
         .run();
 
-      // 8. Permanently delete from users table
+      // 7. Permanently delete from users table
       await db
         .prepare(`DELETE FROM users WHERE id = ?`)
         .bind(targetUserId)

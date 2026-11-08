@@ -2010,39 +2010,6 @@ export default function LocationPage() {
           {/* Employee Fields - Shown when assignNow is checked */}
           {newSeatForm.assignNow && (
             <div className="space-y-3 rounded-2xl border border-[#E8DED4] bg-white p-3.5">
-              <div>
-                <label className="mb-1 block text-xs font-bold text-[#45352B]">
-                  Select Registered Employee (Optional)
-                </label>
-                <select
-                  value={selectedCreateEmployee?.id || ""}
-                  onChange={(e) => {
-                    const found = orgUsers.find((u) => u.id === e.target.value);
-                    setSelectedCreateEmployee(found || null);
-                    if (found) {
-                      setNewSeatForm({
-                        ...newSeatForm,
-                        employeeName: found.name,
-                        employeeEmail: found.email,
-                      });
-                    }
-                  }}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-800 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 cursor-pointer"
-                >
-                  <option value="">-- Choose from organization employees --</option>
-                  {orgUsers.map((u) => {
-                    const isOccupied = currentSeats.some(
-                      (s) => s.employeeId === u.id || s.employeeEmail?.toLowerCase() === u.email.toLowerCase()
-                    );
-                    return (
-                      <option key={u.id} value={u.id} disabled={isOccupied}>
-                        {u.name} ({u.email}){isOccupied ? " - [Occupied]" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
               <FormRow label="Employee Name" required>
                 <input
                   required={newSeatForm.assignNow}

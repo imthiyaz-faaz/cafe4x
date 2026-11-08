@@ -24,10 +24,12 @@ export interface UserModel {
 }
 
 export const userController = {
-  // GET /api/users/check-username?username=xyz
+  // GET /api/users/check-username?username=xyz&excludeUserId=USR-xxx
   async checkUsername(c: Context<AppEnv>) {
     try {
       const username = (c.req.query("username") || "").trim().toLowerCase();
+      const excludeUserId = (c.req.query("excludeUserId") || "").trim();
+
       if (!username) {
         return c.json({ success: false, available: false, message: "Username is required" }, 400);
       }
@@ -37,41 +39,24 @@ export const userController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const org = await resolveAuthorizedOrg(c).catch(() => null);
 
-      if (org) {
-        // Check organization-level username duplicate
-        const existingInOrg = (await db
-          .prepare(
-            `SELECT u.id, u.user_name as userName
-             FROM users u
-             JOIN user_organizations uo ON u.id = uo.user_id
-             WHERE uo.organization_id = ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
-          )
-          .bind(org.organizationId, username)
-          .get()) as any;
+      // Check username globally across all users in the database (case-insensitive & trimmed)
+      let query = `SELECT id, user_name as userName FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`;
+      const params: any[] = [username];
 
-        if (existingInOrg) {
-          return c.json({
-            success: true,
-            available: false,
-            message: "This username already exists in this organization. Please choose another username.",
-          });
-        }
-      } else {
-        // Fallback to global user check
-        const existing = (await db
-          .prepare(`SELECT id FROM users WHERE LOWER(TRIM(user_name)) = LOWER(?)`)
-          .bind(username)
-          .get()) as any;
+      if (excludeUserId) {
+        query += ` AND id != ? AND display_id != ?`;
+        params.push(excludeUserId, excludeUserId);
+      }
 
-        if (existing) {
-          return c.json({
-            success: true,
-            available: false,
-            message: "This username is already taken. Please choose another username.",
-          });
-        }
+      const existing = (await db.prepare(query).bind(...params).get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This username is already taken. Please choose another username.",
+        });
       }
 
       return c.json({
@@ -426,21 +411,20 @@ export const userController = {
           return c.json({ success: false, message: "Username must be at least 3 characters long" }, 400);
         }
 
-        const usernameInOrg = (await db
+        const existingGlobalUser = (await db
           .prepare(
-            `SELECT u.id, u.user_name as userName, u.user_type as userType
-             FROM users u
-             JOIN user_organizations uo ON u.id = uo.user_id
-             WHERE uo.organization_id = ? AND u.id != ? AND LOWER(TRIM(u.user_name)) = LOWER(?)`
+            `SELECT id, user_name as userName
+             FROM users
+             WHERE id != ? AND display_id != ? AND LOWER(TRIM(user_name)) = LOWER(?)`
           )
-          .bind(org.organizationId, targetUserId, newUserName)
+          .bind(targetUserId, targetUserId, newUserName)
           .get()) as any;
 
-        if (usernameInOrg) {
+        if (existingGlobalUser) {
           return c.json({
             success: false,
-            code: "USERNAME_ALREADY_EXISTS_IN_ORG",
-            message: `Username "${newUserName}" is already taken in this organization.`,
+            code: "USERNAME_ALREADY_EXISTS",
+            message: "This username is already taken. Please choose another username.",
           }, 409);
         }
       }

@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from "react";
-import { X } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { X, Loader2, CheckCircle2 } from "lucide-react";
 import type { UserItem } from "../../pages/Admin/Userspage";
+import { userApi } from "../../services/users";
 
 interface UsersEditProps {
   isOpen: boolean;
@@ -23,6 +24,11 @@ export default function UsersEdit({
     mobileNumber: "",
   });
   const [error, setError] = useState("");
+  const [usernameChecking, setUsernameChecking] = useState(false);
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+  const [usernameError, setUsernameError] = useState<string | null>(null);
+  const usernameTimerRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Sync form data whenever active user changes or modal opens
   useEffect(() => {
@@ -35,17 +41,134 @@ export default function UsersEdit({
         mobileNumber: user.mobileNumber || "",
       });
       setError("");
+      setUsernameError(null);
+      setUsernameAvailable(null);
+      setUsernameChecking(false);
     }
   }, [user, isOpen]);
 
   if (!isOpen || !user) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const checkUsernameAvailability = async (rawVal: string) => {
+    const val = rawVal.trim();
+    if (!val) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      setUsernameError("User Name is required");
+      return;
+    }
+
+    if (val.length < 3) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      setUsernameError("Username must be at least 3 characters long");
+      return;
+    }
+
+    // If unchanged from original username, it is valid and available
+    if (user && val.toLowerCase() === (user.userName || "").trim().toLowerCase()) {
+      setUsernameChecking(false);
+      setUsernameAvailable(true);
+      setUsernameError(null);
+      return;
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setUsernameChecking(true);
+    try {
+      const res = await userApi.checkUsername(val, user.id, controller.signal);
+      if (!res.available) {
+        setUsernameAvailable(false);
+        setUsernameError("This username is already taken. Please choose another username.");
+      } else {
+        setUsernameAvailable(true);
+        setUsernameError(null);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError" || err?.name === "CanceledError") return;
+      setUsernameAvailable(null);
+      setUsernameError(err?.message || "Unable to verify username availability.");
+    } finally {
+      if (!controller.signal.aborted) {
+        setUsernameChecking(false);
+      }
+    }
+  };
+
+  const handleUserNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVal = e.target.value;
+    setFormData((prev) => ({ ...prev, userName: nextVal }));
+    setUsernameAvailable(null);
+    setUsernameError(null);
+
+    if (usernameTimerRef.current) {
+      clearTimeout(usernameTimerRef.current);
+    }
+
+    const trimmed = nextVal.trim();
+    if (!trimmed) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      return;
+    }
+
+    // Instant match if user reverted to their current username
+    if (user && trimmed.toLowerCase() === (user.userName || "").trim().toLowerCase()) {
+      setUsernameChecking(false);
+      setUsernameAvailable(true);
+      setUsernameError(null);
+      return;
+    }
+
+    setUsernameChecking(true);
+    usernameTimerRef.current = setTimeout(() => {
+      checkUsernameAvailability(trimmed);
+    }, 450);
+  };
+
+  const handleUserNameBlur = async () => {
+    const val = formData.userName.trim();
+    if (!val) {
+      setUsernameError("User Name is required");
+      setUsernameAvailable(null);
+      setUsernameChecking(false);
+      return;
+    }
+    if (val.length < 3) {
+      setUsernameError("Username must be at least 3 characters long");
+      setUsernameAvailable(null);
+      setUsernameChecking(false);
+      return;
+    }
+    if (usernameTimerRef.current) {
+      clearTimeout(usernameTimerRef.current);
+    }
+    await checkUsernameAvailability(val);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
     if (!formData.name.trim()) {
       setError("Name is required");
+      return;
+    }
+    if (!formData.userName.trim()) {
+      setError("User Name is required");
+      return;
+    }
+    if (formData.userName.trim().length < 3) {
+      setError("Username must be at least 3 characters long");
+      return;
+    }
+    if (usernameAvailable === false || usernameError) {
+      setError("Please choose an available username before saving.");
       return;
     }
     if (!formData.email.trim()) {
@@ -113,22 +236,44 @@ export default function UsersEdit({
             </div>
           </div>
 
-          {/* User Name * (Prefilled gray input like screenshot) */}
-          <div className="grid grid-cols-12 items-center gap-3">
-            <label className="col-span-3 font-semibold text-gray-800">
+          {/* User Name * */}
+          <div className="grid grid-cols-12 items-start gap-3">
+            <label className="col-span-3 font-semibold text-gray-800 pt-2">
               User Name <span className="text-red-500">*</span>
             </label>
             <div className="col-span-9">
-              <input
-                required
-                type="text"
-                placeholder="User Name"
-                value={formData.userName}
-                onChange={(e) =>
-                  setFormData({ ...formData, userName: e.target.value })
-                }
-                className="w-full rounded-md border border-gray-300 bg-gray-100 px-3 py-2 text-gray-800 outline-none focus:border-[#28A745]"
-              />
+              <div className="relative w-full">
+                <input
+                  required
+                  type="text"
+                  placeholder="User Name"
+                  value={formData.userName}
+                  onBlur={handleUserNameBlur}
+                  onChange={handleUserNameChange}
+                  className={`w-full rounded-md border px-3 py-2 pr-9 text-gray-800 outline-none transition ${
+                    usernameError
+                      ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
+                      : usernameAvailable === true
+                      ? "border-emerald-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                      : "border-gray-300 focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+                  }`}
+                />
+                <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                  {usernameChecking && (
+                    <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+                  )}
+                  {!usernameChecking && usernameAvailable === true && (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  )}
+                </div>
+              </div>
+              {usernameChecking ? (
+                <p className="mt-1 text-xs font-medium text-[#8C5835]">Checking username availability...</p>
+              ) : usernameError ? (
+                <p className="mt-1 text-xs font-semibold text-red-500">{usernameError}</p>
+              ) : usernameAvailable === true ? (
+                <p className="mt-1 text-xs font-semibold text-emerald-600">Username is available.</p>
+              ) : null}
             </div>
           </div>
 

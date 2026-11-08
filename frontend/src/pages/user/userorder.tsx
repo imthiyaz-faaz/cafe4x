@@ -22,6 +22,7 @@ import { itemsApi } from "../../services/items";
 import { locationApi } from "../../services/locations";
 import { userApi } from "../../services/userApi";
 import { qrApi } from "../../services/qrApi";
+import { formatSeatIdentifier } from "../../utils/seatFormatter";
 
 
 export interface UserOrderItem {
@@ -781,7 +782,7 @@ export default function UserOrderPage() {
               </div>
               <p className="text-[11px] text-[#8A7667]">
                 {locationName}
-                {activeSeatNumber ? ` • Seat ${String(activeSeatNumber).padStart(2, "0")}` : (seatId ? ` • ${seatId}` : "")}
+                {activeSeatNumber ? ` • Seat ${String(activeSeatNumber).padStart(2, "0")}` : (seatId ? ` • ${formatSeatIdentifier(seatId)}` : "")}
               </p>
             </div>
           </div>

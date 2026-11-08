@@ -495,8 +495,8 @@ export const orderController = {
         }
       }
 
-      // 3. Build comprehensive employee list for this location:
-      // Include all seats assigned to employees in this location, plus any employees with orders in this location.
+      // 3. Build employee list for this location strictly from actual orders in this date range.
+      // An employee must have placed at least 1 order in this location to be included.
       interface LocEmpSummary {
         employeeId: string;
         employeeName: string;
@@ -510,44 +510,38 @@ export const orderController = {
         latestOrderDate?: string;
       }
 
-      const empMap = new Map<string, LocEmpSummary>();
-
-      // First add assigned seats
+      // Map assigned seats for fast metadata resolution (seat label, username, email)
+      const seatByEmpKey = new Map<string, any>();
       for (const s of seats || []) {
-        const empName = s.uName || s.employeeName || s.employeeRaw;
+        const empName = (s.uName || s.employeeName || s.employeeRaw || "").trim().toLowerCase();
         const empId = s.userId || s.employeeId;
-        const seatLabel = s.seatId || (s.seatNumber ? `Seat ${s.seatNumber}` : "Seat");
-
-        if (empName || empId) {
-          const key = empId || empName;
-          empMap.set(key, {
-            employeeId: empId || `emp_${key}`,
-            employeeName: empName || "Assigned Employee",
-            username: s.userName || undefined,
-            employeeEmail: s.uEmail || s.employeeEmail || undefined,
-            seat: seatLabel,
-            seatId: s.seatId,
-            totalOrders: 0,
-            totalAmount: 0,
-            latestStatus: "None",
-            latestOrderDate: undefined,
-          });
-        }
+        if (empId) seatByEmpKey.set(String(empId), s);
+        if (empName) seatByEmpKey.set(empName, s);
       }
 
-      // Now aggregate orders into employee summaries
+      const empMap = new Map<string, LocEmpSummary>();
+
+      // Aggregate ONLY from actual orders placed in this location within the date range
       for (const o of locOrders || []) {
         const oEmpKey = o.employeeId || o.employeeName;
         if (!oEmpKey) continue;
 
+        const normalizedLookupKey = String(o.employeeId || o.employeeName).trim().toLowerCase();
+        const matchedSeat = (o.employeeId && seatByEmpKey.get(String(o.employeeId))) ||
+          seatByEmpKey.get(normalizedLookupKey);
+
         let existing = empMap.get(oEmpKey);
         if (!existing) {
-          // If employee placed order in this location but not assigned to a seat
+          const seatLabel = o.seatId || o.seat || matchedSeat?.seatId || (matchedSeat?.seatNumber ? `Seat ${matchedSeat.seatNumber}` : "Seat");
+          const resolvedEmpId = o.employeeId || matchedSeat?.userId || matchedSeat?.employeeId || o.employeeName;
+          const resolvedEmpName = o.employeeName || matchedSeat?.uName || matchedSeat?.employeeName || "Employee";
           existing = {
-            employeeId: o.employeeId || `emp_${o.employeeName}`,
-            employeeName: o.employeeName || "Employee",
-            seat: o.seatId || o.seat || "Seat",
-            seatId: o.seatId || undefined,
+            employeeId: resolvedEmpId,
+            employeeName: resolvedEmpName,
+            username: matchedSeat?.userName || undefined,
+            employeeEmail: matchedSeat?.uEmail || matchedSeat?.employeeEmail || undefined,
+            seat: seatLabel,
+            seatId: o.seatId || matchedSeat?.seatId || undefined,
             totalOrders: 0,
             totalAmount: 0,
             latestStatus: undefined,
@@ -561,14 +555,20 @@ export const orderController = {
         if (!existing.latestOrderDate || new Date(o.createdAt) > new Date(existing.latestOrderDate)) {
           existing.latestOrderDate = o.createdAt;
           existing.latestStatus = o.status;
+          if (o.seatId || o.seat) {
+            existing.seat = o.seatId || o.seat;
+            existing.seatId = o.seatId || existing.seatId;
+          }
         }
       }
 
-      // Convert to array and sort by totalOrders desc, then employeeName
-      const employeeList = Array.from(empMap.values()).sort((a, b) => {
-        if (b.totalOrders !== a.totalOrders) return b.totalOrders - a.totalOrders;
-        return a.employeeName.localeCompare(b.employeeName);
-      });
+      // Convert to array and filter out any zero-order records (ensures only ordering employees appear)
+      const employeeList = Array.from(empMap.values())
+        .filter((emp) => emp.totalOrders > 0)
+        .sort((a, b) => {
+          if (b.totalOrders !== a.totalOrders) return b.totalOrders - a.totalOrders;
+          return a.employeeName.localeCompare(b.employeeName);
+        });
 
       return c.json({
         success: true,
@@ -596,7 +596,12 @@ export const orderController = {
         return c.json({ success: false, message: "Organization not found" }, 403);
       }
 
-      const employeeId = c.req.param("employeeId");
+      const rawEmployeeParam = c.req.param("employeeId") || "";
+      // If client passed an emp_ prefix, strip it for clean lookup
+      const employeeId = rawEmployeeParam.startsWith("emp_")
+        ? rawEmployeeParam.substring(4)
+        : rawEmployeeParam;
+
       const db = getUniversalDb(c.env?.DB);
       await ensureOrderSchema(db);
       const startDate = c.req.query("startDate");
@@ -608,9 +613,24 @@ export const orderController = {
           `SELECT u.id, u.name, u.user_name as userName, u.email
            FROM users u
            JOIN user_organizations uo ON u.id = uo.user_id
-           WHERE uo.organization_id = ? AND (u.id = ? OR LOWER(u.name) = LOWER(?) OR LOWER(u.email) = LOWER(?))`
+           WHERE uo.organization_id = ? AND (
+             u.id = ? 
+             OR u.id = ?
+             OR LOWER(TRIM(u.name)) = LOWER(TRIM(?)) 
+             OR LOWER(TRIM(u.name)) = LOWER(TRIM(?))
+             OR LOWER(TRIM(u.email)) = LOWER(TRIM(?))
+             OR LOWER(TRIM(u.user_name)) = LOWER(TRIM(?))
+           )`
         )
-        .bind(org.organizationId, employeeId, employeeId, employeeId)
+        .bind(
+          org.organizationId,
+          employeeId,
+          rawEmployeeParam,
+          employeeId,
+          rawEmployeeParam,
+          employeeId,
+          employeeId
+        )
         .get()) as any;
 
       // 2. Resolve employee's assigned seat (if any)
@@ -621,14 +641,35 @@ export const orderController = {
             `SELECT s.id as seatId, s.display_id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
              FROM seats s
              JOIN locations l ON s.location_id = l.id
-             WHERE s.organization_id = ? AND (s.employee_id = ? OR LOWER(s.employee_name) = LOWER(?) OR LOWER(s.employee) = LOWER(?))
+             WHERE s.organization_id = ? AND (
+               s.employee_id = ? 
+               OR s.employee_id = ?
+               OR LOWER(TRIM(s.employee_name)) = LOWER(TRIM(?)) 
+               OR LOWER(TRIM(s.employee_name)) = LOWER(TRIM(?))
+               OR LOWER(TRIM(s.employee)) = LOWER(TRIM(?))
+               OR LOWER(TRIM(s.employee)) = LOWER(TRIM(?))
+             )
              LIMIT 1`
           )
-          .bind(org.organizationId, user?.id || employeeId, user?.name || employeeId, user?.name || employeeId)
+          .bind(
+            org.organizationId,
+            user?.id || employeeId,
+            rawEmployeeParam,
+            user?.name || employeeId,
+            rawEmployeeParam,
+            user?.name || employeeId,
+            rawEmployeeParam
+          )
           .get();
       } catch {}
 
       // 3. Query all orders placed by this employee in this organization
+      // Match by:
+      //  a) o.employee_id matching user.id, employeeId, or rawEmployeeParam
+      //  b) o.employee_name matching user.name, employeeId, or rawEmployeeParam
+      const targetEmpIds = Array.from(new Set([user?.id, employeeId, rawEmployeeParam].filter(Boolean)));
+      const targetEmpNames = Array.from(new Set([user?.name, user?.userName, user?.email, employeeId, rawEmployeeParam].filter(Boolean)));
+
       let orderQuery = `
         SELECT 
           o.id, 
@@ -651,10 +692,12 @@ export const orderController = {
           o.updated_at as updatedAt
         FROM orders o
         WHERE o.organization_id = ?
-          AND (o.employee_id = ? OR (o.employee_name IS NOT NULL AND LOWER(o.employee_name) = LOWER(?)))
+          AND (
+            o.employee_id IN (${targetEmpIds.map(() => "?").join(", ")})
+            OR (o.employee_name IS NOT NULL AND LOWER(TRIM(o.employee_name)) IN (${targetEmpNames.map(() => "LOWER(TRIM(?))").join(", ")}))
+          )
       `;
-      const resolvedName = user?.name || employeeId;
-      const orderParams: any[] = [org.organizationId, user?.id || employeeId, resolvedName];
+      const orderParams: any[] = [org.organizationId, ...targetEmpIds, ...targetEmpNames];
 
       if (startDate) {
         orderQuery += ` AND date(o.created_at) >= date(?)`;
@@ -762,11 +805,13 @@ export const orderController = {
       const primaryLocation = assignedSeat?.locationName || (orders[0]?.locationName || "Office");
       const primarySeat = assignedSeat?.seatId || (orders[0]?.seat || "Seat 01");
 
+      const cleanDisplayEmpName = user?.name || orders[0]?.employeeName || employeeId;
+
       return c.json({
         success: true,
         employee: {
           id: user?.id || employeeId,
-          name: user?.name || orders[0]?.employeeName || employeeId,
+          name: cleanDisplayEmpName,
           username: user?.userName || undefined,
           email: user?.email || undefined,
           locationName: primaryLocation,

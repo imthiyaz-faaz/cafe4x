@@ -32,11 +32,13 @@ export default function UserCreate({
   const [usernameChecking, setUsernameChecking] = useState(false);
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
   const usernameTimerRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   if (!isOpen) return null;
 
   const handleClose = () => {
     if (usernameTimerRef.current) clearTimeout(usernameTimerRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
     setErrors({});
     setGeneralError("");
     setIsSubmitting(false);
@@ -48,15 +50,31 @@ export default function UserCreate({
   // Perform debounced username availability check
   const checkUsernameAvailability = async (rawVal: string) => {
     const val = rawVal.trim();
-    if (!val || val.length < 3) {
+    if (!val) {
       setUsernameChecking(false);
       setUsernameAvailable(null);
       return;
     }
 
+    if (val.length < 3) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      setErrors((prev) => ({
+        ...prev,
+        userName: "Username must be at least 3 characters long",
+      }));
+      return;
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setUsernameChecking(true);
     try {
-      const res = await userApi.checkUsername(val);
+      const res = await userApi.checkUsername(val, undefined, controller.signal);
       if (!res.available) {
         setUsernameAvailable(false);
         setErrors((prev) => ({
@@ -68,13 +86,18 @@ export default function UserCreate({
         setErrors((prev) => ({ ...prev, userName: undefined }));
       }
     } catch (err: any) {
+      if (err?.name === "AbortError" || err?.name === "CanceledError") {
+        return; // Ignore canceled requests
+      }
       setUsernameAvailable(null);
       setErrors((prev) => ({
         ...prev,
         userName: err?.message || "Unable to verify username availability.",
       }));
     } finally {
-      setUsernameChecking(false);
+      if (!controller.signal.aborted) {
+        setUsernameChecking(false);
+      }
     }
   };
 
@@ -88,14 +111,17 @@ export default function UserCreate({
       clearTimeout(usernameTimerRef.current);
     }
 
-    if (nextVal.trim().length >= 3) {
-      setUsernameChecking(true);
-      usernameTimerRef.current = setTimeout(() => {
-        checkUsernameAvailability(nextVal);
-      }, 400);
-    } else {
+    const trimmed = nextVal.trim();
+    if (!trimmed) {
       setUsernameChecking(false);
+      setUsernameAvailable(null);
+      return;
     }
+
+    setUsernameChecking(true);
+    usernameTimerRef.current = setTimeout(() => {
+      checkUsernameAvailability(trimmed);
+    }, 450);
   };
 
   // Real-time onBlur validation for Username
@@ -104,14 +130,19 @@ export default function UserCreate({
     if (!val) {
       setErrors((prev) => ({ ...prev, userName: "User Name is required" }));
       setUsernameAvailable(null);
+      setUsernameChecking(false);
       return;
     }
     if (val.length < 3) {
       setErrors((prev) => ({ ...prev, userName: "Username must be at least 3 characters long" }));
       setUsernameAvailable(null);
+      setUsernameChecking(false);
       return;
     }
 
+    if (usernameTimerRef.current) {
+      clearTimeout(usernameTimerRef.current);
+    }
     await checkUsernameAvailability(val);
   };
 
@@ -300,7 +331,11 @@ export default function UserCreate({
             )}
           </div>
         </div>
-        {errors.userName ? (
+        {usernameChecking ? (
+          <p className="mt-1 text-xs font-medium text-[#8C5835] flex items-center gap-1.5">
+            <span>Checking username availability...</span>
+          </p>
+        ) : errors.userName ? (
           <p className="mt-1 text-xs font-semibold text-red-500">{errors.userName}</p>
         ) : usernameAvailable === true ? (
           <p className="mt-1 text-xs font-semibold text-emerald-600">Username is available.</p>

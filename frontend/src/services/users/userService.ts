@@ -57,8 +57,10 @@ export const userApi = {
     return res.users || [];
   },
 
-  async checkUsername(username: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {
-    return await api.get<{ success: boolean; available: boolean; message: string }>("/api/users/check-username", { username: username.trim() }, { signal });
+  async checkUsername(username: string, excludeUserId?: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {
+    const params: Record<string, string> = { username: username.trim() };
+    if (excludeUserId) params.excludeUserId = excludeUserId.trim();
+    return await api.get<{ success: boolean; available: boolean; message: string }>("/api/users/check-username", params, { signal });
   },
 
   async checkEmail(email: string, signal?: AbortSignal): Promise<{ success: boolean; available: boolean; message: string }> {

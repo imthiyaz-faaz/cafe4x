@@ -1163,24 +1163,6 @@ export default function LocationPage() {
                       {/* Ambient Architectural Lighting overlay */}
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-100/30 via-transparent to-stone-400/10" />
 
-                      {/* Modern Botanical Corners & Atmosphere Markers */}
-                      <div className="absolute top-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-base">🪴</span>
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">North Zone</span>
-                      </div>
-                      <div className="absolute top-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Screen Area</span>
-                        <span className="text-base">🖥️</span>
-                      </div>
-                      <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-base">🌱</span>
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Room Entrance</span>
-                      </div>
-                      <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Espresso Bar</span>
-                        <span className="text-base">☕</span>
-                      </div>
-
                       {/* Interactive Seating Model Wrapper */}
                       {currentSeats.length === 0 ? (
                         <div className="relative z-10 flex flex-col items-center justify-center py-16 px-6 text-center max-w-md">
@@ -1447,39 +1429,12 @@ export default function LocationPage() {
                       )}
                     </div>
 
-                    {/* Bottom Action / Add Seat Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#EEE5DC] pt-4 text-xs font-semibold">
-                      <div className="flex items-center gap-2 text-[#70523E]">
-                        <span>Total Configured Seats:</span>
-                        <span className="rounded-lg bg-[#FAF4ED] px-2.5 py-1 font-bold text-[#8C5835] border border-[#EAD5C0] shadow-2xs">
-                          {currentSeats.length} Seats
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const locId = selectedLocation.id;
-                          const locSeats = seatsByLoc[locId] || [];
-                          const nextInfo = getNextAvailableSeatInfo(locSeats, selectedLocation.name);
-                          const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-                          setNewSeatForm({
-                            location: selectedLocation.name || locId,
-                            seatId: nextInfo.seatId,
-                            seatNo: nextInfo.number,
-                            assignNow: true,
-                            employeeName: "",
-                            employeeEmail: "",
-                            orderUrl: `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(nextInfo.number, 10) || 1}?seatId=${nextInfo.seatId}`,
-                          });
-                          setCreateSeatError(null);
-                          setIsCreateSeatOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-[#8C5835] transition hover:text-[#6F3F24] hover:underline"
-                      >
-                        <Plus size={14} />
-                        <span>Add another seat to this layout</span>
-                      </button>
+                    {/* Bottom Action Bar */}
+                    <div className="flex items-center gap-2 border-t border-[#EEE5DC] pt-4 text-xs font-semibold text-[#70523E]">
+                      <span>Total Configured Seats:</span>
+                      <span className="rounded-lg bg-[#FAF4ED] px-2.5 py-1 font-bold text-[#8C5835] border border-[#EAD5C0] shadow-2xs">
+                        {currentSeats.length} Seats
+                      </span>
                     </div>
                   </div>
 
@@ -2010,39 +1965,6 @@ export default function LocationPage() {
           {/* Employee Fields - Shown when assignNow is checked */}
           {newSeatForm.assignNow && (
             <div className="space-y-3 rounded-2xl border border-[#E8DED4] bg-white p-3.5">
-              <div>
-                <label className="mb-1 block text-xs font-bold text-[#45352B]">
-                  Select Registered Employee (Optional)
-                </label>
-                <select
-                  value={selectedCreateEmployee?.id || ""}
-                  onChange={(e) => {
-                    const found = orgUsers.find((u) => u.id === e.target.value);
-                    setSelectedCreateEmployee(found || null);
-                    if (found) {
-                      setNewSeatForm({
-                        ...newSeatForm,
-                        employeeName: found.name,
-                        employeeEmail: found.email,
-                      });
-                    }
-                  }}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-800 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 cursor-pointer"
-                >
-                  <option value="">-- Choose from organization employees --</option>
-                  {orgUsers.map((u) => {
-                    const isOccupied = currentSeats.some(
-                      (s) => s.employeeId === u.id || s.employeeEmail?.toLowerCase() === u.email.toLowerCase()
-                    );
-                    return (
-                      <option key={u.id} value={u.id} disabled={isOccupied}>
-                        {u.name} ({u.email}){isOccupied ? " - [Occupied]" : ""}
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
-
               <FormRow label="Employee Name" required>
                 <input
                   required={newSeatForm.assignNow}

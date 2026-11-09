@@ -210,15 +210,15 @@ export async function resolveAuthorizedOrg(
  
   // If a specific organization was requested, ensure the user has access to it
   if (reqShortCode) {
-    const match = userOrgs.find((o) => (o.shortCode || "").toUpperCase() === reqShortCode);
+    const match = userOrgs.find((o) => (o.shortCode || String()).toUpperCase() === reqShortCode);
     if (match) {
-      return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || 'INR' };
+      return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || String('INR') };
     }
     // If shortCode was not matched, also check if reqOrgId was provided and valid
     if (reqOrgId) {
       const orgMatch = userOrgs.find((o) => String(o.id) === reqOrgId);
       if (orgMatch) {
-        return { organizationId: String(orgMatch.id), shortCode: orgMatch.shortCode, currency: orgMatch.currency || 'INR' };
+        return { organizationId: String(orgMatch.id), shortCode: orgMatch.shortCode, currency: orgMatch.currency || String('INR') };
       }
     }
     return null;
@@ -229,9 +229,9 @@ export async function resolveAuthorizedOrg(
     if (!match) {
       return null;
     }
-    return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || "INR" };
+    return { organizationId: String(match.id), shortCode: match.shortCode, currency: match.currency || String('INR') };
   }
- 
+
   // Default to user's first organization
   return { organizationId: String(userOrgs[0].id), shortCode: userOrgs[0].shortCode, currency: userOrgs[0].currency || "INR" };
 }

@@ -1118,30 +1118,28 @@ export const locationController = {
           .run();
 
         // 5. Delete user sessions
-        await db
-          .prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
-          .bind(targetUserId)
-          .run();
+        try {
+          await db
+            .prepare(`DELETE FROM user_sessions WHERE user_id = ?`)
+            .bind(targetUserId)
+            .run();
+        } catch {}
 
         // 6. Delete provider locations
-        await db
-          .prepare(`DELETE FROM provider_locations WHERE provider_id = ?`)
-          .bind(targetUserId)
-          .run();
+        try {
+          await db
+            .prepare(`DELETE FROM provider_locations WHERE provider_id = ?`)
+            .bind(targetUserId)
+            .run();
+        } catch {}
 
-        // 7. Delete ordering sessions
-        await db
-          .prepare(`DELETE FROM ordering_sessions WHERE employee_id = ?`)
-          .bind(targetUserId)
-          .run();
-
-        // 8. Delete user organization memberships
+        // 7. Delete user organization memberships
         await db
           .prepare(`DELETE FROM user_organizations WHERE user_id = ?`)
           .bind(targetUserId)
           .run();
 
-        // 9. Permanently delete the user from users table
+        // 8. Permanently delete the user from users table
         await db
           .prepare(`DELETE FROM users WHERE id = ?`)
           .bind(targetUserId)

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
+import { Loader2, CheckCircle2 } from "lucide-react";
 import type { UserItem } from "../../pages/Admin/Userspage";
 import CreateFormModal, { FormRow } from "../common/CreateFormModal";
 import { validateUserCreation, validateEmailFormat, type UserValidationResult } from "../../utils/validation";
@@ -28,14 +29,99 @@ export default function UserCreate({
   const [errors, setErrors] = useState<UserValidationResult["errors"]>({});
   const [generalError, setGeneralError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [usernameChecking, setUsernameChecking] = useState(false);
+  const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
+  const usernameTimerRef = useRef<any>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   if (!isOpen) return null;
 
   const handleClose = () => {
+    if (usernameTimerRef.current) clearTimeout(usernameTimerRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
     setErrors({});
     setGeneralError("");
     setIsSubmitting(false);
+    setUsernameChecking(false);
+    setUsernameAvailable(null);
     onClose();
+  };
+
+  // Perform debounced username availability check
+  const checkUsernameAvailability = async (rawVal: string) => {
+    const val = rawVal.trim();
+    if (!val) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      return;
+    }
+
+    if (val.length < 3) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      setErrors((prev) => ({
+        ...prev,
+        userName: "Username must be at least 3 characters long",
+      }));
+      return;
+    }
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    setUsernameChecking(true);
+    try {
+      const res = await userApi.checkUsername(val, undefined, controller.signal);
+      if (!res.available) {
+        setUsernameAvailable(false);
+        setErrors((prev) => ({
+          ...prev,
+          userName: "This username is already taken. Please choose another username.",
+        }));
+      } else {
+        setUsernameAvailable(true);
+        setErrors((prev) => ({ ...prev, userName: undefined }));
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError" || err?.name === "CanceledError") {
+        return; // Ignore canceled requests
+      }
+      setUsernameAvailable(null);
+      setErrors((prev) => ({
+        ...prev,
+        userName: err?.message || "Unable to verify username availability.",
+      }));
+    } finally {
+      if (!controller.signal.aborted) {
+        setUsernameChecking(false);
+      }
+    }
+  };
+
+  const handleUserNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVal = e.target.value;
+    setFormData((prev) => ({ ...prev, userName: nextVal }));
+    setUsernameAvailable(null);
+    if (errors.userName) setErrors((prev) => ({ ...prev, userName: undefined }));
+
+    if (usernameTimerRef.current) {
+      clearTimeout(usernameTimerRef.current);
+    }
+
+    const trimmed = nextVal.trim();
+    if (!trimmed) {
+      setUsernameChecking(false);
+      setUsernameAvailable(null);
+      return;
+    }
+
+    setUsernameChecking(true);
+    usernameTimerRef.current = setTimeout(() => {
+      checkUsernameAvailability(trimmed);
+    }, 450);
   };
 
   // Real-time onBlur validation for Username
@@ -43,26 +129,21 @@ export default function UserCreate({
     const val = formData.userName.trim();
     if (!val) {
       setErrors((prev) => ({ ...prev, userName: "User Name is required" }));
+      setUsernameAvailable(null);
+      setUsernameChecking(false);
       return;
     }
     if (val.length < 3) {
       setErrors((prev) => ({ ...prev, userName: "Username must be at least 3 characters long" }));
+      setUsernameAvailable(null);
+      setUsernameChecking(false);
       return;
     }
 
-    try {
-      const res = await userApi.checkUsername(val);
-      if (!res.available) {
-        setErrors((prev) => ({
-          ...prev,
-          userName: "This username is already taken. Please choose another username.",
-        }));
-      } else {
-        setErrors((prev) => ({ ...prev, userName: undefined }));
-      }
-    } catch {
-      // Ignore background network errors
+    if (usernameTimerRef.current) {
+      clearTimeout(usernameTimerRef.current);
     }
+    await checkUsernameAvailability(val);
   };
 
   // Real-time onBlur validation for Email
@@ -194,7 +275,7 @@ export default function UserCreate({
       onSubmit={handleSubmit}
       submitText="Submit"
       closeText="Close"
-      isSubmitting={isSubmitting}
+      isSubmitting={isSubmitting || usernameChecking || usernameAvailable === false}
       maxWidth="lg"
     >
       {generalError && (
@@ -226,24 +307,39 @@ export default function UserCreate({
 
       {/* User Name */}
       <FormRow label="User Name" required>
-        <input
-          type="text"
-          placeholder="User Name"
-          value={formData.userName}
-          onBlur={handleUserNameBlur}
-          onChange={(e) => {
-            setFormData((prev) => ({ ...prev, userName: e.target.value }));
-            if (errors.userName) setErrors((prev) => ({ ...prev, userName: undefined }));
-          }}
-          className={`w-full rounded-md border px-3.5 py-2 text-[#342219] placeholder-gray-400 outline-none transition ${
-            errors.userName
-              ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
-              : "border-gray-200 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
-          }`}
-        />
-        {errors.userName && (
+        <div className="relative w-full">
+          <input
+            type="text"
+            placeholder="User Name"
+            value={formData.userName}
+            onBlur={handleUserNameBlur}
+            onChange={handleUserNameChange}
+            className={`w-full rounded-md border px-3.5 py-2 pr-9 text-[#342219] placeholder-gray-400 outline-none transition ${
+              errors.userName
+                ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
+                : usernameAvailable === true
+                ? "border-emerald-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                : "border-gray-200 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+            }`}
+          />
+          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+            {usernameChecking && (
+              <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+            )}
+            {!usernameChecking && usernameAvailable === true && (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+            )}
+          </div>
+        </div>
+        {usernameChecking ? (
+          <p className="mt-1 text-xs font-medium text-[#8C5835] flex items-center gap-1.5">
+            <span>Checking username availability...</span>
+          </p>
+        ) : errors.userName ? (
           <p className="mt-1 text-xs font-semibold text-red-500">{errors.userName}</p>
-        )}
+        ) : usernameAvailable === true ? (
+          <p className="mt-1 text-xs font-semibold text-emerald-600">Username is available.</p>
+        ) : null}
       </FormRow>
 
       {/* Password */}

@@ -7,6 +7,7 @@ import {
   Download,
   RotateCw,
   Edit,
+  Edit2,
   Trash2,
   UserPlus,
   ChevronLeft,
@@ -104,7 +105,7 @@ export default function LocationPage() {
   const locStorageKey = currentShortCode ? `cafe4x_locations_${currentShortCode}` : "cafe4x_locations";
   const seatsStorageKey = currentShortCode ? `cafe4x_seatsByLoc_${currentShortCode}` : "cafe4x_seatsByLoc";
 
-// Helper to compute next available unique seat number and sequential Seat ID (e.g. OFFICE-1, ROOM-1, ...)
+// Helper to compute next available unique seat number and sequential Seat ID (e.g. OFFICE-001)
   const getNextAvailableSeatInfo = (
     existingSeats: SeatItem[],
     locationName?: string,
@@ -142,7 +143,8 @@ export default function LocationPage() {
     }
 
     const seatNumber = String(candidate);
-    const seatId = `${locPrefix}-${seatNumber}`;
+    const paddedNum = String(candidate).padStart(3, "0");
+    const seatId = `${locPrefix}-${paddedNum}`;
     return { number: seatNumber, seatId, candidateNum: candidate };
   };
 
@@ -466,6 +468,20 @@ export default function LocationPage() {
   });
   const [editSeatError, setEditSeatError] = useState<string | null>(null);
   const [isSavingSeat, setIsSavingSeat] = useState(false);
+
+  // Edit Assigned Employee Modal State (Direct Name & Email Update)
+  const [isEditEmployeeModalOpen, setIsEditEmployeeModalOpen] = useState(false);
+  const [editEmployeeForm, setEditEmployeeForm] = useState({
+    name: "",
+    email: "",
+  });
+  const [editEmployeeError, setEditEmployeeError] = useState<string | null>(null);
+  const [editEmployeeEmailError, setEditEmployeeEmailError] = useState<string | null>(null);
+  const [editEmployeeEmailChecking, setEditEmployeeEmailChecking] = useState(false);
+  const [editEmployeeEmailAvailable, setEditEmployeeEmailAvailable] = useState<boolean | null>(null);
+  const editEmployeeEmailTimerRef = useRef<any>(null);
+  const editEmployeeEmailAbortRef = useRef<AbortController | null>(null);
+  const [isSavingEmployee, setIsSavingEmployee] = useState(false);
 
   // Unassign Seat Confirmation Modal State
   const [isUnassignConfirmOpen, setIsUnassignConfirmOpen] = useState(false);
@@ -1137,6 +1153,177 @@ export default function LocationPage() {
       setEditSeatError(err.message || "Failed to update seat assignment.");
     } finally {
       setIsSavingSeat(false);
+    }
+  };
+
+  // Handle live Employee Email validation in Edit Employee modal
+  const handleEditEmployeeEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    setEditEmployeeForm((prev) => ({ ...prev, email: rawVal }));
+
+    if (editEmployeeEmailTimerRef.current) {
+      clearTimeout(editEmployeeEmailTimerRef.current);
+    }
+    if (editEmployeeEmailAbortRef.current) {
+      editEmployeeEmailAbortRef.current.abort();
+    }
+
+    const trimmed = rawVal.trim();
+    if (!trimmed) {
+      setEditEmployeeEmailError("Employee email is required.");
+      setEditEmployeeEmailAvailable(null);
+      setEditEmployeeEmailChecking(false);
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      setEditEmployeeEmailError("Please enter a valid email address.");
+      setEditEmployeeEmailAvailable(null);
+      setEditEmployeeEmailChecking(false);
+      return;
+    }
+
+    setEditEmployeeEmailError(null);
+    setEditEmployeeEmailChecking(true);
+    setEditEmployeeEmailAvailable(null);
+
+    const locId = selectedLocation?.id || "1";
+    const currentLocSeats = seatsByLoc[locId] || [];
+    const normalizedInput = trimmed.toLowerCase();
+
+    editEmployeeEmailTimerRef.current = setTimeout(async () => {
+      // 1. Client-side check across other seats in this location
+      const clientDuplicate = currentLocSeats.some((s) => {
+        if (currentSeat && s.id === currentSeat.id) return false;
+        const empEmail = (s.employeeEmail || (s.employee && s.employee.includes("@") ? s.employee : "")).trim().toLowerCase();
+        return empEmail === normalizedInput;
+      });
+
+      if (clientDuplicate) {
+        setEditEmployeeEmailChecking(false);
+        setEditEmployeeEmailAvailable(false);
+        setEditEmployeeEmailError("This employee email is already assigned to a seat in this location.");
+        return;
+      }
+
+      // 2. Authoritative backend check excluding the current seat
+      const abortCtrl = new AbortController();
+      editEmployeeEmailAbortRef.current = abortCtrl;
+
+      try {
+        const res = await locationApi.checkEmployeeEmail(locId, normalizedInput, currentSeat?.id, abortCtrl.signal);
+        setEditEmployeeEmailChecking(false);
+        if (res.available) {
+          setEditEmployeeEmailAvailable(true);
+          setEditEmployeeEmailError(null);
+        } else {
+          setEditEmployeeEmailAvailable(false);
+          setEditEmployeeEmailError(res.message || "This employee email is already assigned to a seat in this location.");
+        }
+      } catch (err: any) {
+        if (err.name === "AbortError" || abortCtrl.signal.aborted) return;
+        setEditEmployeeEmailChecking(false);
+        setEditEmployeeEmailAvailable(null);
+      }
+    }, 450);
+  };
+
+  // Submit Updated Employee Details (Name & Email)
+  const handleEditEmployeeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentSeat || !selectedLocation) return;
+    setEditEmployeeError(null);
+
+    const trimmedName = editEmployeeForm.name.trim();
+    const trimmedEmail = editEmployeeForm.email.trim().toLowerCase();
+
+    if (!trimmedName) {
+      setEditEmployeeError("Employee name is required.");
+      return;
+    }
+    if (!trimmedEmail) {
+      setEditEmployeeEmailError("Employee email is required.");
+      setEditEmployeeError("Employee email is required.");
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmedEmail)) {
+      setEditEmployeeEmailError("Please enter a valid email address.");
+      setEditEmployeeError("Please enter a valid email address.");
+      return;
+    }
+
+    const locId = selectedLocation.id;
+    const currentLocSeats = seatsByLoc[locId] || [];
+
+    // Client-side uniqueness check
+    const clientDup = currentLocSeats.some((s) => {
+      if (s.id === currentSeat.id) return false;
+      const empEmail = (s.employeeEmail || (s.employee && s.employee.includes("@") ? s.employee : "")).trim().toLowerCase();
+      return empEmail === trimmedEmail;
+    });
+
+    if (clientDup) {
+      const dupMsg = "This employee email is already assigned to a seat in this location.";
+      setEditEmployeeEmailError(dupMsg);
+      setEditEmployeeError(dupMsg);
+      return;
+    }
+
+    setIsSavingEmployee(true);
+    try {
+      // Backend check before committing
+      try {
+        const checkRes = await locationApi.checkEmployeeEmail(locId, trimmedEmail, currentSeat.id);
+        if (!checkRes.available) {
+          const dupMsg = checkRes.message || "This employee email is already assigned to a seat in this location.";
+          setEditEmployeeEmailError(dupMsg);
+          setEditEmployeeError(dupMsg);
+          setIsSavingEmployee(false);
+          return;
+        }
+      } catch (err: any) {
+        // Continue to server-level validation in assignSeat
+      }
+
+      // Check if this email corresponds to a known orgUser
+      const matchedUser = orgUsers.find((u) => u.email.toLowerCase() === trimmedEmail);
+
+      const idealUrl = getEmployeeOrderUrl(trimmedEmail, currentSeat.id, locId, currentSeat.number, currentSeat.qrToken);
+
+      // Save to Cloudflare D1
+      await locationApi.assignSeat(locId, currentSeat.id, {
+        employeeId: matchedUser?.id || currentSeat.employeeId,
+        employeeName: trimmedName,
+        employeeEmail: trimmedEmail,
+        employee: trimmedEmail,
+        orderUrl: idealUrl,
+      });
+
+      // Refresh seats and assignments
+      await refreshLocationSeats(locId);
+
+      setIsEditEmployeeModalOpen(false);
+      setEditEmployeeError(null);
+      setEditEmployeeEmailError(null);
+      setEditEmployeeEmailAvailable(null);
+
+      setSeatActionMessage({
+        type: "success",
+        text: `Employee details for seat ${getSeatDisplayIdentifier(currentSeat, selectedLocation?.name)} updated successfully.`,
+      });
+      setTimeout(() => setSeatActionMessage(null), 4000);
+    } catch (err: any) {
+      const errMsg = err?.message || "Failed to update employee details.";
+      if (errMsg.toLowerCase().includes("already assigned")) {
+        setEditEmployeeEmailError("This employee email is already assigned to a seat in this location.");
+        setEditEmployeeError("This employee email is already assigned to a seat in this location.");
+      } else {
+        setEditEmployeeError(errMsg);
+      }
+    } finally {
+      setIsSavingEmployee(false);
     }
   };
 
@@ -1910,15 +2097,35 @@ export default function LocationPage() {
                                 <div className="flex flex-col gap-1.5 rounded-2xl border border-[#EEE5DC] bg-white p-3.5 shadow-2xs">
                                   <div className="flex items-center justify-between">
                                     <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                                    <span
-                                      className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
-                                        matchedEmployee.qrTokenStatus === "revoked"
-                                          ? "bg-rose-100 text-rose-700 border border-rose-200"
-                                          : "bg-emerald-100 text-emerald-700 border border-emerald-200"
-                                      }`}
-                                    >
-                                      {matchedEmployee.qrTokenStatus === "revoked" ? "Token Revoked" : "Occupied"}
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditEmployeeForm({
+                                            name: matchedEmployee.name || currentSeat.employeeName || currentSeat.employee || "",
+                                            email: matchedEmployee.email || currentSeat.employeeEmail || "",
+                                          });
+                                          setEditEmployeeError(null);
+                                          setEditEmployeeEmailError(null);
+                                          setEditEmployeeEmailAvailable(null);
+                                          setIsEditEmployeeModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1 rounded-lg border border-[#E8DED4] bg-[#FAF8F5] px-2 py-0.5 text-[11px] font-bold text-[#8C5835] hover:bg-[#F2ECE4] hover:text-[#70452D] transition cursor-pointer"
+                                        title="Edit assigned employee details"
+                                      >
+                                        <Edit2 size={11} />
+                                        <span>Edit Employee</span>
+                                      </button>
+                                      <span
+                                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                          matchedEmployee.qrTokenStatus === "revoked"
+                                            ? "bg-rose-100 text-rose-700 border border-rose-200"
+                                            : "bg-emerald-100 text-emerald-700 border border-emerald-200"
+                                        }`}
+                                      >
+                                        {matchedEmployee.qrTokenStatus === "revoked" ? "Token Revoked" : "Occupied"}
+                                      </span>
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-2.5 mt-1">
                                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D] font-bold text-xs">
@@ -1938,9 +2145,29 @@ export default function LocationPage() {
                                 <div className="flex flex-col gap-1.5 rounded-2xl border border-[#EEE5DC] bg-white p-3.5 shadow-2xs">
                                   <div className="flex items-center justify-between">
                                     <span className="font-semibold text-[#8A7667]">Assigned Employee</span>
-                                    <span className="rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">
-                                      Occupied
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setEditEmployeeForm({
+                                            name: currentSeat.employeeName || currentSeat.employee || "",
+                                            email: currentSeat.employeeEmail || (currentSeat.employee?.includes("@") ? currentSeat.employee : "") || "",
+                                          });
+                                          setEditEmployeeError(null);
+                                          setEditEmployeeEmailError(null);
+                                          setEditEmployeeEmailAvailable(null);
+                                          setIsEditEmployeeModalOpen(true);
+                                        }}
+                                        className="flex items-center gap-1 rounded-lg border border-[#E8DED4] bg-[#FAF8F5] px-2 py-0.5 text-[11px] font-bold text-[#8C5835] hover:bg-[#F2ECE4] hover:text-[#70452D] transition cursor-pointer"
+                                        title="Edit assigned employee details"
+                                      >
+                                        <Edit2 size={11} />
+                                        <span>Edit Employee</span>
+                                      </button>
+                                      <span className="rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold">
+                                        Occupied
+                                      </span>
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-2.5 mt-1">
                                     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#EAD5C0] text-[#70452D] font-bold text-xs">
@@ -2384,7 +2611,8 @@ export default function LocationPage() {
                 const locPrefix = normalizeLocationPrefix(locName);
                 const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                 const num = parseInt(val, 10);
-                const generatedId = isNaN(num) ? "" : `${locPrefix}-${num}`;
+                const paddedNum = isNaN(num) ? "" : String(num).padStart(3, "0");
+                const generatedId = isNaN(num) ? "" : `${locPrefix}-${paddedNum}`;
 
                 setNewSeatForm({
                   ...newSeatForm,
@@ -2491,6 +2719,121 @@ export default function LocationPage() {
           {isCreatingSeat && (
             <div className="mt-2 text-center text-xs font-medium text-[#8C5835] animate-pulse">
               Creating seat and registering assignment…
+            </div>
+          )}
+        </CreateFormModal>
+
+        {/* ========================================================
+            MODAL: EDIT ASSIGNED EMPLOYEE DETAILS (NAME & EMAIL)
+           ======================================================== */}
+        <CreateFormModal
+          isOpen={isEditEmployeeModalOpen && Boolean(currentSeat)}
+          onClose={() => {
+            setIsEditEmployeeModalOpen(false);
+            setEditEmployeeError(null);
+            setEditEmployeeEmailError(null);
+            setEditEmployeeEmailAvailable(null);
+            if (editEmployeeEmailTimerRef.current) clearTimeout(editEmployeeEmailTimerRef.current);
+            if (editEmployeeEmailAbortRef.current) editEmployeeEmailAbortRef.current.abort();
+          }}
+          title="Edit Employee"
+          submitText={isSavingEmployee ? "Saving..." : "Save Changes"}
+          isSubmitting={isSavingEmployee}
+          isSubmitDisabled={
+            isSavingEmployee ||
+            !editEmployeeForm.name.trim() ||
+            !editEmployeeForm.email.trim() ||
+            Boolean(editEmployeeEmailError) ||
+            editEmployeeEmailChecking
+          }
+          onSubmit={handleEditEmployeeSubmit}
+          maxWidth="md"
+        >
+          {editEmployeeError && (
+            <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-semibold text-red-700">
+              {editEmployeeError}
+            </div>
+          )}
+
+          {/* Seat Context Pill */}
+          <div className="mb-4 flex items-center justify-between rounded-2xl border border-[#EEE5DC] bg-[#FAF8F5] p-3 text-xs">
+            <span className="font-semibold text-[#8A7667]">Selected Seat:</span>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-[#342219]">Seat {currentSeat?.number}</span>
+              <span className="rounded-md bg-[#FAF4ED] px-2 py-0.5 font-mono text-[11px] font-bold text-[#8C5835] border border-[#EAD5C0]">
+                {currentSeat ? getSeatDisplayIdentifier(currentSeat, selectedLocation?.name) : ""}
+              </span>
+            </div>
+          </div>
+
+          {/* Employee Name */}
+          <div className="mb-4">
+            <FormRow label="Employee Name" required>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={editEmployeeForm.name}
+                  onChange={(e) => {
+                    setEditEmployeeForm((prev) => ({ ...prev, name: e.target.value }));
+                    if (editEmployeeError) setEditEmployeeError(null);
+                  }}
+                  placeholder="e.g. John Doe"
+                  className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-xs text-[#342219] outline-none placeholder:text-gray-400 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+                />
+              </div>
+            </FormRow>
+          </div>
+
+          {/* Employee Email */}
+          <div className="mb-2">
+            <FormRow label="Employee Email" required>
+              <div>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={editEmployeeForm.email}
+                    onChange={handleEditEmployeeEmailChange}
+                    placeholder="e.g. john.doe@company.com"
+                    className={`w-full rounded-xl border bg-white px-3 py-2 pr-9 text-xs text-[#342219] outline-none placeholder:text-gray-400 transition ${
+                      editEmployeeEmailError
+                        ? "border-red-400 focus:border-red-500 focus:ring-1 focus:ring-red-200"
+                        : editEmployeeEmailAvailable === true
+                        ? "border-emerald-400 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-200"
+                        : "border-gray-300 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+                    }`}
+                  />
+                  <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                    {editEmployeeEmailChecking && (
+                      <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+                    )}
+                    {!editEmployeeEmailChecking && editEmployeeEmailAvailable === true && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    )}
+                  </div>
+                </div>
+
+                {/* Real-time Email Validation Feedback */}
+                {editEmployeeEmailChecking ? (
+                  <p className="mt-1 text-xs font-medium text-[#8C5835] animate-pulse">
+                    Checking email availability in this location...
+                  </p>
+                ) : editEmployeeEmailError ? (
+                  <p className="mt-1 text-xs font-semibold text-red-500">
+                    {editEmployeeEmailError}
+                  </p>
+                ) : editEmployeeEmailAvailable === true ? (
+                  <p className="mt-1 text-xs font-semibold text-emerald-600 flex items-center gap-1">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    Email available.
+                  </p>
+                ) : null}
+              </div>
+            </FormRow>
+          </div>
+
+          {isSavingEmployee && (
+            <div className="mt-2 text-center text-xs font-medium text-[#8C5835] animate-pulse">
+              Updating employee details…
             </div>
           )}
         </CreateFormModal>

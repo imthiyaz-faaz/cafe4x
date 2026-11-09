@@ -65,6 +65,52 @@ export async function ensureSeatAssignmentsTable(db: any): Promise<void> {
 }
 
 export const locationController = {
+  // GET /api/locations/check-name?name=xyz&excludeLocationId=LOC-xxx
+  async checkLocationName(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, available: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const name = (c.req.query("name") || "").trim();
+      const excludeLocationId = (c.req.query("excludeLocationId") || "").trim();
+
+      if (!name) {
+        return c.json({ success: false, available: false, message: "Location name is required" }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+
+      let query = `SELECT id, name FROM locations WHERE organization_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))`;
+      const params: any[] = [org.organizationId, name];
+
+      if (excludeLocationId) {
+        query += ` AND id != ? AND display_id != ?`;
+        params.push(excludeLocationId, excludeLocationId);
+      }
+
+      const existing = (await db.prepare(query).bind(...params).get()) as any;
+
+      if (existing) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This location name already exists in this organization.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Location name is available.",
+      });
+    } catch (err: any) {
+      console.error("checkLocationName error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
   // GET /api/locations
   async getLocations(c: Context<AppEnv>) {
     try {
@@ -140,6 +186,11 @@ export const locationController = {
   // GET /api/locations/:id
   async getLocationById(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
       const id = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
 
@@ -152,13 +203,13 @@ export const locationController = {
             assigned_provider_name as assignedProviderName,
             assigned_provider_email as assignedProviderEmail,
             created_at as createdAt, updated_at as updatedAt
-           FROM locations WHERE id = ? OR display_id = ?`
+           FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`
         )
-        .bind(id, id)
+        .bind(id, id, org.organizationId)
         .get()) as any;
 
       if (!row) {
-        return c.json({ success: false, message: "Location not found" }, 404);
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
       }
 
       return c.json({
@@ -198,10 +249,21 @@ export const locationController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      const { displayId } = await getNextId(db, "LOC", org.shortCode);
-
-      const id = body.id ? String(body.id) : displayId;
       const name = body.name.trim();
+
+      // Validate location name uniqueness within this organization (case-insensitive & trimmed)
+      const existingNameRow = (await db
+        .prepare(`SELECT id FROM locations WHERE organization_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))`)
+        .bind(org.organizationId, name)
+        .get()) as any;
+
+      if (existingNameRow) {
+        return c.json({
+          success: false,
+          message: "This location name already exists in this organization.",
+        }, 409);
+      }
+
       const status = body.status || "Active";
       const totalSeats = Number(body.totalSeats) || 0;
       const image = body.image || "";
@@ -210,17 +272,16 @@ export const locationController = {
       const assignedProviderEmail = body.assignedProviderEmail || null;
       const now = new Date().toISOString();
 
-      await db
+      // Let D1 generate the integer auto-increment ID
+      const insertRow = (await db
         .prepare(
           `INSERT INTO locations (
-            id, display_id, organization_id, short_code, name, status, total_seats, image,
+            organization_id, short_code, name, status, total_seats, image,
             assigned_provider_id, assigned_provider_name, assigned_provider_email,
             created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`
         )
-        .run(
-          id,
-          displayId,
+        .bind(
           org.organizationId,
           org.shortCode,
           name,
@@ -232,17 +293,35 @@ export const locationController = {
           assignedProviderEmail,
           now,
           now
-        );
+        )
+        .get()) as any;
+
+      let generatedNumericId: number | string = insertRow?.id;
+      if (!generatedNumericId) {
+        // Fallback for run() if RETURNING not returned in custom wrapper
+        const runRes = await db.prepare("SELECT MAX(id) as maxId FROM locations WHERE organization_id = ?").bind(org.organizationId).get() as any;
+        generatedNumericId = runRes?.maxId || 1;
+      }
+
+      const id = String(generatedNumericId);
+      const displayId = id;
+
+      // Ensure display_id matches the generated numeric ID
+      await db
+        .prepare(`UPDATE locations SET display_id = ? WHERE id = ?`)
+        .bind(displayId, generatedNumericId)
+        .run();
 
       // If provider assigned, create relation in provider_locations table
       if (assignedProviderId) {
+        const prlId = await generateId(db, "PRL");
         await db
           .prepare(
             `INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at)
              VALUES (?, ?, ?, ?, ?)`
           )
-          const prlId = await generateId(db, "PRL");
-          await db.prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`).run(prlId, org.organizationId, assignedProviderId, id, now);
+          .bind(prlId, org.organizationId, assignedProviderId, id, now)
+          .run();
       }
 
       const newLoc: LocationModel = {
@@ -291,6 +370,31 @@ export const locationController = {
       }
 
       const targetId = existing.id;
+
+      if (body.name !== undefined && body.name !== null) {
+        const trimmedName = String(body.name).trim();
+        if (!trimmedName) {
+          return c.json({ success: false, message: "Location name cannot be empty" }, 400);
+        }
+
+        // Validate location name uniqueness within this organization (excluding current record)
+        const dupNameRow = (await db
+          .prepare(
+            `SELECT id FROM locations 
+             WHERE organization_id = ? 
+               AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+               AND id != ? AND display_id != ?`
+          )
+          .bind(org.organizationId, trimmedName, targetId, targetId)
+          .get()) as any;
+
+        if (dupNameRow) {
+          return c.json({
+            success: false,
+            message: "This location name already exists in this organization.",
+          }, 409);
+        }
+      }
 
       await db
         .prepare(
@@ -448,23 +552,28 @@ export const locationController = {
   // GET /api/locations/:id/seats
   async getSeats(c: Context<AppEnv>) {
     try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
       const locId = c.req.param("id");
       const db = getUniversalDb(c.env?.DB);
       await ensureSeatAssignmentsTable(db);
 
-      // Resolve location by id or display_id
+      // Resolve location by id or display_id and verify it belongs to user's authorized organization
       const loc = (await db
         .prepare(
           `SELECT l.id, l.display_id as displayId, l.name, l.short_code as shortCode, l.organization_id as organizationId, l.total_seats as totalSeats, o.short_code as orgShortCode 
            FROM locations l 
            LEFT JOIN organizations o ON l.organization_id = o.id 
-           WHERE l.id = ? OR l.display_id = ?`
+           WHERE (l.id = ? OR l.display_id = ?) AND l.organization_id = ?`
         )
-        .bind(locId, locId)
+        .bind(locId, locId, org.organizationId)
         .get()) as any;
 
       if (!loc) {
-        return c.json({ success: false, message: "Location not found" }, 404);
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
       }
 
       const targetLocId = loc.id;
@@ -535,26 +644,67 @@ export const locationController = {
         }
       }
 
-      // Compute next candidate sequence for this location
+      // Compute next candidate sequence directly from this location's existing seats
       const locPrefix = normalizeLocationPrefix(loc.name);
-      const seqRow = (await db
-        .prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`)
-        .bind(`SEAT_LOC_${targetLocId}`)
-        .get()) as any;
-      let maxNum = Number(seqRow?.last_val) || 0;
+      let maxNum = 0;
+      const usedNumbers = new Set<number>();
       for (const r of rows) {
-        const m = String(r.id || "").match(/(\d+)$/);
-        if (m) maxNum = Math.max(maxNum, parseInt(m[1], 10));
         const n = parseInt(r.number, 10);
-        if (!isNaN(n)) maxNum = Math.max(maxNum, n);
+        if (!isNaN(n) && n > 0) {
+          usedNumbers.add(n);
+          maxNum = Math.max(maxNum, n);
+        }
+        const m = String(r.displayId || r.id || "").match(/(\d+)$/);
+        if (m) {
+          const idNum = parseInt(m[1], 10);
+          if (!isNaN(idNum) && idNum > 0) {
+            usedNumbers.add(idNum);
+            maxNum = Math.max(maxNum, idNum);
+          }
+        }
       }
-      const nextCandidateNum = maxNum + 1;
-      const nextSeatId = `${locPrefix}-${String(nextCandidateNum).padStart(4, "0")}`;
-      const nextSeatNumber = String(nextCandidateNum).padStart(2, "0");
+      let nextCandidateNum = maxNum + 1;
+      while (usedNumbers.has(nextCandidateNum)) {
+        nextCandidateNum++;
+      }
+      const nextSeatId = `${locPrefix}-${nextCandidateNum}`;
+      const nextSeatNumber = String(nextCandidateNum);
+
+      // Compute occupancy metrics and return normalized seat objects
+      const normalizedSeats = (rows || []).map((r) => {
+        const assignedEmployee = r.employee || r.employeeEmail || r.employeeName || null;
+        const isOccupied = Boolean(assignedEmployee);
+        return {
+          id: r.id,
+          displayId: r.displayId || r.id,
+          locationId: r.locationId || targetLocId,
+          organizationId: r.organizationId || org.organizationId,
+          number: r.number,
+          qrToken: r.qrToken,
+          employee: assignedEmployee,
+          employeeName: r.employeeName || (assignedEmployee ? assignedEmployee.split("@")[0] : null),
+          employeeEmail: r.employeeEmail || (r.employee && r.employee.includes("@") ? r.employee : null),
+          employeeId: r.employeeId || null,
+          employeeUserName: r.employeeUserName || null,
+          employeeQrToken: r.employeeQrToken || null,
+          assignmentId: r.assignmentId || null,
+          assignedAt: r.assignedAt || null,
+          orderUrl: r.orderUrl,
+          isOccupied,
+          status: isOccupied ? "Occupied" : "Available",
+        };
+      });
+
+      const totalSeats = normalizedSeats.length;
+      const occupiedSeats = normalizedSeats.filter((s) => s.isOccupied).length;
+      const availableSeats = totalSeats - occupiedSeats;
 
       return c.json({
         success: true,
-        seats: rows || [],
+        seats: normalizedSeats,
+        totalSeats,
+        occupiedSeats,
+        availableSeats,
         nextSeatId,
         nextSeatNumber,
       });
@@ -588,10 +738,9 @@ export const locationController = {
 
       const effectiveLocId = loc.id;
       const orgPrefix = org.shortCode ? `/${org.shortCode}` : "";
-
       const locPrefix = normalizeLocationPrefix(loc.name);
 
-      // Determine candidate sequence number and seat identifier
+      // Determine candidate sequence number and display identifier
       let parsedNum = 0;
       if (body.number || body.seatNo) {
         const raw = String(body.number || body.seatNo).trim();
@@ -599,40 +748,48 @@ export const locationController = {
         if (!isNaN(p) && p > 0) parsedNum = p;
       }
 
-      let candidateSeatId = body.id ? String(body.id).trim() : "";
-      if (candidateSeatId && !parsedNum) {
-        const m = candidateSeatId.match(/(\d+)$/);
+      let candidateDisplayId = (body.displayId || body.id || body.seatId) ? String(body.displayId || body.id || body.seatId).trim() : "";
+      if (candidateDisplayId && !parsedNum) {
+        const m = candidateDisplayId.match(/(\d+)$/);
         if (m) parsedNum = parseInt(m[1], 10);
       }
 
-      let seatId = "";
+      let displayId = "";
       let number = "";
 
-      if (!candidateSeatId || candidateSeatId.startsWith("SEA-") || !parsedNum) {
+      if (!candidateDisplayId || candidateDisplayId.startsWith("SEA-") || !parsedNum) {
         const generated = await generateLocationSeatId(db, effectiveLocId, loc.name, parsedNum || undefined);
-        seatId = generated.seatId;
-        number = parsedNum ? String(parsedNum).padStart(2, "0") : generated.number;
+        displayId = generated.seatId;
+        number = parsedNum ? String(parsedNum) : generated.number;
       } else {
-        if (!candidateSeatId.toUpperCase().startsWith(`${locPrefix}-`)) {
-          candidateSeatId = `${locPrefix}-${String(parsedNum).padStart(4, "0")}`;
+        if (!candidateDisplayId.toUpperCase().startsWith(`${locPrefix}-`)) {
+          candidateDisplayId = `${locPrefix}-${parsedNum}`;
         }
-        seatId = candidateSeatId;
-        number = String(parsedNum).padStart(2, "0");
+        displayId = candidateDisplayId;
+        number = String(parsedNum);
       }
 
-      const displayId = seatId;
-
-      // Check for duplicate seat number or identifier in this location
+      // Check for duplicate seat number or display identifier within this organization and location
       const existingSeatRow = (await db
-        .prepare(`SELECT id, display_id FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ?)`)
-        .bind(effectiveLocId, seatId, number, seatId)
+        .prepare(`SELECT id, display_id FROM seats WHERE organization_id = ? AND location_id = ? AND (LOWER(TRIM(display_id)) = LOWER(TRIM(?)) OR number = ?)`)
+        .bind(org.organizationId, effectiveLocId, displayId, number)
         .get()) as any;
 
       if (existingSeatRow) {
         return c.json({
           success: false,
-          message: `Seat ${seatId} or seat number ${number} already exists in this location.`
+          message: `This seat identifier already exists in this location.`
         }, 409);
+      }
+
+      // Generate a globally unique, collision-proof primary key (id) for seats table
+      let seatId = `sea_${crypto.randomUUID().replace(/-/g, "")}`;
+      let retries = 0;
+      while (retries < 5) {
+        const dupId = (await db.prepare(`SELECT id FROM seats WHERE id = ?`).bind(seatId).get()) as any;
+        if (!dupId) break;
+        seatId = `sea_${crypto.randomUUID().replace(/-/g, "")}`;
+        retries++;
       }
 
       // Update location-scoped sequence to reflect at least this seat's sequence number
@@ -750,6 +907,8 @@ export const locationController = {
           assignmentId,
           assignedAt: assignmentId ? now : null,
           orderUrl,
+          isOccupied: Boolean(matchedUser),
+          status: matchedUser ? "Occupied" : "Available",
         },
       });
     } catch (err: any) {
@@ -926,6 +1085,8 @@ export const locationController = {
           assignmentId,
           assignedAt: now,
           orderUrl,
+          isOccupied: true,
+          status: "Occupied",
         },
       });
     } catch (err: any) {
@@ -1029,6 +1190,8 @@ export const locationController = {
           assignmentId: null,
           assignedAt: null,
           orderUrl,
+          isOccupied: false,
+          status: "Available",
         },
       });
     } catch (err: any) {

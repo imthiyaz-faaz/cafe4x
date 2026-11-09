@@ -142,13 +142,14 @@ export async function generateId(
 
 /**
  * Normalizes a location name to an uppercase, hyphen-separated prefix.
- * e.g. "office" -> "OFFICE", "Room" -> "ROOM", "Meeting Room" -> "MEETING-ROOM"
+ * e.g. "office" -> "OFFICE", "Room" -> "ROOM", "Meeting Room" -> "MEETING-ROOM", "Chennai Branch" -> "CHENNAI-BRANCH"
  */
 export function normalizeLocationPrefix(name: string): string {
   const cleaned = (name || "")
     .trim()
     .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Z0-9-]+/g, "")
     .replace(/^-+|-+$/g, "");
   return cleaned || "SEAT";
 }
@@ -165,62 +166,55 @@ export async function generateLocationSeatId(
   preferredNumber?: number
 ): Promise<{ seatId: string; number: string; displayId: string }> {
   const prefix = normalizeLocationPrefix(locationName);
-  const scope = `SEAT_LOC_${locationId}`;
 
-  let nextVal: number;
   if (preferredNumber !== undefined && preferredNumber > 0) {
-    nextVal = preferredNumber;
-    await db
-      .prepare(
-        `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
-         ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
-      )
-      .bind(scope, nextVal, nextVal)
-      .run();
-  } else {
-    await db
-      .prepare(
-        `INSERT INTO id_sequences (scope, last_val) VALUES (?, 1)
-         ON CONFLICT(scope) DO UPDATE SET last_val = last_val + 1`
-      )
-      .bind(scope)
-      .run();
-
-    const row = (await db
-      .prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`)
-      .bind(scope)
-      .get()) as any;
-    nextVal = Number(row?.last_val) || 1;
+    const candidateId = `${prefix}-${preferredNumber}`;
+    const candidateNumber = String(preferredNumber);
+    return {
+      seatId: candidateId,
+      number: candidateNumber,
+      displayId: candidateId,
+    };
   }
 
-  // Ensure candidate does not collide with an existing seat in this location
-  while (true) {
-    const candidateId = `${prefix}-${String(nextVal).padStart(4, "0")}`;
-    const candidateNumber = String(nextVal).padStart(2, "0");
-    const existing = (await db
-      .prepare(
-        `SELECT id FROM seats WHERE location_id = ? AND (id = ? OR number = ?)`
-      )
-      .bind(locationId, candidateId, candidateNumber)
-      .get()) as any;
+  // Find all existing seat numbers for this location_id directly from the database
+  const existingSeats = (await db
+    .prepare(`SELECT number, display_id, id FROM seats WHERE location_id = ?`)
+    .bind(locationId)
+    .all()) as any[];
 
-    if (!existing) {
-      await db
-        .prepare(
-          `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
-           ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
-        )
-        .bind(scope, nextVal, nextVal)
-        .run();
-
-      return {
-        seatId: candidateId,
-        number: candidateNumber,
-        displayId: candidateId,
-      };
+  let maxNum = 0;
+  const usedNumbers = new Set<number>();
+  for (const s of existingSeats || []) {
+    const p = parseInt(s.number, 10);
+    if (!isNaN(p) && p > 0) {
+      usedNumbers.add(p);
+      maxNum = Math.max(maxNum, p);
     }
+    const m = String(s.display_id || s.id || "").match(/(\d+)$/);
+    if (m) {
+      const idNum = parseInt(m[1], 10);
+      if (!isNaN(idNum) && idNum > 0) {
+        usedNumbers.add(idNum);
+        maxNum = Math.max(maxNum, idNum);
+      }
+    }
+  }
+
+  // Next candidate is highest existing number + 1
+  let nextVal = maxNum + 1;
+  while (usedNumbers.has(nextVal)) {
     nextVal++;
   }
+
+  const candidateId = `${prefix}-${nextVal}`;
+  const candidateNumber = String(nextVal);
+
+  return {
+    seatId: candidateId,
+    number: candidateNumber,
+    displayId: candidateId,
+  };
 }
 
 /**

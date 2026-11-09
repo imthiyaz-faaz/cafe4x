@@ -32,6 +32,8 @@ export interface SeatItem {
   assignedAt?: string;
   qrToken?: string;
   orderUrl?: string;
+  isOccupied?: boolean;
+  status?: "Occupied" | "Available";
 }
 
 export interface SeatAssignmentItem {
@@ -105,6 +107,20 @@ export const locationApi = {
   async getLocationById(id: string): Promise<LocationItem> {
     const res = await api.get<{ success: boolean; location: LocationItem }>(`/api/locations/${id}`);
     return res.location;
+  },
+
+  async checkLocationName(
+    name: string,
+    excludeLocationId?: string,
+    signal?: AbortSignal
+  ): Promise<{ success: boolean; available: boolean; message: string }> {
+    const params: Record<string, string> = { name: name.trim() };
+    if (excludeLocationId) params.excludeLocationId = excludeLocationId.trim();
+    return await api.get<{ success: boolean; available: boolean; message: string }>(
+      "/api/locations/check-name",
+      params,
+      { signal }
+    );
   },
 
   async createLocation(location: Partial<LocationItem>): Promise<LocationItem> {

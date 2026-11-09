@@ -47,3 +47,44 @@ export function formatSeatDisplay(seatNumber?: string | number | null, seatIdent
   return "";
 }
 
+/**
+ * Resolves the primary human-readable display identifier for a seat,
+ * guaranteeing format `LOCATIONNAME-SEATNUMBER` (e.g. "OFFICE-1", "MEETING-ROOM-2").
+ *
+ * Prioritizes `seat.displayId`. If `seat.displayId` is missing or looks like an
+ * internal UUID (e.g. `sea_...`), it computes `LOCATIONNAME-SEATNUMBER` using the
+ * location name and seat number.
+ */
+export function getSeatDisplayIdentifier(
+  seat?: { id?: string; displayId?: string; number?: string | number } | null,
+  locationName?: string
+): string {
+  if (!seat) return "";
+
+  // 1. Check displayId first
+  const displayId = (seat.displayId || "").trim();
+  if (displayId && !displayId.startsWith("sea_")) {
+    return formatSeatIdentifier(displayId);
+  }
+
+  // 2. Check id if it is formatted like a human-readable identifier (not sea_...)
+  const rawId = (seat.id || "").trim();
+  if (rawId && !rawId.startsWith("sea_") && !rawId.startsWith("SEA-")) {
+    return formatSeatIdentifier(rawId);
+  }
+
+  // 3. Fallback to LOCATIONNAME-SEATNUMBER using locationName and seat.number
+  const locPrefix = (locationName || "OFFICE")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Z0-9-]+/g, "")
+    .replace(/^-+|-+$/g, "") || "OFFICE";
+
+  const num = seat.number !== undefined && seat.number !== null ? String(seat.number).trim() : "1";
+  const parsedNum = parseInt(num, 10);
+  const cleanNum = !isNaN(parsedNum) && parsedNum > 0 ? String(parsedNum) : num;
+
+  return `${locPrefix}-${cleanNum}`;
+}
+

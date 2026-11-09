@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   Search,
   Plus,
@@ -17,6 +17,8 @@ import {
   Armchair,
   Copy,
   Check,
+  CheckCircle2,
+  Loader2,
   User,
   ShieldCheck,
   Building2,
@@ -34,7 +36,7 @@ import AssignCard, { type LocationItem } from "../../components/locations/assign
 import { locationApi } from "../../services/locations";
 import { userApi, type UserItem } from "../../services/userApi";
 import CreateFormModal, { FormRow } from "../../components/common/CreateFormModal";
-import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatSeatIdentifier, getSeatDisplayIdentifier } from "../../utils/seatFormatter";
 
 interface SeatItem {
   number: string;
@@ -52,6 +54,25 @@ interface SeatItem {
   assignedAt?: string;
   qrToken?: string;
   orderUrl: string;
+  isOccupied?: boolean;
+  status?: "Occupied" | "Available";
+}
+
+/**
+ * Single source of truth for seat occupancy across the entire application.
+ * A seat is strictly Occupied whenever a valid employee is assigned to it
+ * (via employee, employeeEmail, employeeName, employeeId, assignmentId, or explicit isOccupied flag).
+ */
+export function isSeatOccupied(seat?: SeatItem | null): boolean {
+  if (!seat) return false;
+  return Boolean(
+    (seat.employee && String(seat.employee).trim().length > 0) ||
+    (seat.employeeEmail && String(seat.employeeEmail).trim().length > 0) ||
+    (seat.employeeName && String(seat.employeeName).trim().length > 0) ||
+    (seat.employeeId && String(seat.employeeId).trim().length > 0) ||
+    (seat.assignmentId && String(seat.assignmentId).trim().length > 0) ||
+    seat.isOccupied === true
+  );
 }
 
 export function normalizeLocationPrefix(name?: string): string {
@@ -65,6 +86,8 @@ export function normalizeLocationPrefix(name?: string): string {
 
 export default function LocationPage() {
   const params = useParams();
+  const navigate = useNavigate();
+  const urlLocationId = params.locationId || null;
   const urlShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
   const currentShortCode = useMemo(() => {
     if (urlShortCode) return urlShortCode;
@@ -81,7 +104,7 @@ export default function LocationPage() {
   const locStorageKey = currentShortCode ? `cafe4x_locations_${currentShortCode}` : "cafe4x_locations";
   const seatsStorageKey = currentShortCode ? `cafe4x_seatsByLoc_${currentShortCode}` : "cafe4x_seatsByLoc";
 
-// Helper to compute next available unique seat number and sequential Seat ID (e.g. OFFICE-0001, ROOM-0001, ...)
+// Helper to compute next available unique seat number and sequential Seat ID (e.g. OFFICE-1, ROOM-1, ...)
   const getNextAvailableSeatInfo = (
     existingSeats: SeatItem[],
     locationName?: string,
@@ -97,8 +120,9 @@ export default function LocationPage() {
         usedNumbers.add(parsedNum);
         maxNumber = Math.max(maxNumber, parsedNum);
       }
-      if (s.id) {
-        const match = s.id.match(/(\d+)$/);
+      const rawId = s.displayId || s.id;
+      if (rawId) {
+        const match = rawId.match(/(\d+)$/);
         if (match) {
           const idNum = parseInt(match[1], 10);
           if (!isNaN(idNum) && idNum > 0) {
@@ -117,10 +141,9 @@ export default function LocationPage() {
       candidate++;
     }
 
-    const padded2 = String(candidate).padStart(2, "0");
-    const padded4 = String(candidate).padStart(4, "0");
-    const seatId = `${locPrefix}-${padded4}`;
-    return { number: padded2, seatId, candidateNum: candidate };
+    const seatNumber = String(candidate);
+    const seatId = `${locPrefix}-${seatNumber}`;
+    return { number: seatNumber, seatId, candidateNum: candidate };
   };
 
   const [locations, setLocations] = useState<LocationItem[]>(() => {
@@ -148,6 +171,21 @@ export default function LocationPage() {
   const [newLocationName, setNewLocationName] = useState("");
   const [newLocationStatus, setNewLocationStatus] = useState<"Active" | "Inactive">("Active");
   const [newLocationImage, setNewLocationImage] = useState<string>("");
+  const [createLocNameError, setCreateLocNameError] = useState<string | null>(null);
+  const [createLocNameChecking, setCreateLocNameChecking] = useState(false);
+  const [createLocNameAvailable, setCreateLocNameAvailable] = useState<boolean | null>(null);
+  const [isSubmittingCreateLoc, setIsSubmittingCreateLoc] = useState(false);
+  const createLocTimerRef = useRef<any>(null);
+  const createLocAbortRef = useRef<AbortController | null>(null);
+
+  // Edit Location state
+  const [editLocNameError, setEditLocNameError] = useState<string | null>(null);
+  const [editLocNameChecking, setEditLocNameChecking] = useState(false);
+  const [editLocNameAvailable, setEditLocNameAvailable] = useState<boolean | null>(null);
+  const [isSubmittingEditLoc, setIsSubmittingEditLoc] = useState(false);
+  const editLocTimerRef = useRef<any>(null);
+  const editLocAbortRef = useRef<AbortController | null>(null);
+
   const locationImageInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -165,6 +203,16 @@ export default function LocationPage() {
           try {
             localStorage.setItem(locStorageKey, JSON.stringify(serverLocs));
           } catch { }
+
+          // If a direct URL with :locationId was opened, select the matching location immediately
+          if (urlLocationId) {
+            const matched = serverLocs.find(
+              (l) => String(l.id) === String(urlLocationId) || String(l.displayId) === String(urlLocationId)
+            );
+            if (matched) {
+              setSelectedLocation(matched);
+            }
+          }
         }
       })
       .catch((err) => {
@@ -175,7 +223,31 @@ export default function LocationPage() {
     return () => {
       isMounted = false;
     };
-  }, [locStorageKey, currentShortCode]);
+  }, [locStorageKey, currentShortCode, urlLocationId]);
+
+  // If directly accessing via /:shortCode/admin/locationseats/:locationId and location wasn't in list yet, fetch single location
+  useEffect(() => {
+    if (!urlLocationId) return;
+    if (selectedLocation && (String(selectedLocation.id) === String(urlLocationId) || String(selectedLocation.displayId) === String(urlLocationId))) {
+      return;
+    }
+
+    let isMounted = true;
+    locationApi.getLocationById(urlLocationId)
+      .then((loc) => {
+        if (!isMounted) return;
+        if (loc) {
+          setSelectedLocation(loc);
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not fetch direct location by ID:", err);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [urlLocationId]);
 
   const saveLocations = (newLocs: LocationItem[]) => {
     // 1. Always store locally in state and localStorage immediately
@@ -229,6 +301,54 @@ export default function LocationPage() {
     } catch { }
   };
 
+  // Helper to re-fetch seats for active location from backend D1 database
+  const refreshLocationSeats = (locId: string) => {
+    locationApi
+      .getSeats(locId)
+      .then((backendSeats) => {
+        if (Array.isArray(backendSeats)) {
+          const mapped: SeatItem[] = backendSeats.map((s) => {
+            const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
+            const seatUrl = s.qrToken
+              ? `${window.location.origin}${orgPrefix}/order/${s.qrToken}`
+              : (s.orderUrl
+                  ? (s.orderUrl.startsWith("http") ? s.orderUrl : `${window.location.origin}${s.orderUrl.startsWith("/") ? "" : "/"}${s.orderUrl}`)
+                  : `${window.location.origin}${orgPrefix}/order/${locId}/${s.number}`);
+            const assignedEmp = s.employee || s.employeeEmail || s.employeeName || undefined;
+            return {
+              id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
+              displayId: s.displayId,
+              number: s.number,
+              locationId: locId,
+              organizationId: s.organizationId,
+              qrToken: s.qrToken,
+              employee: assignedEmp,
+              employeeName: s.employeeName || (assignedEmp ? assignedEmp.split("@")[0] : undefined),
+              employeeEmail: s.employeeEmail || (assignedEmp && assignedEmp.includes("@") ? assignedEmp : undefined),
+              employeeId: s.employeeId,
+              employeeUserName: s.employeeUserName,
+              employeeQrToken: s.employeeQrToken,
+              assignmentId: s.assignmentId,
+              assignedAt: s.assignedAt,
+              orderUrl: seatUrl,
+              isOccupied: Boolean(assignedEmp || s.isOccupied),
+              status: (assignedEmp || s.isOccupied) ? "Occupied" : "Available",
+            };
+          });
+
+          setSeatsByLoc((prev) => {
+            const next = { ...prev, [locId]: mapped };
+            try {
+              localStorage.setItem(seatsStorageKey, JSON.stringify(next));
+              localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(next));
+            } catch { }
+            return next;
+          });
+        }
+      })
+      .catch((err) => console.warn("Failed to refresh seats:", err));
+  };
+
   // Helper to resolve an employee's secure permanent QR order URL or seat permanent QR URL
   const getEmployeeOrderUrl = (_employeeIdentifier?: string, _seatId?: string, locId?: string, seatNo?: string, qrToken?: string) => {
     const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
@@ -245,52 +365,9 @@ export default function LocationPage() {
     if (!selectedLocation) return;
     const locId = String(selectedLocation.id);
 
-    // 1. Fetch from backend
-    locationApi
-      .getSeats(locId)
-      .then((backendSeats) => {
-        if (Array.isArray(backendSeats)) {
-          const mapped: SeatItem[] = backendSeats.map((s) => {
-            const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-            const seatUrl = s.qrToken
-              ? `${window.location.origin}${orgPrefix}/order/${s.qrToken}`
-              : (s.orderUrl
-                  ? (s.orderUrl.startsWith("http") ? s.orderUrl : `${window.location.origin}${s.orderUrl.startsWith("/") ? "" : "/"}${s.orderUrl}`)
-                  : `${window.location.origin}${orgPrefix}/order/${locId}/${s.number}`);
-            return {
-              id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
-              displayId: s.displayId,
-              number: s.number,
-              locationId: locId,
-              qrToken: s.qrToken,
-              employee: s.employee || s.employeeEmail || undefined,
-              employeeName: s.employeeName,
-              employeeEmail: s.employeeEmail,
-              employeeId: s.employeeId,
-              orderUrl: seatUrl,
-            };
-          });
-          setSeatsByLoc((prev) => {
-            const next = { ...prev, [locId]: mapped };
-            try {
-              localStorage.setItem(seatsStorageKey, JSON.stringify(next));
-              localStorage.setItem("cafe4x_seatsByLoc", JSON.stringify(next));
-            } catch { }
-            return next;
-          });
-          return;
-        }
-
-        // If backend has no seats, keep as empty 0 seats
-        saveSeatsByLoc({ ...seatsByLoc, [locId]: [] });
-      })
-      .catch(() => {
-        if (!seatsByLoc[locId]) {
-          saveSeatsByLoc({ ...seatsByLoc, [locId]: [] });
-        }
-      });
+    // Fetch seats from backend
+    refreshLocationSeats(locId);
   }, [selectedLocation?.id, currentShortCode]);
-
 
   // Seat Delete confirmation state
   const [seatToDelete, setSeatToDelete] = useState<SeatItem | null>(null);
@@ -301,42 +378,6 @@ export default function LocationPage() {
   const [selectedEmployeeToAssign, setSelectedEmployeeToAssign] = useState<UserItem | null>(null);
   const [selectedCreateEmployee, setSelectedCreateEmployee] = useState<UserItem | null>(null);
 
-  // Helper to re-fetch seats for active location from backend D1 database
-  const refreshLocationSeats = (locId: string) => {
-    locationApi
-      .getSeats(locId)
-      .then((backendSeats) => {
-        if (Array.isArray(backendSeats) && backendSeats.length > 0) {
-          const mapped: SeatItem[] = backendSeats.map((s) => {
-            const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-            const seatUrl = s.qrToken
-              ? `${window.location.origin}${orgPrefix}/order/${s.qrToken}`
-              : (s.orderUrl
-                  ? (s.orderUrl.startsWith("http") ? s.orderUrl : `${window.location.origin}${s.orderUrl.startsWith("/") ? "" : "/"}${s.orderUrl}`)
-                  : `${window.location.origin}${orgPrefix}/order/${locId}/${s.number}`);
-            return {
-              id: s.id || s.displayId || `${normalizeLocationPrefix(selectedLocation?.name)}-${String(s.number).padStart(4, "0")}`,
-              displayId: s.displayId,
-              number: s.number,
-              locationId: locId,
-              qrToken: s.qrToken,
-              employee: s.employee || s.employeeEmail || undefined,
-              employeeName: s.employeeName,
-              employeeEmail: s.employeeEmail,
-              employeeId: s.employeeId,
-              employeeUserName: s.employeeUserName,
-              employeeQrToken: s.employeeQrToken,
-              assignmentId: s.assignmentId,
-              assignedAt: s.assignedAt,
-              orderUrl: seatUrl,
-            };
-          });
-          saveSeatsByLoc({ ...seatsByLoc, [locId]: mapped });
-        }
-      })
-      .catch((err) => console.warn("Failed to refresh seats:", err));
-  };
-
   const handleDeleteSeatClick = (seat: SeatItem) => {
     setSeatToDelete(seat);
   };
@@ -345,31 +386,27 @@ export default function LocationPage() {
     if (!seatToDelete || !selectedLocation) return;
     setIsDeletingSeat(true);
     const locId = selectedLocation.id;
-    const isAssigned = Boolean(
-      seatToDelete.employee ||
-      seatToDelete.employeeId ||
-      seatToDelete.employeeName ||
-      seatToDelete.assignmentId
-    );
+    const isAssigned = isSeatOccupied(seatToDelete);
 
     try {
       await locationApi.deleteSeat(locId, seatToDelete.id);
 
       // Remove locally from state
-      const currentLocSeats = seatsByLoc[locId] || [];
-      const updatedSeats = currentLocSeats.filter(
-        (s) => s.id !== seatToDelete.id && s.number !== seatToDelete.number
-      );
-      saveSeatsByLoc({
-        ...seatsByLoc,
-        [locId]: updatedSeats,
+      setSeatsByLoc((prev) => {
+        const currentLocSeats = prev[locId] || [];
+        const updatedSeats = currentLocSeats.filter(
+          (s) => s.id !== seatToDelete.id && s.number !== seatToDelete.number
+        );
+        return {
+          ...prev,
+          [locId]: updatedSeats,
+        };
       });
 
       // Update location counter
-      const updatedLocs = locations.map((l) =>
-        l.id === locId ? { ...l, totalSeats: updatedSeats.length } : l
+      setLocations((prev) =>
+        prev.map((l) => (l.id === locId ? { ...l, totalSeats: Math.max(0, (l.totalSeats || 1) - 1) } : l))
       );
-      saveLocations(updatedLocs);
 
       if (selectedSeatNumber === seatToDelete.number) {
         setSelectedSeatNumber(null);
@@ -378,7 +415,7 @@ export default function LocationPage() {
       setSeatToDelete(null);
 
       // Refresh seats from server
-      refreshLocationSeats(locId);
+      await refreshLocationSeats(locId);
 
       setSeatActionMessage({
         type: "success",
@@ -448,6 +485,13 @@ export default function LocationPage() {
   // Active Seating State
   const activeLocationId = selectedLocation?.id || "";
   const currentSeats = activeLocationId ? (seatsByLoc[activeLocationId] || []) : [];
+  const totalOccupiedSeats = useMemo(() => {
+    return currentSeats.filter((s) => isSeatOccupied(s)).length;
+  }, [currentSeats]);
+  const totalAvailableSeats = useMemo(() => {
+    return Math.max(0, currentSeats.length - totalOccupiedSeats);
+  }, [currentSeats.length, totalOccupiedSeats]);
+
   const currentSeat = selectedSeatNumber
     ? currentSeats.find((s) => s.number === selectedSeatNumber) || null
     : null;
@@ -456,6 +500,18 @@ export default function LocationPage() {
   const handleRefresh = () => {
     setIsRefreshing(true);
     setTimeout(() => setIsRefreshing(false), 400);
+  };
+
+  const handleSelectLocation = (loc: LocationItem) => {
+    setSelectedLocation(loc);
+    const orgSlug = currentShortCode || "admin";
+    navigate(`/${orgSlug}/admin/locationseats/${loc.id}`);
+  };
+
+  const handleBackToLocations = () => {
+    setSelectedLocation(null);
+    const orgSlug = currentShortCode || "admin";
+    navigate(`/${orgSlug}/location`);
   };
 
   const handleExport = () => {
@@ -468,43 +524,281 @@ export default function LocationPage() {
     link.click();
   };
 
-  const handleCreateLocationSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newLocationName.trim()) return;
-    const newId = Date.now().toString();
-    let currentOrgId = "";
+  // Real-time location name validation for Create Location
+  const checkCreateLocationNameAvailability = async (rawVal: string) => {
+    const val = rawVal.trim();
+    if (!val) {
+      setCreateLocNameChecking(false);
+      setCreateLocNameAvailable(null);
+      setCreateLocNameError(null);
+      return;
+    }
+
+    // Local in-memory check first (instant check against loaded locations for this org)
+    const existsLocally = locations.some(
+      (l) => l.name.trim().toLowerCase() === val.toLowerCase()
+    );
+    if (existsLocally) {
+      setCreateLocNameChecking(false);
+      setCreateLocNameAvailable(false);
+      setCreateLocNameError("This location name already exists in this organization.");
+      return;
+    }
+
+    if (createLocAbortRef.current) {
+      createLocAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    createLocAbortRef.current = controller;
+
+    setCreateLocNameChecking(true);
     try {
-      const stored = localStorage.getItem("cafe4x_currentUser");
-      if (stored) currentOrgId = JSON.parse(stored).organizationId || "";
-    } catch { }
+      const res = await locationApi.checkLocationName(val, undefined, controller.signal);
+      if (!res.available) {
+        setCreateLocNameAvailable(false);
+        setCreateLocNameError("This location name already exists in this organization.");
+      } else {
+        setCreateLocNameAvailable(true);
+        setCreateLocNameError(null);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError" || err?.name === "CanceledError") {
+        return;
+      }
+      setCreateLocNameAvailable(null);
+      setCreateLocNameError(err?.message || "Unable to verify location name.");
+    } finally {
+      if (!controller.signal.aborted) {
+        setCreateLocNameChecking(false);
+      }
+    }
+  };
 
-    const newLoc: LocationItem = {
-      id: newId,
-      name: newLocationName.trim(),
-      status: newLocationStatus,
-      totalSeats: 0,
-      image: newLocationImage || undefined,
-      shortCode: currentShortCode || undefined,
-      organizationId: currentOrgId || undefined,
-    };
-    // 1. Store in local state immediately
-    const updated = [...locations, newLoc];
-    saveLocations(updated);
+  const handleCreateLocNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVal = e.target.value;
+    setNewLocationName(nextVal);
+    setCreateLocNameAvailable(null);
+    setCreateLocNameError(null);
 
-    // 2. Sync to backend asynchronously
-    locationApi.createLocation(newLoc).catch((err) => {
-      console.warn("Could not save location to backend:", err);
-    });
+    if (createLocTimerRef.current) {
+      clearTimeout(createLocTimerRef.current);
+    }
 
-    const updatedSeats = {
-      ...seatsByLoc,
-      [newId]: [],
-    };
-    saveSeatsByLoc(updatedSeats);
-    setNewLocationName("");
-    setNewLocationStatus("Active");
-    setNewLocationImage("");
-    setIsCreateLocationOpen(false);
+    const trimmed = nextVal.trim();
+    if (!trimmed) {
+      setCreateLocNameChecking(false);
+      setCreateLocNameAvailable(null);
+      return;
+    }
+
+    setCreateLocNameChecking(true);
+    createLocTimerRef.current = setTimeout(() => {
+      checkCreateLocationNameAvailability(trimmed);
+    }, 400);
+  };
+
+  // Real-time location name validation for Edit Location
+  const checkEditLocationNameAvailability = async (rawVal: string, excludeId?: string) => {
+    const val = rawVal.trim();
+    if (!val) {
+      setEditLocNameChecking(false);
+      setEditLocNameAvailable(null);
+      setEditLocNameError("Location name is required.");
+      return;
+    }
+
+    // Local in-memory check first (exclude current location being edited)
+    const existsLocally = locations.some(
+      (l) => l.id !== excludeId && l.displayId !== excludeId && l.name.trim().toLowerCase() === val.toLowerCase()
+    );
+    if (existsLocally) {
+      setEditLocNameChecking(false);
+      setEditLocNameAvailable(false);
+      setEditLocNameError("This location name already exists in this organization.");
+      return;
+    }
+
+    if (editLocAbortRef.current) {
+      editLocAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    editLocAbortRef.current = controller;
+
+    setEditLocNameChecking(true);
+    try {
+      const res = await locationApi.checkLocationName(val, excludeId, controller.signal);
+      if (!res.available) {
+        setEditLocNameAvailable(false);
+        setEditLocNameError("This location name already exists in this organization.");
+      } else {
+        setEditLocNameAvailable(true);
+        setEditLocNameError(null);
+      }
+    } catch (err: any) {
+      if (err?.name === "AbortError" || err?.name === "CanceledError") {
+        return;
+      }
+      setEditLocNameAvailable(null);
+      setEditLocNameError(err?.message || "Unable to verify location name.");
+    } finally {
+      if (!controller.signal.aborted) {
+        setEditLocNameChecking(false);
+      }
+    }
+  };
+
+  const handleEditLocNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nextVal = e.target.value;
+    if (editingLoc) {
+      setEditingLoc({ ...editingLoc, name: nextVal });
+    }
+    setEditLocNameAvailable(null);
+    setEditLocNameError(null);
+
+    if (editLocTimerRef.current) {
+      clearTimeout(editLocTimerRef.current);
+    }
+
+    const trimmed = nextVal.trim();
+    if (!trimmed) {
+      setEditLocNameChecking(false);
+      setEditLocNameAvailable(null);
+      setEditLocNameError("Location name is required.");
+      return;
+    }
+
+    setEditLocNameChecking(true);
+    editLocTimerRef.current = setTimeout(() => {
+      checkEditLocationNameAvailability(trimmed, editingLoc?.id);
+    }, 400);
+  };
+
+  const handleCreateLocationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = newLocationName.trim();
+    if (!trimmedName) {
+      setCreateLocNameError("Location name is required.");
+      return;
+    }
+
+    // Check duplicate within the organization before submitting
+    const duplicate = locations.some(
+      (l) => l.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setCreateLocNameError("This location name already exists in this organization.");
+      return;
+    }
+
+    setIsSubmittingCreateLoc(true);
+    try {
+      // Validate availability with backend
+      const checkRes = await locationApi.checkLocationName(trimmedName);
+      if (!checkRes.available) {
+        setCreateLocNameError("This location name already exists in this organization.");
+        setIsSubmittingCreateLoc(false);
+        return;
+      }
+
+      let currentOrgId = "";
+      try {
+        const stored = localStorage.getItem("cafe4x_currentUser");
+        if (stored) currentOrgId = JSON.parse(stored).organizationId || "";
+      } catch { }
+
+      const payload: Partial<LocationItem> = {
+        name: trimmedName,
+        status: newLocationStatus,
+        totalSeats: 0,
+        image: newLocationImage || undefined,
+        shortCode: currentShortCode || undefined,
+        organizationId: currentOrgId || undefined,
+      };
+
+      const serverLoc = await locationApi.createLocation(payload);
+      if (!serverLoc?.id) {
+        throw new Error("Location creation did not return a valid location ID from the server.");
+      }
+      const newLoc: LocationItem = serverLoc;
+
+      const updated = [...locations, newLoc];
+      saveLocations(updated);
+
+      const updatedSeats = {
+        ...seatsByLoc,
+        [newLoc.id]: [],
+      };
+      saveSeatsByLoc(updatedSeats);
+
+      setNewLocationName("");
+      setNewLocationStatus("Active");
+      setNewLocationImage("");
+      setCreateLocNameError(null);
+      setCreateLocNameAvailable(null);
+      setIsCreateLocationOpen(false);
+    } catch (err: any) {
+      const msg = err?.data?.message || err?.message || "Failed to create location.";
+      if (msg.toLowerCase().includes("already exists")) {
+        setCreateLocNameError("This location name already exists in this organization.");
+      } else {
+        setCreateLocNameError(msg);
+      }
+    } finally {
+      setIsSubmittingCreateLoc(false);
+    }
+  };
+
+  const handleEditLocationSubmit = async () => {
+    if (!editingLoc) return;
+    const trimmedName = editingLoc.name.trim();
+    if (!trimmedName) {
+      setEditLocNameError("Location name is required.");
+      return;
+    }
+
+    // Check duplicate within the organization (excluding this location)
+    const duplicate = locations.some(
+      (l) => l.id !== editingLoc.id && l.displayId !== editingLoc.id && l.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (duplicate) {
+      setEditLocNameError("This location name already exists in this organization.");
+      return;
+    }
+
+    setIsSubmittingEditLoc(true);
+    try {
+      const checkRes = await locationApi.checkLocationName(trimmedName, editingLoc.id);
+      if (!checkRes.available) {
+        setEditLocNameError("This location name already exists in this organization.");
+        setIsSubmittingEditLoc(false);
+        return;
+      }
+
+      await locationApi.updateLocation(editingLoc.id, {
+        name: trimmedName,
+      });
+
+      setLocations((prev) =>
+        prev.map((l) => (l.id === editingLoc.id ? { ...editingLoc, name: trimmedName } : l))
+      );
+
+      if (selectedLocation?.id === editingLoc.id) {
+        setSelectedLocation({ ...selectedLocation, name: trimmedName });
+      }
+
+      setIsEditLocationOpen(false);
+      setEditLocNameError(null);
+      setEditLocNameAvailable(null);
+    } catch (err: any) {
+      const msg = err?.data?.message || err?.message || "Failed to update location.";
+      if (msg.toLowerCase().includes("already exists")) {
+        setEditLocNameError("This location name already exists in this organization.");
+      } else {
+        setEditLocNameError(msg);
+      }
+    } finally {
+      setIsSubmittingEditLoc(false);
+    }
   };
 
   const handleDeleteLocation = (id: string, e: React.MouseEvent) => {
@@ -561,21 +855,23 @@ export default function LocationPage() {
       return;
     }
     const parsedNum = parseInt(rawSeatNo, 10);
-    const padded = !isNaN(parsedNum) ? String(parsedNum).padStart(2, "0") : rawSeatNo;
+    const seatNum = !isNaN(parsedNum) ? String(parsedNum) : rawSeatNo;
     const locId = selectedLocation?.id || "1";
     const locName = selectedLocation?.name || "OFFICE";
     const locPrefix = normalizeLocationPrefix(locName);
     const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
-    const finalSeatId = newSeatForm.seatId.trim() || `${locPrefix}-${String(parsedNum || 1).padStart(4, "0")}`;
+    const finalSeatId = newSeatForm.seatId.trim() || `${locPrefix}-${parsedNum || 1}`;
 
     const currentLocSeats = seatsByLoc[locId] || [];
 
     // Duplicate check
     const seatExists = currentLocSeats.some(
-      (s) => s.number === padded || s.id.toLowerCase() === finalSeatId.toLowerCase()
+      (s) => s.number === seatNum || 
+             (s.displayId && s.displayId.toLowerCase() === finalSeatId.toLowerCase()) ||
+             (s.id && s.id.toLowerCase() === finalSeatId.toLowerCase())
     );
     if (seatExists) {
-      setCreateSeatError(`Seat identifier ${finalSeatId} (Seat ${padded}) already exists in this location.`);
+      setCreateSeatError(`This seat identifier already exists in this location.`);
       return;
     }
 
@@ -594,13 +890,14 @@ export default function LocationPage() {
 
     try {
       const idealUrl = newSeatForm.assignNow
-        ? getEmployeeOrderUrl(trimmedEmail || trimmedName, finalSeatId, locId, padded)
-        : `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(padded, 10) || 1}?seatId=${finalSeatId}`;
+        ? getEmployeeOrderUrl(trimmedEmail || trimmedName, finalSeatId, locId, seatNum)
+        : `${window.location.origin}${orgPrefix}/order/${locId}/${parseInt(seatNum, 10) || 1}?seatId=${finalSeatId}`;
 
       // 1. Save seat permanently in local D1 database
       await locationApi.saveSeat(locId, {
         id: finalSeatId,
-        number: padded,
+        displayId: finalSeatId,
+        number: seatNum,
         employee: newSeatForm.assignNow ? trimmedEmail : undefined,
         employeeName: newSeatForm.assignNow ? trimmedName : undefined,
         employeeEmail: newSeatForm.assignNow ? trimmedEmail : undefined,
@@ -609,17 +906,16 @@ export default function LocationPage() {
       });
 
       // 2. Refresh seats from D1
-      refreshLocationSeats(locId);
+      await refreshLocationSeats(locId);
 
       // 3. Update location counter
-      const updated = locations.map((l) =>
-        l.id === locId ? { ...l, totalSeats: (seatsByLoc[locId]?.length || 0) + 1 } : l
+      setLocations((prev) =>
+        prev.map((l) => (l.id === locId ? { ...l, totalSeats: (l.totalSeats || 0) + 1 } : l))
       );
-      saveLocations(updated);
 
       // 4. Refresh assignment table
       
-      setSelectedSeatNumber(padded);
+      setSelectedSeatNumber(seatNum);
       setIsCreateSeatOpen(false);
       setNewSeatForm({
         location: locId,
@@ -654,10 +950,8 @@ export default function LocationPage() {
       await locationApi.unassignSeat(locId, currentSeat.id);
 
       // 2. Re-fetch seats from D1
-      refreshLocationSeats(locId);
+      await refreshLocationSeats(locId);
 
-      // 3. Refresh assignment table
-      
       setIsUnassignConfirmOpen(false);
       setSeatActionMessage({
         type: "success",
@@ -716,10 +1010,8 @@ export default function LocationPage() {
       });
 
       // 2. Re-fetch seats from D1
-      refreshLocationSeats(locId);
+      await refreshLocationSeats(locId);
 
-      // 3. Refresh assignment table
-      
       setIsEditSeatOpen(false);
       setSelectedEmployeeToAssign(null);
       setAssignEmployeeSearch("");
@@ -849,7 +1141,7 @@ export default function LocationPage() {
                       >
                         {/* Office Silhouette Graphic or Uploaded Image - Click opens realistic boardroom seats */}
                         <div
-                          onClick={() => setSelectedLocation(loc)}
+                          onClick={() => handleSelectLocation(loc)}
                           className="flex h-44 w-full cursor-pointer items-center justify-center rounded-2xl bg-[#EBECEE] transition duration-200 group-hover:bg-[#E5E6EA] overflow-hidden"
                           title="Click to open realistic boardroom layout and seats"
                         >
@@ -873,7 +1165,7 @@ export default function LocationPage() {
                         {/* Title and Active Badge */}
                         <div className="mt-4 flex items-center justify-between">
                           <span
-                            onClick={() => setSelectedLocation(loc)}
+                            onClick={() => handleSelectLocation(loc)}
                             className="cursor-pointer font-bold text-base text-[#342219] hover:text-[#8C5835]"
                           >
                             {loc.name}
@@ -1016,7 +1308,7 @@ export default function LocationPage() {
                   <div className="flex flex-wrap items-center gap-3.5">
                     <button
                       type="button"
-                      onClick={() => setSelectedLocation(null)}
+                      onClick={handleBackToLocations}
                       className="group flex items-center gap-2 rounded-2xl border border-[#D5C2B1] bg-white px-4 py-2.5 text-xs font-bold text-[#6F4228] shadow-xs transition duration-200 hover:-translate-x-0.5 hover:border-[#8C5835] hover:bg-[#FAF6F1]"
                     >
                       <ArrowLeft size={16} className="transition-transform duration-200 group-hover:-translate-x-0.5" />
@@ -1044,7 +1336,9 @@ export default function LocationPage() {
                       <Armchair size={15} className="text-[#8C5835]" />
                       <span>{currentSeats.length} Total Seats</span>
                       <span className="text-[#C4A48C]">•</span>
-                      <span className="text-emerald-700 font-semibold">{currentSeats.filter(s => s.employee).length} Occupied</span>
+                      <span className="text-emerald-700 font-semibold">{totalOccupiedSeats} Occupied</span>
+                      <span className="text-[#C4A48C]">•</span>
+                      <span className="text-[#8C5835] font-semibold">{totalAvailableSeats} Available</span>
                     </div>
 
                     {/* Create Seat Button */}
@@ -1215,7 +1509,8 @@ export default function LocationPage() {
                               <div className="flex flex-wrap items-end justify-center gap-4 sm:gap-6">
                                 {topSeats.map((seat) => {
                                   const isSelected = selectedSeatNumber === seat.number;
-                                  const isAssigned = Boolean(seat.employee);
+                                  const isAssigned = isSeatOccupied(seat);
+                                  const assignedEmployeeLabel = seat.employeeName || seat.employee || (isAssigned ? "Occupied" : null);
 
                                   return (
                                     <div
@@ -1253,7 +1548,7 @@ export default function LocationPage() {
                                                 ? "bg-emerald-500 text-white ring-emerald-100"
                                                 : "bg-[#96603B] text-amber-100 ring-[#F3E8DC]"
                                               }`}
-                                            title={isAssigned ? `Assigned: ${seat.employee}` : "Available Seat"}
+                                            title={isAssigned ? `Assigned: ${assignedEmployeeLabel}` : "Available Seat"}
                                           >
                                             {isAssigned ? "✓" : "•"}
                                           </span>
@@ -1268,14 +1563,14 @@ export default function LocationPage() {
                                             ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
                                             : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
                                           }`}>
-                                          {formatSeatIdentifier(seat.id || seat.displayId) || `Seat-${seat.number}`}
+                                          {getSeatDisplayIdentifier(seat, selectedLocation?.name) || `Seat-${seat.number}`}
                                         </span>
                                         {isAssigned ? (
                                           <span
                                             className="max-w-[85px] truncate rounded-md bg-emerald-100/90 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 border border-emerald-300 shadow-2xs"
-                                            title={seat.employeeName || seat.employee}
+                                            title={assignedEmployeeLabel || "Occupied"}
                                           >
-                                            👤 {seat.employeeName || (seat.employee ? seat.employee.split("@")[0] : "Assigned")}
+                                            👤 {seat.employeeName || (seat.employee ? seat.employee.split("@")[0] : "Occupied")}
                                           </span>
                                         ) : (
                                           <span className="text-[9px] font-medium text-[#A08C7D]">
@@ -1289,10 +1584,10 @@ export default function LocationPage() {
                                         <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
                                           <div className="flex items-center justify-center gap-1.5 text-amber-300">
                                             <span>Seat {seat.number}</span>
-                                            <span className="text-stone-400 font-mono">({formatSeatIdentifier(seat.id || seat.displayId)})</span>
+                                            <span className="text-stone-400 font-mono">({getSeatDisplayIdentifier(seat, selectedLocation?.name)})</span>
                                           </div>
                                           <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
-                                            {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
+                                            {isAssigned ? `👤 ${assignedEmployeeLabel}` : "✨ Available • Click to manage"}
                                           </div>
                                         </div>
                                       </div>
@@ -1321,7 +1616,7 @@ export default function LocationPage() {
                                       {selectedLocation.name} Executive Table
                                     </div>
                                     <div className="text-[9px] font-semibold text-[#D7B7A0] mt-0.5">
-                                      {currentSeats.length} Seats &bull; {currentSeats.filter(s => s.employee).length} Occupied
+                                      {currentSeats.length} Seats &bull; {totalOccupiedSeats} Occupied &bull; {totalAvailableSeats} Available
                                     </div>
                                   </div>
                                   <span className="text-base select-none">🌿</span>
@@ -1337,7 +1632,8 @@ export default function LocationPage() {
                               <div className="flex flex-wrap items-start justify-center gap-4 sm:gap-6">
                                 {bottomSeats.map((seat) => {
                                   const isSelected = selectedSeatNumber === seat.number;
-                                  const isAssigned = Boolean(seat.employee);
+                                  const isAssigned = isSeatOccupied(seat);
+                                  const assignedEmployeeLabel = seat.employeeName || seat.employee || (isAssigned ? "Occupied" : null);
 
                                   return (
                                     <div
@@ -1350,9 +1646,9 @@ export default function LocationPage() {
                                         {isAssigned ? (
                                           <span
                                             className="max-w-[85px] truncate rounded-md bg-emerald-100/90 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800 border border-emerald-300 shadow-2xs"
-                                            title={seat.employeeName || seat.employee}
+                                            title={assignedEmployeeLabel || "Occupied"}
                                           >
-                                            👤 {seat.employeeName || (seat.employee ? seat.employee.split("@")[0] : "Assigned")}
+                                            👤 {seat.employeeName || (seat.employee ? seat.employee.split("@")[0] : "Occupied")}
                                           </span>
                                         ) : (
                                           <span className="text-[9px] font-medium text-[#A08C7D]">
@@ -1363,7 +1659,7 @@ export default function LocationPage() {
                                             ? "bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-200"
                                             : "bg-white/95 text-[#6E4229] border-[#DECFBE]"
                                           }`}>
-                                          {formatSeatIdentifier(seat.id || seat.displayId) || `Seat-${seat.number}`}
+                                          {getSeatDisplayIdentifier(seat, selectedLocation?.name) || `Seat-${seat.number}`}
                                         </span>
                                       </div>
 
@@ -1387,7 +1683,7 @@ export default function LocationPage() {
                                                 ? "bg-emerald-500 text-white ring-emerald-100"
                                                 : "bg-[#96603B] text-amber-100 ring-[#F3E8DC]"
                                               }`}
-                                            title={isAssigned ? `Assigned: ${seat.employee}` : "Available Seat"}
+                                            title={isAssigned ? `Assigned: ${assignedEmployeeLabel}` : "Available Seat"}
                                           >
                                             {isAssigned ? "✓" : "•"}
                                           </span>
@@ -1411,10 +1707,10 @@ export default function LocationPage() {
                                         <div className="rounded-xl border border-stone-700/50 bg-[#251710]/95 px-3.5 py-1.5 text-[10px] font-bold text-white shadow-xl backdrop-blur-xs whitespace-nowrap text-center">
                                           <div className="flex items-center justify-center gap-1.5 text-amber-300">
                                             <span>Seat {seat.number}</span>
-                                            <span className="text-stone-400 font-mono">({formatSeatIdentifier(seat.id || seat.displayId)})</span>
+                                            <span className="text-stone-400 font-mono">({getSeatDisplayIdentifier(seat, selectedLocation?.name)})</span>
                                           </div>
                                           <div className={isAssigned ? "text-emerald-300 text-[9px] mt-0.5 font-medium" : "text-amber-200 text-[9px] mt-0.5 font-medium"}>
-                                            {isAssigned ? `👤 ${seat.employee}` : "✨ Available • Click to manage"}
+                                            {isAssigned ? `👤 ${assignedEmployeeLabel}` : "✨ Available • Click to manage"}
                                           </div>
                                         </div>
                                       </div>
@@ -1570,7 +1866,7 @@ export default function LocationPage() {
                               <div className="flex items-center justify-between rounded-2xl border border-[#EEE5DC] bg-white p-3 shadow-2xs">
                                 <span className="font-semibold text-[#8A7667]">Seat Identifier</span>
                                 <span className="font-mono font-bold text-sm text-[#342219]">
-                                  {formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}
+                                  {getSeatDisplayIdentifier(currentSeat, selectedLocation?.name)}
                                 </span>
                               </div>
 
@@ -1622,7 +1918,7 @@ export default function LocationPage() {
 
                                   <div className="flex-1 space-y-1">
                                     <p className="text-xs font-bold text-[#342219]">
-                                      {formatSeatIdentifier(currentSeat.id || currentSeat.displayId) || `Seat ${currentSeat.number}`} QR
+                                      {getSeatDisplayIdentifier(currentSeat, selectedLocation?.name) || `Seat ${currentSeat.number}`} QR
                                     </p>
                                     <p className="text-[11px] text-[#8A7667]">
                                       Permanent QR code for table and ordering
@@ -1636,7 +1932,7 @@ export default function LocationPage() {
                                             effectiveOrderUrl
                                           )}`;
                                           link.target = "_blank";
-                                          link.download = `${formatSeatIdentifier(currentSeat.id || currentSeat.displayId) || `seat_${currentSeat.number}`}_qr.png`;
+                                          link.download = `${getSeatDisplayIdentifier(currentSeat, selectedLocation?.name) || `seat_${currentSeat.number}`}_qr.png`;
                                           link.click();
                                         }}
                                         className="flex items-center gap-1 rounded-lg bg-white px-2.5 py-1 text-[11px] font-bold text-[#8C5835] border border-[#D5C2B1] hover:bg-[#FAF6F1] cursor-pointer"
@@ -1719,7 +2015,7 @@ export default function LocationPage() {
 
                         {/* Action Buttons: Context-aware for Assigned vs Available Seats */}
                         <div className="mt-5 border-t border-[#EEE5DC] pt-4">
-                          {Boolean(currentSeat.employee || currentSeat.employeeEmail || currentSeat.employeeName) ? (
+                          {isSeatOccupied(currentSeat) ? (
                             <div>
                               {/* Delete Seat */}
                               <button
@@ -1790,24 +2086,53 @@ export default function LocationPage() {
         <CreateFormModal
           isOpen={isCreateLocationOpen}
           onClose={() => {
+            if (createLocTimerRef.current) clearTimeout(createLocTimerRef.current);
+            if (createLocAbortRef.current) createLocAbortRef.current.abort();
             setNewLocationName("");
             setNewLocationImage("");
+            setCreateLocNameError(null);
+            setCreateLocNameAvailable(null);
+            setCreateLocNameChecking(false);
             setIsCreateLocationOpen(false);
           }}
           title="Location Create"
           onSubmit={handleCreateLocationSubmit}
+          isSubmitting={isSubmittingCreateLoc || createLocNameChecking || createLocNameAvailable === false}
         >
           {/* Name */}
           <FormRow label="Name" required>
-            <input
-              id="location-name"
-              required
-              type="text"
-              placeholder="Name"
-              value={newLocationName}
-              onChange={(e) => setNewLocationName(e.target.value)}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 outline-none transition focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
-            />
+            <div className="relative w-full">
+              <input
+                id="location-name"
+                required
+                type="text"
+                placeholder="Name"
+                value={newLocationName}
+                onChange={handleCreateLocNameChange}
+                className={`w-full rounded-md border px-3 py-2 pr-9 text-gray-800 outline-none transition ${
+                  createLocNameError
+                    ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
+                    : createLocNameAvailable === true
+                    ? "border-emerald-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                    : "border-gray-300 focus:border-[#28A745] focus:ring-1 focus:ring-[#28A745]/20"
+                }`}
+              />
+              <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                {createLocNameChecking && (
+                  <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+                )}
+                {!createLocNameChecking && createLocNameAvailable === true && (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                )}
+              </div>
+            </div>
+            {createLocNameChecking ? (
+              <p className="mt-1 text-xs font-medium text-[#8C5835]">Checking location name availability...</p>
+            ) : createLocNameError ? (
+              <p className="mt-1 text-xs font-semibold text-red-500">{createLocNameError}</p>
+            ) : createLocNameAvailable === true ? (
+              <p className="mt-1 text-xs font-semibold text-emerald-600">Location name is available.</p>
+            ) : null}
           </FormRow>
 
           {/* Status */}
@@ -1931,7 +2256,7 @@ export default function LocationPage() {
                 const locPrefix = normalizeLocationPrefix(locName);
                 const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                 const num = parseInt(val, 10);
-                const generatedId = isNaN(num) ? "" : `${locPrefix}-${String(num).padStart(4, "0")}`;
+                const generatedId = isNaN(num) ? "" : `${locPrefix}-${num}`;
 
                 setNewSeatForm({
                   ...newSeatForm,
@@ -2016,7 +2341,7 @@ export default function LocationPage() {
                       {currentSeat.employee || currentSeat.employeeEmail ? "Change Assigned Employee" : "Assign Employee to Seat"}
                     </h3>
                     <p className="text-xs text-[#8A7667]">
-                      Seat <span className="font-bold text-[#342219]">{currentSeat.number}</span> &bull; <span className="font-mono text-[#6F4228]">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</span>
+                      Seat <span className="font-bold text-[#342219]">{currentSeat.number}</span> &bull; <span className="font-mono text-[#6F4228]">{getSeatDisplayIdentifier(currentSeat, selectedLocation?.name)}</span>
                     </p>
                   </div>
                 </div>
@@ -2220,7 +2545,7 @@ export default function LocationPage() {
               <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50/70 p-3.5 text-xs text-gray-700 space-y-1.5">
                 <div className="flex justify-between">
                   <span className="text-[#8A7667]">Seat Identifier:</span>
-                  <strong className="font-mono text-[#342219]">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</strong>
+                  <strong className="font-mono text-[#342219]">{getSeatDisplayIdentifier(currentSeat, selectedLocation?.name)}</strong>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[#8A7667]">Assigned Employee:</span>
@@ -2238,7 +2563,7 @@ export default function LocationPage() {
                 <p className="font-semibold text-amber-950">What will happen:</p>
                 <ul className="list-disc list-inside space-y-0.5 text-[#735133]">
                   <li>The employee assignment will be cleared.</li>
-                  <li>Seat <strong className="font-mono">{formatSeatIdentifier(currentSeat.id || currentSeat.displayId)}</strong> will remain in the seating plan as <strong>Available</strong>.</li>
+                  <li>Seat <strong className="font-mono">{getSeatDisplayIdentifier(currentSeat, selectedLocation?.name)}</strong> will remain in the seating plan as <strong>Available</strong>.</li>
                   <li>The seat and location records are NOT deleted.</li>
                   <li>Another employee can be assigned to this seat at any time.</li>
                 </ul>
@@ -2295,7 +2620,7 @@ export default function LocationPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#8A7667]">Seat Identifier:</span>
-                    <span className="font-mono font-bold text-[#342219]">{formatSeatIdentifier(seatToDelete.displayId || seatToDelete.id)}</span>
+                    <span className="font-mono font-bold text-[#342219]">{getSeatDisplayIdentifier(seatToDelete, selectedLocation?.name)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-[#8A7667]">Location:</span>
@@ -2345,7 +2670,14 @@ export default function LocationPage() {
                 <h3 className="text-lg font-bold text-[#342219]">Edit Location</h3>
                 <button
                   type="button"
-                  onClick={() => setIsEditLocationOpen(false)}
+                  onClick={() => {
+                    if (editLocTimerRef.current) clearTimeout(editLocTimerRef.current);
+                    if (editLocAbortRef.current) editLocAbortRef.current.abort();
+                    setEditLocNameError(null);
+                    setEditLocNameAvailable(null);
+                    setEditLocNameChecking(false);
+                    setIsEditLocationOpen(false);
+                  }}
                   className="rounded-lg p-1 text-gray-400 hover:text-gray-700"
                 >
                   <X size={20} />
@@ -2355,33 +2687,59 @@ export default function LocationPage() {
               <div className="mt-4 space-y-4 text-xs">
                 <div>
                   <label className="mb-1 block font-semibold text-[#45352B]">Name</label>
-                  <input
-                    type="text"
-                    value={editingLoc.name}
-                    onChange={(e) => setEditingLoc({ ...editingLoc, name: e.target.value })}
-                    className="w-full rounded-xl border border-[#E8DED4] p-2 text-sm text-[#342219] outline-none"
-                  />
+                  <div className="relative w-full">
+                    <input
+                      type="text"
+                      value={editingLoc.name}
+                      onChange={handleEditLocNameChange}
+                      className={`w-full rounded-xl border p-2 pr-9 text-sm text-[#342219] outline-none transition ${
+                        editLocNameError
+                          ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
+                          : editLocNameAvailable === true
+                          ? "border-emerald-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                          : "border-[#E8DED4] focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+                      }`}
+                    />
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                      {editLocNameChecking && (
+                        <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+                      )}
+                      {!editLocNameChecking && editLocNameAvailable === true && (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      )}
+                    </div>
+                  </div>
+                  {editLocNameChecking ? (
+                    <p className="mt-1 text-xs font-medium text-[#8C5835]">Checking location name availability...</p>
+                  ) : editLocNameError ? (
+                    <p className="mt-1 text-xs font-semibold text-red-500">{editLocNameError}</p>
+                  ) : editLocNameAvailable === true ? (
+                    <p className="mt-1 text-xs font-semibold text-emerald-600">Location name is available.</p>
+                  ) : null}
                 </div>
 
                 <div className="flex justify-end gap-3 pt-3">
                   <button
                     type="button"
-                    onClick={() => setIsEditLocationOpen(false)}
-                    className="rounded-xl border border-gray-200 px-4 py-2 font-semibold text-gray-600"
+                    onClick={() => {
+                      if (editLocTimerRef.current) clearTimeout(editLocTimerRef.current);
+                      if (editLocAbortRef.current) editLocAbortRef.current.abort();
+                      setEditLocNameError(null);
+                      setEditLocNameAvailable(null);
+                      setEditLocNameChecking(false);
+                      setIsEditLocationOpen(false);
+                    }}
+                    className="rounded-xl border border-gray-200 px-4 py-2 font-semibold text-gray-600 hover:bg-gray-50 cursor-pointer"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setLocations((prev) =>
-                        prev.map((l) => (l.id === editingLoc.id ? editingLoc : l))
-                      );
-                      setIsEditLocationOpen(false);
-                    }}
-                    className="rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 font-semibold text-white"
+                    disabled={isSubmittingEditLoc || editLocNameChecking || editLocNameAvailable === false}
+                    onClick={handleEditLocationSubmit}
+                    className="rounded-xl bg-gradient-to-r from-[#754329] to-[#8C5835] px-5 py-2 font-semibold text-white hover:opacity-95 disabled:opacity-50 cursor-pointer transition shadow-sm"
                   >
-                    Save Changes
+                    {isSubmittingEditLoc ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { AppEnv } from "../types";
 
 const locationRoutes = new Hono<AppEnv>();
 
+locationRoutes.get("/check-name", locationController.checkLocationName);
 locationRoutes.get("/", locationController.getLocations);
 locationRoutes.get("/:id", locationController.getLocationById);
 locationRoutes.post("/", locationController.createLocation);

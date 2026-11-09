@@ -568,15 +568,16 @@ export default function WorkingHoursPage() {
                         </p>
                       </div>
 
-                      {/* Add Break Button */}
-                      <button
-                        type="button"
-                        onClick={handleOpenAddBreakModal}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
-                      >
-                        <Plus size={14} />
-                        <span>Add Break</span>
-                      </button>
+                      {/* Add Break Button - Only shown when at least one break exists */}
+                      {breakSessions.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleOpenAddBreakModal}
+                          className="inline-flex items-center rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
+                        >
+                          <span>Add Break</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Blue Info Notice matching reference */}

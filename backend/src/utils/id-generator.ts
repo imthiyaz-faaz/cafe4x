@@ -155,65 +155,100 @@ export function normalizeLocationPrefix(name: string): string {
 }
 
 /**
- * Generates an atomic, sequential, location-scoped seat identifier:
- * e.g. OFFICE-0001, ROOM-0001, MEETING-ROOM-0001
- * Uses id_sequences with scope: SEAT_LOC_<locationId>
+ * Generates an atomic, sequential, location-scoped seat ID and friendly display identifier:
+ * - Seat ID: ORG-000001-LOC-000001-SEAT-001
+ *   (globally unique, composite format identifying organization, location, and seat)
+ * - Friendly Display Identifier: OFFICE-001 (e.g. <LOCATION_PREFIX>-<SEAT_NUMBER_PADDED>)
+ * - Seat Sequence: Independent per (organization_id, location_id), persistent in id_sequences,
+ *   never reuses deleted seat numbers.
  */
 export async function generateLocationSeatId(
   db: UniversalDb,
+  organizationId: string,
   locationId: string,
   locationName: string,
   preferredNumber?: number
-): Promise<{ seatId: string; number: string; displayId: string }> {
+): Promise<{ seatId: string; number: string; displayId: string; sequenceNum: number }> {
   const prefix = normalizeLocationPrefix(locationName);
 
-  if (preferredNumber !== undefined && preferredNumber > 0) {
-    const candidateId = `${prefix}-${preferredNumber}`;
-    const candidateNumber = String(preferredNumber);
-    return {
-      seatId: candidateId,
-      number: candidateNumber,
-      displayId: candidateId,
-    };
-  }
+  // Normalize organization part: e.g. "ORG-000001"
+  const orgCleanNum = parseInt(organizationId.replace(/\D/g, ""), 10);
+  const orgPart = !isNaN(orgCleanNum)
+    ? `ORG-${String(orgCleanNum).padStart(6, "0")}`
+    : organizationId.toUpperCase();
 
-  // Find all existing seat numbers for this location_id directly from the database
+  // Normalize location part: e.g. "LOC-000001"
+  const locCleanNum = parseInt(String(locationId).replace(/\D/g, ""), 10);
+  const locPart = !isNaN(locCleanNum)
+    ? `LOC-${String(locCleanNum).padStart(6, "0")}`
+    : `LOC-${String(locationId).toUpperCase()}`;
+
+  // Sequence scope for this location: SEAT_SEQ_<orgPart>_<locPart>
+  const scopeKey = `SEAT_SEQ_${orgPart}_${locPart}`;
+
+  // Find all existing seat numbers for this location to ensure monotonically increasing sequence
   const existingSeats = (await db
-    .prepare(`SELECT number, display_id, id FROM seats WHERE location_id = ?`)
-    .bind(locationId)
+    .prepare(`SELECT number, display_id, id FROM seats WHERE organization_id = ? AND location_id = ?`)
+    .bind(organizationId, locationId)
     .all()) as any[];
 
-  let maxNum = 0;
+  let maxExisting = 0;
   const usedNumbers = new Set<number>();
   for (const s of existingSeats || []) {
     const p = parseInt(s.number, 10);
     if (!isNaN(p) && p > 0) {
       usedNumbers.add(p);
-      maxNum = Math.max(maxNum, p);
+      maxExisting = Math.max(maxExisting, p);
     }
     const m = String(s.display_id || s.id || "").match(/(\d+)$/);
     if (m) {
       const idNum = parseInt(m[1], 10);
       if (!isNaN(idNum) && idNum > 0) {
         usedNumbers.add(idNum);
-        maxNum = Math.max(maxNum, idNum);
+        maxExisting = Math.max(maxExisting, idNum);
       }
     }
   }
 
-  // Next candidate is highest existing number + 1
-  let nextVal = maxNum + 1;
-  while (usedNumbers.has(nextVal)) {
-    nextVal++;
+  // Get current sequence counter from id_sequences table
+  let seqRow = (await db
+    .prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`)
+    .bind(scopeKey)
+    .get()) as any;
+
+  let currentSeq = seqRow && typeof seqRow.last_val === "number" ? seqRow.last_val : maxExisting;
+
+  let chosenNumber = 0;
+  if (preferredNumber !== undefined && preferredNumber > 0) {
+    chosenNumber = preferredNumber;
+  } else {
+    // Next sequential number without reusing deleted numbers
+    let nextVal = Math.max(currentSeq, maxExisting) + 1;
+    while (usedNumbers.has(nextVal)) {
+      nextVal++;
+    }
+    chosenNumber = nextVal;
   }
 
-  const candidateId = `${prefix}-${nextVal}`;
-  const candidateNumber = String(nextVal);
+  // Atomically update sequence in id_sequences so deleted numbers are never reused
+  await db
+    .prepare(
+      `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
+       ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
+    )
+    .bind(scopeKey, chosenNumber, chosenNumber)
+    .run();
+
+  const paddedSeatNum = String(chosenNumber).padStart(3, "0");
+  const seatId = `${orgPart}-${locPart}-SEAT-${paddedSeatNum}`;
+  const displayId = `${prefix}-${paddedSeatNum}`;
+  const number = String(chosenNumber);
 
   return {
-    seatId: candidateId,
-    number: candidateNumber,
-    displayId: candidateId,
+    seatId,
+    number,
+    displayId,
+    sequenceNum: chosenNumber,
   };
 }
 

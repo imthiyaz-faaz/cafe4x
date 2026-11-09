@@ -712,8 +712,18 @@ export const locationController = {
         }
       }
 
-      // Compute next candidate sequence directly from this location's existing seats
+      // Compute next candidate sequence directly from id_sequences and this location's existing seats
       const locPrefix = normalizeLocationPrefix(loc.name);
+      const orgCleanNum = parseInt(org.organizationId.replace(/\D/g, ""), 10);
+      const orgPart = !isNaN(orgCleanNum)
+        ? `ORG-${String(orgCleanNum).padStart(6, "0")}`
+        : org.organizationId.toUpperCase();
+      const locCleanNum = parseInt(String(targetLocId).replace(/\D/g, ""), 10);
+      const locPart = !isNaN(locCleanNum)
+        ? `LOC-${String(locCleanNum).padStart(6, "0")}`
+        : `LOC-${String(targetLocId).toUpperCase()}`;
+      const scopeKey = `SEAT_SEQ_${orgPart}_${locPart}`;
+
       let maxNum = 0;
       const usedNumbers = new Set<number>();
       for (const r of rows) {
@@ -731,11 +741,19 @@ export const locationController = {
           }
         }
       }
-      let nextCandidateNum = maxNum + 1;
+
+      let seqRow = (await db
+        .prepare(`SELECT last_val FROM id_sequences WHERE scope = ?`)
+        .bind(scopeKey)
+        .get()) as any;
+      let currentSeq = seqRow && typeof seqRow.last_val === "number" ? seqRow.last_val : maxNum;
+
+      let nextCandidateNum = Math.max(currentSeq, maxNum) + 1;
       while (usedNumbers.has(nextCandidateNum)) {
         nextCandidateNum++;
       }
-      const nextSeatId = `${locPrefix}-${nextCandidateNum}`;
+      const nextSeatPadded = String(nextCandidateNum).padStart(3, "0");
+      const nextSeatId = `${locPrefix}-${nextSeatPadded}`;
       const nextSeatNumber = String(nextCandidateNum);
 
       // Compute occupancy metrics and return normalized seat objects
@@ -822,25 +840,23 @@ export const locationController = {
         if (m) parsedNum = parseInt(m[1], 10);
       }
 
-      let displayId = "";
-      let number = "";
+      // Generate globally unique Seat ID and friendly display identifier
+      const generated = await generateLocationSeatId(
+        db,
+        org.organizationId,
+        effectiveLocId,
+        loc.name,
+        parsedNum || undefined
+      );
 
-      if (!candidateDisplayId || candidateDisplayId.startsWith("SEA-") || !parsedNum) {
-        const generated = await generateLocationSeatId(db, effectiveLocId, loc.name, parsedNum || undefined);
-        displayId = generated.seatId;
-        number = parsedNum ? String(parsedNum) : generated.number;
-      } else {
-        if (!candidateDisplayId.toUpperCase().startsWith(`${locPrefix}-`)) {
-          candidateDisplayId = `${locPrefix}-${parsedNum}`;
-        }
-        displayId = candidateDisplayId;
-        number = String(parsedNum);
-      }
+      const seatId = generated.seatId; // ORG-000001-LOC-000001-SEAT-001
+      const number = generated.number;
+      const displayId = generated.displayId; // OFFICE-001
 
       // Check for duplicate seat number or display identifier within this organization and location
       const existingSeatRow = (await db
-        .prepare(`SELECT id, display_id FROM seats WHERE organization_id = ? AND location_id = ? AND (LOWER(TRIM(display_id)) = LOWER(TRIM(?)) OR number = ?)`)
-        .bind(org.organizationId, effectiveLocId, displayId, number)
+        .prepare(`SELECT id, display_id FROM seats WHERE organization_id = ? AND location_id = ? AND (id = ? OR LOWER(TRIM(display_id)) = LOWER(TRIM(?)) OR number = ?)`)
+        .bind(org.organizationId, effectiveLocId, seatId, displayId, number)
         .get()) as any;
 
       if (existingSeatRow) {
@@ -850,25 +866,6 @@ export const locationController = {
         }, 409);
       }
 
-      // Generate a globally unique, collision-proof primary key (id) for seats table
-      let seatId = `sea_${crypto.randomUUID().replace(/-/g, "")}`;
-      let retries = 0;
-      while (retries < 5) {
-        const dupId = (await db.prepare(`SELECT id FROM seats WHERE id = ?`).bind(seatId).get()) as any;
-        if (!dupId) break;
-        seatId = `sea_${crypto.randomUUID().replace(/-/g, "")}`;
-        retries++;
-      }
-
-      // Update location-scoped sequence to reflect at least this seat's sequence number
-      const seqVal = parseInt(number, 10) || 1;
-      await db
-        .prepare(
-          `INSERT INTO id_sequences (scope, last_val) VALUES (?, ?)
-           ON CONFLICT(scope) DO UPDATE SET last_val = MAX(last_val, ?)`
-        )
-        .bind(`SEAT_LOC_${effectiveLocId}`, seqVal, seqVal)
-        .run();
       const now = new Date().toISOString();
       const qrToken = generateSeatQrToken();
       const orderUrl = `${orgPrefix}/order/${qrToken}`;
@@ -1162,7 +1159,7 @@ export const locationController = {
       const now = new Date().toISOString();
       const orderUrl = seat.orderUrl;
 
-      // Upsert into employee_seat_assignments if user exists
+      // Upsert into employee_seat_assignments if user exists, or delete if no longer assigned to a user
       let assignmentId = existingSeatAssignment?.id;
       if (user) {
         if (existingSeatAssignment) {
@@ -1184,6 +1181,13 @@ export const locationController = {
             .bind(assignmentId, org.organizationId, effectiveLocId, seat.id, user.id, now, now, now)
             .run();
         }
+      } else if (existingSeatAssignment) {
+        // If updating to a custom name/email not tied to a users table record, delete old foreign key assignment
+        await db
+          .prepare(`DELETE FROM employee_seat_assignments WHERE seat_id = ?`)
+          .bind(seat.id)
+          .run();
+        assignmentId = null;
       }
 
       const finalAssignedEmail = user ? user.email.toLowerCase() : candidateUserEmail;

@@ -1163,24 +1163,6 @@ export default function LocationPage() {
                       {/* Ambient Architectural Lighting overlay */}
                       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-amber-100/30 via-transparent to-stone-400/10" />
 
-                      {/* Modern Botanical Corners & Atmosphere Markers */}
-                      <div className="absolute top-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-base">🪴</span>
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">North Zone</span>
-                      </div>
-                      <div className="absolute top-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Screen Area</span>
-                        <span className="text-base">🖥️</span>
-                      </div>
-                      <div className="absolute bottom-4 left-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-base">🌱</span>
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Room Entrance</span>
-                      </div>
-                      <div className="absolute bottom-4 right-4 flex items-center gap-2 rounded-2xl bg-white/90 px-3 py-1.5 shadow-xs border border-[#E8DED4] backdrop-blur-md select-none">
-                        <span className="text-[10px] font-bold text-[#8C5835] uppercase tracking-wider">Espresso Bar</span>
-                        <span className="text-base">☕</span>
-                      </div>
-
                       {/* Interactive Seating Model Wrapper */}
                       {currentSeats.length === 0 ? (
                         <div className="relative z-10 flex flex-col items-center justify-center py-16 px-6 text-center max-w-md">

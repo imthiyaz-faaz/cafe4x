@@ -11,6 +11,7 @@ export interface CreateFormModalProps {
   submitText?: string;
   closeText?: string;
   isSubmitting?: boolean;
+  isSubmitDisabled?: boolean;
   maxWidth?: "sm" | "md" | "lg" | "xl";
 }
 
@@ -68,6 +69,7 @@ export default function CreateFormModal({
   submitText = "Submit",
   closeText = "Close",
   isSubmitting = false,
+  isSubmitDisabled = false,
   maxWidth = "lg",
 }: CreateFormModalProps) {
   React.useEffect(() => {
@@ -122,8 +124,8 @@ export default function CreateFormModal({
           <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
             <button
               type="submit"
-              disabled={isSubmitting}
-              className="flex items-center gap-1.5 rounded-lg border border-[#28A745] bg-white px-6 py-2 text-xs font-bold text-[#28A745] transition hover:bg-[#28A745] hover:text-white cursor-pointer shadow-2xs disabled:opacity-50"
+              disabled={isSubmitting || isSubmitDisabled}
+              className="flex items-center gap-1.5 rounded-lg border border-[#28A745] bg-white px-6 py-2 text-xs font-bold text-[#28A745] transition hover:bg-[#28A745] hover:text-white cursor-pointer shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Check size={14} className="stroke-[2.5]" />
               <span>{isSubmitting ? "Submitting..." : submitText}</span>

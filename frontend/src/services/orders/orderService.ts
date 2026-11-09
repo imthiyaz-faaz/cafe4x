@@ -8,6 +8,8 @@ export interface OrderItem {
   price: number;
   image?: string;
   preference?: string;
+  type?: string;
+  category?: string;
 }
 
 export type OrderStatus = "Pending" | "Preparing" | "Ready" | "Delivered" | "Canceled";

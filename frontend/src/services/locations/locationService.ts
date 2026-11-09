@@ -151,6 +151,21 @@ export const locationApi = {
     await api.delete<{ success: boolean }>(`/api/locations/${id}`);
   },
 
+  async checkEmployeeEmail(
+    locationId: string,
+    email: string,
+    excludeSeatId?: string,
+    signal?: AbortSignal
+  ): Promise<{ success: boolean; available: boolean; message: string }> {
+    const params: Record<string, string> = { email: email.trim().toLowerCase() };
+    if (excludeSeatId) params.excludeSeatId = excludeSeatId.trim();
+    return await api.get<{ success: boolean; available: boolean; message: string }>(
+      `/api/locations/${locationId}/seats/check-employee-email`,
+      params,
+      { signal }
+    );
+  },
+
   async getSeats(locationId: string): Promise<SeatItem[]> {
     const res = await api.get<{ success: boolean; seats: SeatItem[] }>(`/api/locations/${locationId}/seats`);
     return res.seats || [];

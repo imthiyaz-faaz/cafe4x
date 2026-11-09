@@ -111,6 +111,74 @@ export const locationController = {
     }
   },
 
+  // GET /api/locations/:id/seats/check-employee-email?email=xxx
+  async checkEmployeeEmail(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, available: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const locId = c.req.param("id");
+      const email = (c.req.query("email") || "").trim().toLowerCase();
+      const excludeSeatId = (c.req.query("excludeSeatId") || "").trim();
+
+      if (!email) {
+        return c.json({ success: false, available: false, message: "Employee email is required." }, 400);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify location belongs to authorized organization
+      const loc = (await db
+        .prepare(`SELECT id, name FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locId, locId, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, available: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      let query = `
+        SELECT id, display_id as displayId, number, employee_email, employee
+        FROM seats
+        WHERE organization_id = ? AND location_id = ?
+          AND (
+            (employee_email IS NOT NULL AND LOWER(TRIM(employee_email)) = ?)
+            OR
+            (employee IS NOT NULL AND LOWER(TRIM(employee)) = ?)
+          )
+      `;
+      const params: any[] = [org.organizationId, effectiveLocId, email, email];
+
+      if (excludeSeatId) {
+        query += ` AND id != ? AND display_id != ?`;
+        params.push(excludeSeatId, excludeSeatId);
+      }
+
+      const existingSeat = (await db.prepare(query).bind(...params).get()) as any;
+
+      if (existingSeat) {
+        return c.json({
+          success: true,
+          available: false,
+          message: "This employee email is already assigned to a seat in this location.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        available: true,
+        message: "Email available.",
+      });
+    } catch (err: any) {
+      console.error("checkEmployeeEmail error:", err);
+      return c.json({ success: false, available: false, message: err.message }, 500);
+    }
+  },
+
   // GET /api/locations
   async getLocations(c: Context<AppEnv>) {
     try {
@@ -805,10 +873,37 @@ export const locationController = {
       const qrToken = generateSeatQrToken();
       const orderUrl = `${orgPrefix}/order/${qrToken}`;
 
+      // Authoritative location-level employee email uniqueness check
+      const candidateEmail = String(body.employeeEmail || body.employee || "").trim().toLowerCase();
+      if (candidateEmail && candidateEmail.includes("@")) {
+        const dupSeatInLoc = (await db
+          .prepare(
+            `SELECT id, display_id as displayId, number
+             FROM seats
+             WHERE organization_id = ? AND location_id = ?
+               AND (
+                 (employee_email IS NOT NULL AND LOWER(TRIM(employee_email)) = ?)
+                 OR
+                 (employee IS NOT NULL AND LOWER(TRIM(employee)) = ?)
+               )`
+          )
+          .bind(org.organizationId, effectiveLocId, candidateEmail, candidateEmail)
+          .get()) as any;
+
+        if (dupSeatInLoc) {
+          return c.json({
+            success: false,
+            message: "This employee email is already assigned to a seat in this location.",
+          }, 409);
+        }
+      }
+
       // Employee assignment if requested
       const employeeIdentifier = body.employeeId || body.employeeEmail || body.employeeUserName || body.employee;
       let matchedUser: any = null;
       let assignmentId: string | null = null;
+      const normalizedProvidedEmail = (body.employeeEmail || (body.employee && String(body.employee).includes("@") ? body.employee : "") || "").trim().toLowerCase() || null;
+      const effectiveEmployeeName = (body.employeeName || (body.employee && !String(body.employee).includes("@") ? body.employee : "") || "").trim() || null;
 
       if (employeeIdentifier || body.employeeName) {
         const cleanIdent = String(employeeIdentifier || body.employeeName || "").trim().toLowerCase();
@@ -848,6 +943,12 @@ export const locationController = {
         }
       }
 
+      // Determine final employee fields to persist
+      const finalEmployeeEmail = matchedUser?.email ? matchedUser.email.toLowerCase() : normalizedProvidedEmail;
+      const finalEmployeeName = matchedUser?.name || effectiveEmployeeName || (finalEmployeeEmail ? finalEmployeeEmail.split("@")[0] : null);
+      const finalEmployeeField = finalEmployeeEmail || finalEmployeeName || null;
+      const finalEmployeeId = matchedUser?.id || body.employeeId || null;
+
       // Insert seat record with unique qr_token and permanent seat order_url
       await db
         .prepare(
@@ -860,10 +961,10 @@ export const locationController = {
           effectiveLocId,
           org.organizationId,
           number,
-          matchedUser ? matchedUser.email : null,
-          matchedUser ? matchedUser.name : (body.employeeName || null),
-          matchedUser ? matchedUser.email : null,
-          matchedUser ? matchedUser.id : null,
+          finalEmployeeField,
+          finalEmployeeName,
+          finalEmployeeEmail,
+          finalEmployeeId,
           qrToken,
           orderUrl,
           now,
@@ -898,17 +999,17 @@ export const locationController = {
           organizationId: org.organizationId,
           number,
           qrToken,
-          employee: matchedUser ? matchedUser.email : null,
-          employeeName: matchedUser ? matchedUser.name : (body.employeeName || null),
-          employeeEmail: matchedUser ? matchedUser.email : null,
-          employeeId: matchedUser ? matchedUser.id : null,
+          employee: finalEmployeeField,
+          employeeName: finalEmployeeName,
+          employeeEmail: finalEmployeeEmail,
+          employeeId: finalEmployeeId,
           employeeUserName: matchedUser ? matchedUser.userName : null,
           employeeQrToken: matchedUser ? matchedUser.qrToken : null,
           assignmentId,
           assignedAt: assignmentId ? now : null,
           orderUrl,
-          isOccupied: Boolean(matchedUser),
-          status: matchedUser ? "Occupied" : "Available",
+          isOccupied: Boolean(finalEmployeeEmail || finalEmployeeName || matchedUser),
+          status: Boolean(finalEmployeeEmail || finalEmployeeName || matchedUser) ? "Occupied" : "Available",
         },
       });
     } catch (err: any) {
@@ -1004,53 +1105,90 @@ export const locationController = {
         .bind(org.organizationId, cleanIdent, cleanIdent, cleanIdent, cleanIdent)
         .get()) as any;
 
-      if (!user) {
+      // Extract explicit fallback employee fields if not a registered system user
+      const fallbackEmail = (body.employeeEmail || (cleanIdent.includes("@") ? cleanIdent : null) || "").trim().toLowerCase() || null;
+      const fallbackName = (body.employeeName || (!cleanIdent.includes("@") ? cleanIdent : null) || (fallbackEmail ? fallbackEmail.split("@")[0] : null) || "").trim() || null;
+
+      if (!user && !fallbackEmail && !fallbackName) {
         return c.json({ success: false, message: "Employee not found in this organization" }, 404);
       }
 
-      // Prevent duplicate assignment: Check if this employee already has an active assignment on ANOTHER seat
-      const duplicateAssignment = (await db
-        .prepare(
-          `SELECT esa.id, esa.seat_id, s.number, s.display_id as displayId, l.name as locName 
-           FROM employee_seat_assignments esa 
-           JOIN seats s ON esa.seat_id = s.id 
-           JOIN locations l ON s.location_id = l.id 
-           WHERE esa.organization_id = ? AND esa.employee_id = ? AND esa.seat_id != ?`
-        )
-        .bind(org.organizationId, user.id, seat.id)
-        .get()) as any;
+      // Check location-level employee email uniqueness
+      const candidateUserEmail = user?.email ? String(user.email).trim().toLowerCase() : fallbackEmail;
+      if (candidateUserEmail) {
+        const dupSeatInLoc = (await db
+          .prepare(
+            `SELECT id, display_id as displayId, number
+             FROM seats
+             WHERE organization_id = ? AND location_id = ? AND id != ?
+               AND (
+                 (employee_email IS NOT NULL AND LOWER(TRIM(employee_email)) = ?)
+                 OR
+                 (employee IS NOT NULL AND LOWER(TRIM(employee)) = ?)
+               )`
+          )
+          .bind(org.organizationId, effectiveLocId, seat.id, candidateUserEmail, candidateUserEmail)
+          .get()) as any;
 
-      if (duplicateAssignment) {
-        return c.json({
-          success: false,
-          message: `Employee ${user.name} is already assigned to seat ${duplicateAssignment.number || duplicateAssignment.displayId} in ${duplicateAssignment.locName}.`,
-        }, 409);
+        if (dupSeatInLoc) {
+          return c.json({
+            success: false,
+            message: "This employee email is already assigned to a seat in this location.",
+          }, 409);
+        }
+      }
+
+      // Prevent duplicate assignment: Check if registered employee already has an active assignment on ANOTHER seat
+      if (user) {
+        const duplicateAssignment = (await db
+          .prepare(
+            `SELECT esa.id, esa.seat_id, s.number, s.display_id as displayId, l.name as locName 
+             FROM employee_seat_assignments esa 
+             JOIN seats s ON esa.seat_id = s.id 
+             JOIN locations l ON s.location_id = l.id 
+             WHERE esa.organization_id = ? AND esa.employee_id = ? AND esa.seat_id != ?`
+          )
+          .bind(org.organizationId, user.id, seat.id)
+          .get()) as any;
+
+        if (duplicateAssignment) {
+          return c.json({
+            success: false,
+            message: `Employee ${user.name} is already assigned to seat ${duplicateAssignment.number || duplicateAssignment.displayId} in ${duplicateAssignment.locName}.`,
+          }, 409);
+        }
       }
 
       const now = new Date().toISOString();
       const orderUrl = seat.orderUrl;
 
-      // Upsert into employee_seat_assignments
+      // Upsert into employee_seat_assignments if user exists
       let assignmentId = existingSeatAssignment?.id;
-      if (existingSeatAssignment) {
-        await db
-          .prepare(`UPDATE employee_seat_assignments SET employee_id = ?, assigned_at = ?, updated_at = ? WHERE id = ?`)
-          .bind(user.id, now, now, existingSeatAssignment.id)
-          .run();
-      } else {
-        assignmentId = await generateId(db, "ESA");
-        await db
-          .prepare(
-            `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(seat_id) DO UPDATE SET
-               employee_id = excluded.employee_id,
-               assigned_at = excluded.assigned_at,
-               updated_at = excluded.updated_at`
-          )
-          .bind(assignmentId, org.organizationId, effectiveLocId, seat.id, user.id, now, now, now)
-          .run();
+      if (user) {
+        if (existingSeatAssignment) {
+          await db
+            .prepare(`UPDATE employee_seat_assignments SET employee_id = ?, assigned_at = ?, updated_at = ? WHERE id = ?`)
+            .bind(user.id, now, now, existingSeatAssignment.id)
+            .run();
+        } else {
+          assignmentId = await generateId(db, "ESA");
+          await db
+            .prepare(
+              `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(seat_id) DO UPDATE SET
+                 employee_id = excluded.employee_id,
+                 assigned_at = excluded.assigned_at,
+                 updated_at = excluded.updated_at`
+            )
+            .bind(assignmentId, org.organizationId, effectiveLocId, seat.id, user.id, now, now, now)
+            .run();
+        }
       }
+
+      const finalAssignedEmail = user ? user.email.toLowerCase() : candidateUserEmail;
+      const finalAssignedName = user ? user.name : (fallbackName || "Employee");
+      const finalAssignedId = user ? user.id : (body.employeeId || null);
 
       // Update seats table (preserving permanent seat order_url and qr_token)
       await db
@@ -1063,12 +1201,12 @@ export const locationController = {
                updated_at = ? 
            WHERE location_id = ? AND id = ?`
         )
-        .bind(user.email, user.name, user.email, user.id, now, effectiveLocId, seat.id)
+        .bind(finalAssignedEmail || finalAssignedName, finalAssignedName, finalAssignedEmail, finalAssignedId, now, effectiveLocId, seat.id)
         .run();
 
       return c.json({
         success: true,
-        message: `Seat ${seat.number} successfully assigned to ${user.name}.`,
+        message: `Seat ${seat.number} successfully assigned to ${finalAssignedName}.`,
         seat: {
           id: seat.id,
           displayId: seat.displayId,
@@ -1076,12 +1214,12 @@ export const locationController = {
           qrToken: seat.qrToken,
           locationId: effectiveLocId,
           organizationId: org.organizationId,
-          employee: user.email,
-          employeeName: user.name,
-          employeeEmail: user.email,
-          employeeId: user.id,
-          employeeUserName: user.userName,
-          employeeQrToken: user.qrToken,
+          employee: finalAssignedEmail || finalAssignedName,
+          employeeName: finalAssignedName,
+          employeeEmail: finalAssignedEmail,
+          employeeId: finalAssignedId,
+          employeeUserName: user ? user.userName : null,
+          employeeQrToken: user ? user.qrToken : null,
           assignmentId,
           assignedAt: now,
           orderUrl,

@@ -450,6 +450,11 @@ export default function LocationPage() {
     orderUrl: "",
   });
   const [createSeatError, setCreateSeatError] = useState<string | null>(null);
+  const [createSeatEmailError, setCreateSeatEmailError] = useState<string | null>(null);
+  const [createSeatEmailChecking, setCreateSeatEmailChecking] = useState(false);
+  const [createSeatEmailAvailable, setCreateSeatEmailAvailable] = useState<boolean | null>(null);
+  const createSeatEmailTimerRef = useRef<any>(null);
+  const createSeatEmailAbortRef = useRef<AbortController | null>(null);
   const [isCreatingSeat, setIsCreatingSeat] = useState(false);
 
   // Edit / Assign Seat Modal
@@ -844,6 +849,80 @@ export default function LocationPage() {
     setTimeout(() => setCopiedUrl(false), 2000);
   };
 
+  // Handle live Employee Email validation in Create Seat modal
+  const handleCreateSeatEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawVal = e.target.value;
+    setNewSeatForm((prev) => ({ ...prev, employeeEmail: rawVal }));
+
+    if (createSeatEmailTimerRef.current) {
+      clearTimeout(createSeatEmailTimerRef.current);
+    }
+    if (createSeatEmailAbortRef.current) {
+      createSeatEmailAbortRef.current.abort();
+    }
+
+    const trimmed = rawVal.trim();
+    if (!trimmed) {
+      setCreateSeatEmailError("Employee email is required.");
+      setCreateSeatEmailAvailable(null);
+      setCreateSeatEmailChecking(false);
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      setCreateSeatEmailError("Please enter a valid email address.");
+      setCreateSeatEmailAvailable(null);
+      setCreateSeatEmailChecking(false);
+      return;
+    }
+
+    // Format is valid, clear previous format errors and initiate backend duplicate check
+    setCreateSeatEmailError(null);
+    setCreateSeatEmailChecking(true);
+    setCreateSeatEmailAvailable(null);
+
+    const locId = selectedLocation?.id || "1";
+    const currentLocSeats = seatsByLoc[locId] || [];
+    const normalizedInput = trimmed.toLowerCase();
+
+    createSeatEmailTimerRef.current = setTimeout(async () => {
+      // 1. Fast client-side check on loaded location seats
+      const clientDuplicate = currentLocSeats.some((s) => {
+        const empEmail = (s.employeeEmail || (s.employee && s.employee.includes("@") ? s.employee : "")).trim().toLowerCase();
+        return empEmail === normalizedInput;
+      });
+
+      if (clientDuplicate) {
+        setCreateSeatEmailChecking(false);
+        setCreateSeatEmailAvailable(false);
+        setCreateSeatEmailError("This employee email is already assigned to a seat in this location.");
+        return;
+      }
+
+      // 2. Authoritative backend check
+      const abortCtrl = new AbortController();
+      createSeatEmailAbortRef.current = abortCtrl;
+
+      try {
+        const res = await locationApi.checkEmployeeEmail(locId, normalizedInput, undefined, abortCtrl.signal);
+        setCreateSeatEmailChecking(false);
+        if (res.available) {
+          setCreateSeatEmailAvailable(true);
+          setCreateSeatEmailError(null);
+        } else {
+          setCreateSeatEmailAvailable(false);
+          setCreateSeatEmailError(res.message || "This employee email is already assigned to a seat in this location.");
+        }
+      } catch (err: any) {
+        if (err.name === "AbortError" || abortCtrl.signal.aborted) return;
+        setCreateSeatEmailChecking(false);
+        setCreateSeatEmailAvailable(null);
+        // Do not block user on network blip, backend validation on submit will re-verify
+      }
+    }, 450);
+  };
+
   // Create New Seat in Seating Page
   const handleCreateSeatSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -883,6 +962,37 @@ export default function LocationPage() {
       if (!trimmedName || !trimmedEmail) {
         setCreateSeatError("Please select or enter an employee to assign.");
         return;
+      }
+
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(trimmedEmail)) {
+        setCreateSeatEmailError("Please enter a valid email address.");
+        setCreateSeatError("Please enter a valid email address.");
+        return;
+      }
+
+      // Recheck email availability synchronously / against local and backend
+      const clientDup = currentLocSeats.some((s) => {
+        const empEmail = (s.employeeEmail || (s.employee && s.employee.includes("@") ? s.employee : "")).trim().toLowerCase();
+        return empEmail === trimmedEmail;
+      });
+      if (clientDup) {
+        const dupMsg = "This employee email is already assigned to a seat in this location.";
+        setCreateSeatEmailError(dupMsg);
+        setCreateSeatError(dupMsg);
+        return;
+      }
+
+      try {
+        const checkRes = await locationApi.checkEmployeeEmail(locId, trimmedEmail);
+        if (!checkRes.available) {
+          const dupMsg = checkRes.message || "This employee email is already assigned to a seat in this location.";
+          setCreateSeatEmailError(dupMsg);
+          setCreateSeatError(dupMsg);
+          return;
+        }
+      } catch (err: any) {
+        // If checking fails, proceed to backend saveSeat which performs authoritative check
       }
     }
 
@@ -927,6 +1037,9 @@ export default function LocationPage() {
         orderUrl: "",
       });
       setSelectedCreateEmployee(null);
+      setCreateSeatEmailError(null);
+      setCreateSeatEmailAvailable(null);
+      setCreateSeatEmailChecking(false);
       setSeatActionMessage({
         type: "success",
         text: `Seat ${finalSeatId} created successfully${newSeatForm.assignNow ? ` and assigned to ${trimmedName}` : " as Available"}.`,
@@ -2202,11 +2315,26 @@ export default function LocationPage() {
         <CreateFormModal
           isOpen={isCreateSeatOpen}
           onClose={() => {
+            if (createSeatEmailTimerRef.current) clearTimeout(createSeatEmailTimerRef.current);
+            if (createSeatEmailAbortRef.current) createSeatEmailAbortRef.current.abort();
             setIsCreateSeatOpen(false);
             setCreateSeatError(null);
+            setCreateSeatEmailError(null);
+            setCreateSeatEmailAvailable(null);
+            setCreateSeatEmailChecking(false);
           }}
           title="Create Seat"
           onSubmit={handleCreateSeatSubmit}
+          isSubmitting={isCreatingSeat}
+          isSubmitDisabled={
+            isCreatingSeat ||
+            (newSeatForm.assignNow && (
+              createSeatEmailChecking ||
+              createSeatEmailAvailable === false ||
+              Boolean(createSeatEmailError) ||
+              !newSeatForm.employeeEmail.trim()
+            ))
+          }
         >
           {createSeatError && (
             <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-semibold text-rose-700">
@@ -2275,7 +2403,17 @@ export default function LocationPage() {
               <input
                 type="checkbox"
                 checked={newSeatForm.assignNow}
-                onChange={(e) => setNewSeatForm({ ...newSeatForm, assignNow: e.target.checked })}
+                onChange={(e) => {
+                  const isChecked = e.target.checked;
+                  setNewSeatForm({ ...newSeatForm, assignNow: isChecked });
+                  if (!isChecked) {
+                    if (createSeatEmailTimerRef.current) clearTimeout(createSeatEmailTimerRef.current);
+                    if (createSeatEmailAbortRef.current) createSeatEmailAbortRef.current.abort();
+                    setCreateSeatEmailError(null);
+                    setCreateSeatEmailAvailable(null);
+                    setCreateSeatEmailChecking(false);
+                  }
+                }}
                 className="h-4 w-4 rounded text-[#8C5835] focus:ring-[#8C5835] border-gray-300 cursor-pointer"
               />
               <span className="text-xs font-bold text-[#342219]">Assign an employee now</span>
@@ -2303,22 +2441,54 @@ export default function LocationPage() {
                 />
               </FormRow>
 
-              <FormRow label="Employee Email" required>
-                <input
-                  required={newSeatForm.assignNow}
-                  type="email"
-                  placeholder="e.g. alice@example.com"
-                  value={newSeatForm.employeeEmail}
-                  onChange={(e) =>
-                    setNewSeatForm({ ...newSeatForm, employeeEmail: e.target.value })
-                  }
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-gray-800 placeholder-gray-400 outline-none focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20 font-medium"
-                />
+              <FormRow label="Employee Email" required labelAlign="top">
+                <div className="w-full">
+                  <div className="relative w-full">
+                    <input
+                      required={newSeatForm.assignNow}
+                      type="email"
+                      placeholder="e.g. alice@example.com"
+                      value={newSeatForm.employeeEmail}
+                      onChange={handleCreateSeatEmailChange}
+                      className={`w-full rounded-md border px-3 py-2 pr-9 text-gray-800 placeholder-gray-400 outline-none transition font-medium ${
+                        createSeatEmailError
+                          ? "border-red-500 focus:border-red-500 focus:ring-1 focus:ring-red-500/20"
+                          : createSeatEmailAvailable === true
+                          ? "border-emerald-500 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/20"
+                          : "border-gray-300 focus:border-[#8C5835] focus:ring-1 focus:ring-[#8C5835]/20"
+                      }`}
+                    />
+                    <div className="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                      {createSeatEmailChecking && (
+                        <Loader2 className="w-4 h-4 text-[#8C5835] animate-spin" />
+                      )}
+                      {!createSeatEmailChecking && createSeatEmailAvailable === true && (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Real-time Email Validation Feedback */}
+                  {createSeatEmailChecking ? (
+                    <p className="mt-1 text-xs font-medium text-[#8C5835] animate-pulse">
+                      Checking email availability in this location...
+                    </p>
+                  ) : createSeatEmailError ? (
+                    <p className="mt-1 text-xs font-semibold text-red-500">
+                      {createSeatEmailError}
+                    </p>
+                  ) : createSeatEmailAvailable === true ? (
+                    <p className="mt-1 text-xs font-semibold text-emerald-600 flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      Email available.
+                    </p>
+                  ) : null}
+                </div>
               </FormRow>
             </div>
           )}
 
-                    {isCreatingSeat && (
+          {isCreatingSeat && (
             <div className="mt-2 text-center text-xs font-medium text-[#8C5835] animate-pulse">
               Creating seat and registering assignment…
             </div>

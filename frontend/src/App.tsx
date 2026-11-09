@@ -45,6 +45,14 @@ export default function App() {
 
       {/* Authenticated Global/Default Admin & Provider Routes */}
       <Route
+        path="/admin/locationseats/:locationId"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <LocationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/landing"
         element={
           <ProtectedRoute allowedRoles={['Admin']}>
@@ -126,6 +134,14 @@ export default function App() {
       />
 
       {/* Organization-specific routes with :shortCode prefix */}
+      <Route
+        path="/:shortCode/admin/locationseats/:locationId"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <LocationPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/:shortCode/landing"
         element={

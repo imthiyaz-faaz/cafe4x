@@ -13,6 +13,7 @@ import {
 
 export interface LocationItem {
   id: string;
+  displayId?: string;
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;

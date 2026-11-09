@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import {
   Coffee,
   Mail,
@@ -15,6 +15,7 @@ import { useAuth } from "../../../components/common/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -46,6 +47,17 @@ export default function Login() {
 
       if (res.success && res.user && res.token) {
         login(res.token, res.user, res.organizations);
+
+        // Check if there was a redirected location in state (from ProtectedRoute)
+        const fromState = (location.state as any)?.from;
+        const returnUrl = fromState?.pathname
+          ? `${fromState.pathname}${fromState.search || ""}`
+          : null;
+
+        if (returnUrl && returnUrl !== "/login" && returnUrl !== "/") {
+          navigate(returnUrl, { replace: true });
+          return;
+        }
 
         // Transition to STATE 2: Authenticated – Organization Not Selected
         navigate("/choose-organization", { replace: true });

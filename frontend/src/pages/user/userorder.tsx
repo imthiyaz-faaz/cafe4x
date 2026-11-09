@@ -11,6 +11,7 @@ import {
   AlertTriangle,
   Lock,
   UserCheck,
+  User,
   X,
   ChevronUp,
   Clock,
@@ -768,6 +769,12 @@ export default function UserOrderPage() {
                 <span className="rounded-full bg-[#EFE8E1] px-2 py-0.5 text-[10px] font-bold text-[#70452D]">
                   {authenticatedEmployee ? "Employee Ordering" : "Customer Order"}
                 </span>
+                {employeeName && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-[#FAF4ED] border border-[#DEC5B0] px-2.5 py-0.5 text-xs font-bold text-[#704225] shadow-2xs">
+                    <User size={11} className="text-[#8C5835]" />
+                    <span>{employeeName}</span>
+                  </span>
+                )}
                 {authenticatedEmployee && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                     <UserCheck size={10} />
@@ -804,7 +811,15 @@ export default function UserOrderPage() {
         {/* Café Menu Section Header */}
         <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
-            <h2 className="text-2xl font-black text-[#342219]">Café Menu</h2>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-2xl font-black text-[#342219]">Café Menu</h2>
+              {employeeName && (
+                <div className="inline-flex items-center gap-1.5 rounded-2xl border border-[#DEC5B0] bg-[#FAF4ED] px-3 py-1 text-xs font-bold text-[#704225] shadow-xs">
+                  <User size={13} className="text-[#8C5835]" />
+                  <span>{employeeName}</span>
+                </div>
+              )}
+            </div>
             <p className="text-xs text-[#8A7667] mt-0.5">
               Choose your items, select your preferences, and tap Order Now.
             </p>

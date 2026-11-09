@@ -144,7 +144,9 @@ export const qrSessionController = {
           organizationId: String(row.organizationId),
           shortCode: row.shortCode,
           employeeId: String(row.id),
+          employeeName: row.name,
           locationId: assignedSeat?.locationId || null,
+          locationName: assignedSeat?.locationName || null,
           seatNumber: assignedSeat?.seatNumber || null,
           seatId: assignedSeat?.seatId || null,
         },
@@ -471,7 +473,7 @@ export const qrSessionController = {
         }
 
         // 4. Resolve Employee Assignment
-        const employeeIdentifier = seatRow.employeeEmail || seatRow.employee || "";
+        const employeeIdentifier = seatRow.employeeEmail || seatRow.employee || seatRow.employeeName || "";
         const employeeId = seatRow.employeeId || "";
 
         if (employeeId || employeeIdentifier) {
@@ -483,10 +485,10 @@ export const qrSessionController = {
                FROM users u
                JOIN user_organizations uo ON u.id = uo.user_id
                WHERE uo.organization_id = ?
-                 AND (u.id = ? OR LOWER(u.email) = LOWER(?) OR LOWER(u.name) = LOWER(?))
+                 AND (u.id = ? OR LOWER(u.email) = LOWER(?) OR LOWER(u.name) = LOWER(?) OR LOWER(u.user_name) = LOWER(?))
                LIMIT 1`
             )
-            .bind(orgRow.id, employeeId || employeeIdentifier, employeeIdentifier, employeeIdentifier)
+            .bind(orgRow.id, employeeId || employeeIdentifier, employeeIdentifier, employeeIdentifier, employeeIdentifier)
             .get()) as any;
         }
       }

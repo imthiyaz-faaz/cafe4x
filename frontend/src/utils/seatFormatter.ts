@@ -1,16 +1,16 @@
 /**
  * Utilities for formatting seat identifiers for clean frontend display.
  * Retains original database identifiers (e.g. "ORG-000001-LOC-000001-SEAT-001") for
- * API calls, URLs, and DB queries, while displaying clean, friendly identifiers (e.g. "OFFICE-001").
+ * API calls, URLs, and DB queries, while displaying clean, friendly identifiers without leading zeros (e.g. "OFFICE-1").
  */
 
 /**
- * Formats a seat identifier for clean presentation.
- * - If the ID is the global format "ORG-000001-LOC-000001-SEAT-001", extracts "SEAT-001" or friendly suffix.
- * - If already a friendly prefix like "OFFICE-001", preserves it.
+ * Formats a seat identifier for clean presentation without leading zeros.
+ * - If the ID is the global format "ORG-000001-LOC-000001-SEAT-001", extracts "SEAT-1".
+ * - If a friendly prefix like "OFFICE-001" or "OFFICE-0001", normalizes to "OFFICE-1".
  *
  * @param identifier The raw seat identifier (e.g. "ORG-000001-LOC-000001-SEAT-001", "OFFICE-001")
- * @returns Clean display identifier (e.g. "OFFICE-001", "SEAT-001")
+ * @returns Clean display identifier (e.g. "OFFICE-1", "SEAT-1")
  */
 export function formatSeatIdentifier(identifier?: string | null): string {
   if (!identifier) return "";
@@ -18,34 +18,45 @@ export function formatSeatIdentifier(identifier?: string | null): string {
   if (!trimmed) return "";
 
   // Check if it's the global composite format ORG-XXXXXX-LOC-XXXXXX-SEAT-XXX
-  const globalMatch = trimmed.match(/^ORG-\d+-LOC-\d+-(SEAT-\d+)$/i);
+  const globalMatch = trimmed.match(/^ORG-\d+-LOC-\d+-SEAT-0*(\d+)$/i);
   if (globalMatch) {
-    return globalMatch[1].toUpperCase();
+    return `SEAT-${parseInt(globalMatch[1], 10) || globalMatch[1]}`;
+  }
+
+  // If friendly identifier like OFFICE-001 or LOC-0001, strip leading zeros from number
+  const prefixMatch = trimmed.match(/^([A-Za-z0-9_-]+?[-_])0*(\d+)$/);
+  if (prefixMatch) {
+    const num = parseInt(prefixMatch[2], 10);
+    return `${prefixMatch[1]}${!isNaN(num) ? num : prefixMatch[2]}`;
   }
 
   return trimmed;
 }
 
 /**
- * Formats a composite seat display label e.g. "Seat 01 • OFFICE-001"
+ * Formats a composite seat display label e.g. "Seat 1 • OFFICE-1"
  */
 export function formatSeatDisplay(seatNumber?: string | number | null, seatIdentifier?: string | null): string {
   const cleanId = formatSeatIdentifier(seatIdentifier);
-  if (seatNumber && cleanId) {
-    return `Seat ${seatNumber} • ${cleanId}`;
+  const cleanNum = seatNumber !== undefined && seatNumber !== null
+    ? String(parseInt(String(seatNumber), 10) || seatNumber)
+    : "";
+
+  if (cleanNum && cleanId) {
+    return `Seat ${cleanNum} • ${cleanId}`;
   }
   if (cleanId) return cleanId;
-  if (seatNumber) return `Seat ${seatNumber}`;
+  if (cleanNum) return `Seat ${cleanNum}`;
   return "";
 }
 
 /**
  * Resolves the primary friendly human-readable display identifier for a seat,
- * guaranteeing format `LOCATIONNAME-SEATNUMBER` (e.g. "OFFICE-001", "MEETING-ROOM-002").
+ * guaranteeing format `LOCATIONNAME-SEATNUMBER` with NO leading zeros (e.g. "OFFICE-1", "OFFICE-2").
  *
  * Prioritizes `seat.displayId`. If `seat.displayId` is missing or looks like an
  * internal UUID or global ID, it computes `LOCATIONNAME-SEATNUMBER` using the
- * location name and seat number (padded to 3 digits e.g. OFFICE-001).
+ * location name and seat number (without leading zeros e.g. OFFICE-1).
  */
 export function getSeatDisplayIdentifier(
   seat?: { id?: string; displayId?: string; number?: string | number } | null,
@@ -62,16 +73,15 @@ export function getSeatDisplayIdentifier(
 
   const num = seat.number !== undefined && seat.number !== null ? String(seat.number).trim() : "1";
   const parsedNum = parseInt(num, 10);
-  const paddedNum = !isNaN(parsedNum) && parsedNum > 0 ? String(parsedNum).padStart(3, "0") : num.padStart(3, "0");
+  const unpaddedNum = !isNaN(parsedNum) && parsedNum > 0 ? String(parsedNum) : num.replace(/^0+/, "") || "1";
 
   // 1. Check displayId first
   const displayId = (seat.displayId || "").trim();
   if (displayId && !displayId.startsWith("sea_") && !displayId.startsWith("ORG-")) {
-    // If it has location prefix, ensure 3-digit padding
     const m = displayId.match(/^([A-Za-z0-9_-]+?[-_])0*(\d+)$/);
     if (m) {
       const p = parseInt(m[2], 10);
-      return `${m[1]}${String(p).padStart(3, "0")}`;
+      return `${m[1]}${!isNaN(p) ? p : m[2]}`;
     }
     return displayId;
   }
@@ -82,12 +92,12 @@ export function getSeatDisplayIdentifier(
     const m = rawId.match(/^([A-Za-z0-9_-]+?[-_])0*(\d+)$/);
     if (m) {
       const p = parseInt(m[2], 10);
-      return `${m[1]}${String(p).padStart(3, "0")}`;
+      return `${m[1]}${!isNaN(p) ? p : m[2]}`;
     }
     return rawId;
   }
 
-  // 3. Guaranteed friendly identifier e.g. OFFICE-001
-  return `${locPrefix}-${paddedNum}`;
+  // 3. Guaranteed friendly identifier e.g. OFFICE-1
+  return `${locPrefix}-${unpaddedNum}`;
 }
 

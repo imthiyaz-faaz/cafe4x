@@ -143,8 +143,7 @@ export default function LocationPage() {
     }
 
     const seatNumber = String(candidate);
-    const paddedNum = String(candidate).padStart(3, "0");
-    const seatId = `${locPrefix}-${paddedNum}`;
+    const seatId = `${locPrefix}-${candidate}`;
     return { number: seatNumber, seatId, candidateNum: candidate };
   };
 
@@ -2611,8 +2610,7 @@ export default function LocationPage() {
                 const locPrefix = normalizeLocationPrefix(locName);
                 const orgPrefix = currentShortCode ? `/${currentShortCode}` : "";
                 const num = parseInt(val, 10);
-                const paddedNum = isNaN(num) ? "" : String(num).padStart(3, "0");
-                const generatedId = isNaN(num) ? "" : `${locPrefix}-${paddedNum}`;
+                const generatedId = isNaN(num) ? "" : `${locPrefix}-${num}`;
 
                 setNewSeatForm({
                   ...newSeatForm,

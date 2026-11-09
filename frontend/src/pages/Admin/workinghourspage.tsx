@@ -575,7 +575,7 @@ export default function WorkingHoursPage() {
                         className="inline-flex items-center gap-1.5 rounded-lg border border-[#8E6548] bg-[#FDF9F6] px-3.5 py-1.5 text-xs font-semibold text-[#8E6548] hover:bg-[#8E6548] hover:text-white transition shadow-sm self-start sm:self-auto cursor-pointer"
                       >
                         <Plus size={14} />
-                        <span>+ Add Break</span>
+                        <span>Add Break</span>
                       </button>
                     </div>
 
@@ -602,7 +602,7 @@ export default function WorkingHoursPage() {
                             className="inline-flex items-center gap-1.5 rounded-xl bg-[#8E6548] px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-[#785339] transition cursor-pointer"
                           >
                             <Plus size={14} />
-                            <span>+ Add Break</span>
+                            <span>Add Break</span>
                           </button>
                         </div>
                       ) : (

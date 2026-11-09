@@ -22,7 +22,11 @@ import {
   ChevronsRight,
   Eye,
   X,
+  Coffee,
+  Flame,
+  Tag,
 } from "lucide-react";
+import { itemsApi, type MenuItem } from "../../services/itemsApi";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
@@ -75,6 +79,39 @@ export default function OrdersPage() {
 
   // Modal for Viewing Single Order Details
   const [inspectedOrder, setInspectedOrder] = useState<ProviderOrder | null>(null);
+
+  // Fallback Menu Items cache for order item images & metadata
+  const [itemImagesMap, setItemImagesMap] = useState<Record<string, string>>({});
+  const [itemsByIdMap, setItemsByIdMap] = useState<Record<string, MenuItem>>({});
+
+  useEffect(() => {
+    let isMounted = true;
+    itemsApi
+      .getItems(currentShortCode || undefined)
+      .then((itemsList) => {
+        if (!isMounted || !Array.isArray(itemsList)) return;
+        const nameMap: Record<string, string> = {};
+        const idMap: Record<string, MenuItem> = {};
+        itemsList.forEach((it) => {
+          if (it.id) idMap[it.id] = it;
+          if (it.name) {
+            const rawKey = it.name.toLowerCase().trim();
+            const cleanKey = rawKey.replace(/\s*\(.*?\)\s*$/, "").trim();
+            if (it.image) {
+              nameMap[rawKey] = it.image;
+              nameMap[cleanKey] = it.image;
+            }
+          }
+        });
+        setItemImagesMap(nameMap);
+        setItemsByIdMap(idMap);
+      })
+      .catch(() => {});
+
+    return () => {
+      isMounted = false;
+    };
+  }, [currentShortCode]);
 
   // Fetch Organization Info & Working Hours Timezone
   useEffect(() => {
@@ -938,7 +975,7 @@ export default function OrdersPage() {
       {/* ========================================================================= */}
       {inspectedOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-stone-200 relative animate-scale-up">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-stone-200 relative animate-scale-up">
             {/* Close Button */}
             <button
               onClick={() => setInspectedOrder(null)}
@@ -974,27 +1011,97 @@ export default function OrdersPage() {
               </div>
             </div>
 
-            {/* Items Breakdown */}
+            {/* Items Breakdown with Item Image & Details */}
             <div className="mb-5">
               <h4 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5">
-                Ordered Items
+                Ordered Items ({inspectedOrder.items?.length || 0})
               </h4>
-              <div className="divide-y divide-stone-100 max-h-60 overflow-y-auto pr-1">
+              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
                 {inspectedOrder.items && inspectedOrder.items.length > 0 ? (
-                  inspectedOrder.items.map((item, idx) => (
-                    <div key={idx} className="py-2.5 flex items-center justify-between text-xs">
-                      <div>
-                        <div className="font-semibold text-stone-900">{item.name}</div>
-                        {item.preference && (
-                          <span className="text-[10px] text-stone-500">Sugar: {item.preference}</span>
-                        )}
-                        <span className="text-stone-400 ml-1">× {item.qty}</span>
+                  inspectedOrder.items.map((item, idx) => {
+                    const matchedItem = item.itemId ? itemsByIdMap[item.itemId] : undefined;
+                    const rawName = (item.name || "").trim();
+                    const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
+                    const displayImg =
+                      item.image ||
+                      matchedItem?.image ||
+                      itemImagesMap[rawName.toLowerCase()] ||
+                      itemImagesMap[cleanName.toLowerCase()] ||
+                      "";
+
+                    const itemType = item.type || matchedItem?.type || matchedItem?.category || undefined;
+                    const itemPref = item.preference || undefined;
+
+                    return (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between rounded-2xl border border-stone-200/90 bg-[#FAF7F2]/70 p-3 shadow-2xs hover:border-[#DEC5B0] transition-colors"
+                      >
+                        {/* Left: Item Image & Details */}
+                        <div className="flex items-center gap-3 min-w-0">
+                          {/* Item Image with Fallback */}
+                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white border border-stone-200 text-[#70452D] shadow-2xs overflow-hidden">
+                            {displayImg ? (
+                              <img
+                                src={displayImg}
+                                alt={item.name}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLElement).style.display = "none";
+                                  const fallback = e.currentTarget.parentElement?.querySelector(".fallback-icon") as HTMLElement | null;
+                                  if (fallback) fallback.style.display = "flex";
+                                }}
+                              />
+                            ) : null}
+                            <div
+                              className="fallback-icon flex h-full w-full items-center justify-center text-[#8C6D58]"
+                              style={{ display: displayImg ? "none" : "flex" }}
+                            >
+                              <Coffee className="w-6 h-6" />
+                            </div>
+                          </div>
+
+                          {/* Info Column */}
+                          <div className="min-w-0">
+                            <h5 className="text-sm font-bold text-stone-900 truncate">
+                              {item.name}
+                            </h5>
+                            <div className="flex items-center gap-2 mt-0.5 text-xs text-stone-500">
+                              <span>Unit Price: {formatPrice(item.price)}</span>
+                              <span className="text-stone-300">•</span>
+                              <span className="font-semibold text-stone-700">Seat {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat)}</span>
+                            </div>
+
+                            {/* Preferences & Tags */}
+                            <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                              {itemPref && (
+                                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200/70">
+                                  <Flame className="w-2.5 h-2.5 text-amber-600" />
+                                  <span>{itemPref}</span>
+                                </span>
+                              )}
+                              {itemType && (
+                                <span className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-700 border border-stone-200">
+                                  <Tag className="w-2.5 h-2.5 text-stone-500" />
+                                  <span>{itemType}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Right: Quantity & Line Total */}
+                        <div className="flex items-center gap-3 shrink-0 ml-3">
+                          <div className="rounded-xl bg-white px-2.5 py-1 text-xs font-bold text-[#70452D] border border-stone-200 shadow-2xs">
+                            × {item.qty}
+                          </div>
+                          <div className="text-sm font-black text-stone-900 text-right min-w-[70px]">
+                            {formatPrice(item.price * item.qty)}
+                          </div>
+                        </div>
                       </div>
-                      <div className="font-bold text-stone-800">
-                        {formatPrice(item.price * item.qty)}
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div className="text-xs text-stone-400 py-3 text-center">No detailed items recorded.</div>
                 )}

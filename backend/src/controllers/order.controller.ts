@@ -14,6 +14,8 @@ export interface OrderItem {
   price: number;
   preference?: string;
   image?: string;
+  type?: string;
+  category?: string;
 }
 
 export interface OrderModel {
@@ -157,9 +159,15 @@ export const orderController = {
                   oi.qty, 
                   oi.unit_price as price, 
                   oi.preference,
-                  i.image as itemImage
+                  i.image as itemImage,
+                  i.type as itemType,
+                  i.category as itemCategory
                 FROM order_items oi
-                LEFT JOIN items i ON oi.item_id = i.id
+                LEFT JOIN items i ON (
+                  oi.item_id = i.id 
+                  OR LOWER(TRIM(i.name)) = LOWER(TRIM(oi.name))
+                  OR LOWER(TRIM(i.name)) = LOWER(TRIM(SUBSTR(oi.name, 1, INSTR(oi.name || ' (', ' (') - 1)))
+                )
                 WHERE oi.order_id = ?
               `)
               .bind(r.id)
@@ -174,6 +182,8 @@ export const orderController = {
                 price: di.price,
                 preference: di.preference || undefined,
                 image: di.itemImage || undefined,
+                type: di.itemType || undefined,
+                category: di.itemCategory || undefined,
               }));
             } else if (r.itemsJson) {
               items = JSON.parse(r.itemsJson);
@@ -735,9 +745,15 @@ export const orderController = {
                    oi.qty, 
                    oi.unit_price as price, 
                    oi.preference,
-                   i.image as itemImage
+                   i.image as itemImage,
+                   i.type as itemType,
+                   i.category as itemCategory
                  FROM order_items oi
-                 LEFT JOIN items i ON oi.item_id = i.id
+                 LEFT JOIN items i ON (
+                   oi.item_id = i.id 
+                   OR LOWER(TRIM(i.name)) = LOWER(TRIM(oi.name))
+                   OR LOWER(TRIM(i.name)) = LOWER(TRIM(SUBSTR(oi.name, 1, INSTR(oi.name || ' (', ' (') - 1)))
+                 )
                  WHERE oi.order_id = ?`
               )
               .bind(r.id)
@@ -752,6 +768,8 @@ export const orderController = {
                 price: di.price,
                 preference: di.preference || undefined,
                 image: di.itemImage || undefined,
+                type: di.itemType || undefined,
+                category: di.itemCategory || undefined,
               }));
             } else if (r.itemsJson) {
               items = JSON.parse(r.itemsJson);
@@ -862,9 +880,15 @@ export const orderController = {
               oi.qty, 
               oi.unit_price as price, 
               oi.preference,
-              i.image as itemImage
+              i.image as itemImage,
+              i.type as itemType,
+              i.category as itemCategory
             FROM order_items oi
-            LEFT JOIN items i ON oi.item_id = i.id
+            LEFT JOIN items i ON (
+              oi.item_id = i.id 
+              OR LOWER(TRIM(i.name)) = LOWER(TRIM(oi.name))
+              OR LOWER(TRIM(i.name)) = LOWER(TRIM(SUBSTR(oi.name, 1, INSTR(oi.name || ' (', ' (') - 1)))
+            )
             WHERE oi.order_id = ?
           `)
           .bind(row.id)
@@ -879,6 +903,8 @@ export const orderController = {
             price: di.price,
             preference: di.preference || undefined,
             image: di.itemImage || undefined,
+            type: di.itemType || undefined,
+            category: di.itemCategory || undefined,
           }));
         } else if (row.itemsJson) {
           items = JSON.parse(row.itemsJson);

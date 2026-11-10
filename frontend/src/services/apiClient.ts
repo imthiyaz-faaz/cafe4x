@@ -1,6 +1,6 @@
 export const API_BASE_URL: string =
   (typeof window !== "undefined" && window.location.hostname !== "localhost" && window.location.hostname !== "127.0.0.1")
-    ? "https://cafe4x.m-imthiyaz.workers.dev"
+    ? "https://cafe4x.m-imthiyaz.workers.dev/"
     : ((import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8787");
 
 export interface ApiRequestOptions extends RequestInit {

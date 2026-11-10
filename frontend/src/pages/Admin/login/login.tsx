@@ -10,6 +10,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import Background from "../../../components/background";
+import heroImg from "../../../assets/images/hero.png";
 import { authApi } from "../../../services/auth";
 import { useAuth } from "../../../components/common/AuthContext";
 
@@ -76,11 +77,15 @@ export default function Login() {
         <div className="mx-auto flex min-h-[calc(100vh-24px)] max-w-7xl overflow-hidden rounded-3xl bg-white shadow-2xl sm:min-h-[calc(100vh-40px)] lg:min-h-[calc(100vh-64px)]">
 
           {/* LEFT: CAFE IMAGE */}
-          <section className="relative hidden w-1/2 overflow-hidden lg:block">
+          <section className="relative hidden w-1/2 overflow-hidden bg-[#29170D] lg:block">
             <img
-              src="src/assets/images/hero.png"
+              src={heroImg}
               alt="Cafe4X coffee experience"
               className="absolute inset-0 h-full w-full object-cover"
+              onError={(e) => {
+                // If image fails to load, gracefully hide the broken img element so the fallback gradient shows
+                e.currentTarget.style.display = "none";
+              }}
             />
 
             <div className="absolute inset-0 bg-gradient-to-b from-[#29170D]/70 via-[#29170D]/20 to-[#29170D]/85" />

@@ -1,16 +1,25 @@
-import { Sparkles, Utensils, Clock, ShieldCheck, HeartHandshake } from "lucide-react";
+import { Sparkles, ShieldCheck, Shield, Users, MapPin, AlertCircle, RotateCw } from "lucide-react";
 import { useParams } from "react-router-dom";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import { useAuth } from "../../components/common/AuthContext";
+import { userApi } from "../../services/userApi";
+import { locationApi } from "../../services/locations";
 
 export default function LandingPage() {
   const params = useParams();
   const shortCode = params.shortCode;
   const { user } = useAuth();
   const [currentUser, setCurrentUser] = useState<any>(user);
+
+  // Statistics State
+  const [adminCount, setAdminCount] = useState<number>(0);
+  const [providerCount, setProviderCount] = useState<number>(0);
+  const [locationCount, setLocationCount] = useState<number>(0);
+  const [isLoadingStats, setIsLoadingStats] = useState<boolean>(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
 
   useEffect(() => {
     try {
@@ -46,6 +55,48 @@ export default function LandingPage() {
 
   const orgName = matchedOrgName;
   const codeTag = shortCode ? shortCode.toUpperCase() : (currentUser?.shortCode || "");
+
+  // Fetch Dashboard Statistics for currently selected organization
+  const fetchDashboardStats = useCallback(async () => {
+    setIsLoadingStats(true);
+    setStatsError(null);
+
+    const effectiveCode = shortCode || currentUser?.shortCode || undefined;
+
+    try {
+      const [usersRes, locsRes] = await Promise.all([
+        userApi.getUsers(undefined, effectiveCode),
+        locationApi.getLocations(undefined, effectiveCode),
+      ]);
+
+      // Calculate Admin and Provider counts
+      if (Array.isArray(usersRes)) {
+        const admins = usersRes.filter((u: any) => (u.userType || "").toLowerCase() === "admin");
+        const providers = usersRes.filter((u: any) => (u.userType || "").toLowerCase() === "provider");
+        setAdminCount(admins.length);
+        setProviderCount(providers.length);
+      } else {
+        setAdminCount(0);
+        setProviderCount(0);
+      }
+
+      // Calculate Location count
+      if (Array.isArray(locsRes)) {
+        setLocationCount(locsRes.length);
+      } else {
+        setLocationCount(0);
+      }
+    } catch (err: any) {
+      console.warn("Failed to load dashboard statistics:", err);
+      setStatsError(err.message || "Failed to load organization statistics.");
+    } finally {
+      setIsLoadingStats(false);
+    }
+  }, [shortCode, currentUser?.shortCode]);
+
+  useEffect(() => {
+    fetchDashboardStats();
+  }, [fetchDashboardStats]);
 
   return (
     <Background>
@@ -89,38 +140,111 @@ export default function LandingPage() {
                   and quick service whenever you need a break.
                 </p>
 
-                {/* Feature highlight cards */}
-                <div className="mt-12 grid grid-cols-1 gap-4 sm:grid-cols-3">
+                {/* Dashboard Statistics Section */}
+                <div className="mt-12">
+                  {isLoadingStats ? (
+                    /* Loading Skeleton State */
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {[1, 2, 3].map((idx) => (
+                        <div
+                          key={idx}
+                          className="flex flex-col rounded-2xl border border-[#EEE5DC] bg-white/70 p-5 text-left shadow-sm backdrop-blur-xs animate-pulse"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="h-4 w-28 rounded-lg bg-[#EADBCE]/80" />
+                            <div className="h-11 w-11 rounded-xl bg-[#EADBCE]/60" />
+                          </div>
+                          <div className="mt-4 h-9 w-16 rounded-lg bg-[#EADBCE]/90" />
+                          <div className="mt-2 h-3 w-36 rounded-md bg-[#EADBCE]/50" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : statsError ? (
+                    /* Error State with Retry */
+                    <div className="flex flex-col items-center justify-center rounded-2xl border border-amber-200 bg-amber-50/80 p-6 text-center text-xs text-amber-900 shadow-sm">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <AlertCircle size={16} className="text-amber-600" />
+                        <span>{statsError}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={fetchDashboardStats}
+                        className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-[#75472D] px-4 py-1.5 text-xs font-bold text-white shadow-sm transition hover:bg-[#5C3620] cursor-pointer"
+                      >
+                        <RotateCw size={13} />
+                        <span>Retry</span>
+                      </button>
+                    </div>
+                  ) : (
+                    /* Statistics Cards Grid */
+                    <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {/* Card 1: Total Admins */}
+                      <div className="group relative flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-gradient-to-b from-white to-[#FAF6F1] p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[#D9C4B3] hover:shadow-md">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold uppercase tracking-wider text-[#8A7667]">
+                              Total Admins
+                            </p>
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D] shadow-2xs group-hover:bg-[#EAD5C0] transition-colors">
+                              <Shield size={20} />
+                            </div>
+                          </div>
+                          <div className="mt-3">
+                            <span className="text-3xl font-extrabold tracking-tight text-[#342219] sm:text-4xl">
+                              {adminCount}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-[#8A7667]">
+                          Active administrator accounts
+                        </p>
+                      </div>
 
-                  <div className="flex items-center gap-3.5 rounded-2xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D]">
-                      <Utensils size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-[#342219]">Cafeteria Menu</p>
-                      <p className="text-xs text-[#8A7667]">Fresh food & premium drinks</p>
-                    </div>
-                  </div>
+                      {/* Card 2: Total Providers */}
+                      <div className="group relative flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-gradient-to-b from-white to-[#FAF6F1] p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[#D9C4B3] hover:shadow-md">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold uppercase tracking-wider text-[#8A7667]">
+                              Total Providers
+                            </p>
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D] shadow-2xs group-hover:bg-[#EAD5C0] transition-colors">
+                              <Users size={20} />
+                            </div>
+                          </div>
+                          <div className="mt-3">
+                            <span className="text-3xl font-extrabold tracking-tight text-[#342219] sm:text-4xl">
+                              {providerCount}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-[#8A7667]">
+                          Assigned service providers
+                        </p>
+                      </div>
 
-                  <div className="flex items-center gap-3.5 rounded-2xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D]">
-                      <Clock size={20} />
+                      {/* Card 3: Total Locations */}
+                      <div className="group relative flex flex-col justify-between rounded-2xl border border-[#EEE5DC] bg-gradient-to-b from-white to-[#FAF6F1] p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-1 hover:border-[#D9C4B3] hover:shadow-md sm:col-span-2 lg:col-span-1">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <p className="text-xs font-bold uppercase tracking-wider text-[#8A7667]">
+                              Total Locations
+                            </p>
+                            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D] shadow-2xs group-hover:bg-[#EAD5C0] transition-colors">
+                              <MapPin size={20} />
+                            </div>
+                          </div>
+                          <div className="mt-3">
+                            <span className="text-3xl font-extrabold tracking-tight text-[#342219] sm:text-4xl">
+                              {locationCount}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-[#8A7667]">
+                          Configured workplace locations
+                        </p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-sm font-bold text-[#342219]">Quick Dispatch</p>
-                      <p className="text-xs text-[#8A7667]">Zero queue workplace breaks</p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-3.5 rounded-2xl border border-[#EEE5DC] bg-[#FAF6F1] p-4 text-left">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#F2E6D9] text-[#75472D]">
-                      <HeartHandshake size={20} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-bold text-[#342219]">Hospitality First</p>
-                      <p className="text-xs text-[#8A7667]">Designed for team delight</p>
-                    </div>
-                  </div>
+                  )}
                 </div>
               </div>
             </section>

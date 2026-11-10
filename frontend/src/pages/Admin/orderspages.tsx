@@ -13,7 +13,7 @@ import {
   Building2,
   Users,
   ShoppingBag,
-  DollarSign,
+  Banknote,
   CheckCircle2,
   AlertCircle,
   FileText,
@@ -564,9 +564,6 @@ export default function OrdersPage() {
                         <h3 className="text-lg font-extrabold text-[#342219] group-hover:text-[#8C5835] transition-colors leading-snug truncate">
                           {loc.name}
                         </h3>
-                        <p className="text-xs font-medium text-[#8A7667] mt-0.5 truncate">
-                          {loc.locationType || "Office / Dining Area"}
-                        </p>
                       </div>
 
                       {/* Primary Metrics Card */}
@@ -592,7 +589,7 @@ export default function OrdersPage() {
                         {/* Total Amount */}
                         <div className="flex items-center justify-between pt-1 border-t border-[#EADBCE]/60">
                           <span className="flex items-center gap-2 text-[#70523E] font-medium">
-                            <DollarSign className="w-4 h-4 text-[#8C5835]" />
+                            <Banknote className="w-4 h-4 text-[#8C5835]" />
                             <span>Total Amount:</span>
                           </span>
                           <span className="font-black text-sm text-[#784D34]">

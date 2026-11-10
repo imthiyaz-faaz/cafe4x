@@ -1049,12 +1049,41 @@ export const locationController = {
 
       const effectiveLocId = loc.id;
       const numberMatch = seatParam.match(/(\d+)$/);
-      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam.padStart(2, "0");
+      const rawNumber = numberMatch ? String(parseInt(numberMatch[1], 10)) : seatParam;
+      const extractedNumber2 = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+      const extractedNumber3 = numberMatch ? numberMatch[1].padStart(3, "0") : seatParam;
 
       // Verify seat exists in D1
       let seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
-        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
+        .prepare(
+          `SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl 
+           FROM seats 
+           WHERE (location_id = ? OR location_id = ? OR CAST(location_id AS TEXT) = ? OR CAST(location_id AS TEXT) = ?)
+             AND organization_id = ?
+             AND (
+               id = ? OR 
+               display_id = ? OR 
+               number = ? OR 
+               number = ? OR 
+               number = ? OR
+               LOWER(id) = LOWER(?) OR
+               LOWER(display_id) = LOWER(?)
+             )`
+        )
+        .bind(
+          effectiveLocId,
+          locId,
+          String(effectiveLocId),
+          String(locId),
+          org.organizationId,
+          seatParam,
+          seatParam,
+          rawNumber,
+          extractedNumber2,
+          extractedNumber3,
+          seatParam,
+          seatParam
+        )
         .get()) as any;
 
       if (!seat) {
@@ -1264,12 +1293,41 @@ export const locationController = {
 
       const effectiveLocId = loc.id;
       const numberMatch = seatParam.match(/(\d+)$/);
-      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+      const rawNumber = numberMatch ? String(parseInt(numberMatch[1], 10)) : seatParam;
+      const extractedNumber2 = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+      const extractedNumber3 = numberMatch ? numberMatch[1].padStart(3, "0") : seatParam;
 
       // Find the seat
       let seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
-        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
+        .prepare(
+          `SELECT id, display_id as displayId, number, location_id as locationId, qr_token as qrToken, order_url as orderUrl 
+           FROM seats 
+           WHERE (location_id = ? OR location_id = ? OR CAST(location_id AS TEXT) = ? OR CAST(location_id AS TEXT) = ?)
+             AND organization_id = ?
+             AND (
+               id = ? OR 
+               display_id = ? OR 
+               number = ? OR 
+               number = ? OR 
+               number = ? OR
+               LOWER(id) = LOWER(?) OR
+               LOWER(display_id) = LOWER(?)
+             )`
+        )
+        .bind(
+          effectiveLocId,
+          locId,
+          String(effectiveLocId),
+          String(locId),
+          org.organizationId,
+          seatParam,
+          seatParam,
+          rawNumber,
+          extractedNumber2,
+          extractedNumber3,
+          seatParam,
+          seatParam
+        )
         .get()) as any;
 
       if (!seat) {
@@ -1368,11 +1426,40 @@ export const locationController = {
 
       const effectiveLocId = loc.id;
       const numberMatch = seatParam.match(/(\d+)$/);
-      const extractedNumber = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+      const rawNumber = numberMatch ? String(parseInt(numberMatch[1], 10)) : seatParam;
+      const extractedNumber2 = numberMatch ? numberMatch[1].padStart(2, "0") : seatParam;
+      const extractedNumber3 = numberMatch ? numberMatch[1].padStart(3, "0") : seatParam;
 
       const seat = (await db
-        .prepare(`SELECT id, display_id as displayId, number, employee, employee_id as employeeId FROM seats WHERE location_id = ? AND (id = ? OR number = ? OR display_id = ? OR number = ?)`)
-        .bind(effectiveLocId, seatParam, seatParam, seatParam, extractedNumber)
+        .prepare(
+          `SELECT id, display_id as displayId, number, employee, employee_id as employeeId 
+           FROM seats 
+           WHERE (location_id = ? OR location_id = ? OR CAST(location_id AS TEXT) = ? OR CAST(location_id AS TEXT) = ?)
+             AND organization_id = ?
+             AND (
+               id = ? OR 
+               display_id = ? OR 
+               number = ? OR 
+               number = ? OR 
+               number = ? OR
+               LOWER(id) = LOWER(?) OR
+               LOWER(display_id) = LOWER(?)
+             )`
+        )
+        .bind(
+          effectiveLocId,
+          locId,
+          String(effectiveLocId),
+          String(locId),
+          org.organizationId,
+          seatParam,
+          seatParam,
+          rawNumber,
+          extractedNumber2,
+          extractedNumber3,
+          seatParam,
+          seatParam
+        )
         .get()) as any;
 
       if (!seat) {

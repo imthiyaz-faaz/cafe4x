@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
   UserRound,
@@ -17,6 +17,7 @@ import {
   FileSpreadsheet,
   Edit,
   Trash2,
+  AlertCircle,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
@@ -42,22 +43,31 @@ export default function UsersPage() {
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
 
   const [users, setUsers] = useState<UserItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  const fetchUsers = useCallback(async () => {
+    setIsLoading(true);
+    setFetchError(null);
+    try {
+      const serverUsers = await userApi.getUsers(undefined, currentShortCode || undefined);
+      if (Array.isArray(serverUsers)) {
+        setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
+      } else {
+        setUsers([]);
+      }
+    } catch (err: any) {
+      console.warn("Could not fetch users from server:", err);
+      setFetchError(err?.message || "Failed to load users. Please check your connection and try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentShortCode]);
 
   // Load users from backend on mount or organization switch
   useEffect(() => {
-    userApi.getUsers(undefined, currentShortCode || undefined)
-      .then((serverUsers) => {
-        if (Array.isArray(serverUsers)) {
-          setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
-        } else {
-          setUsers([]);
-        }
-      })
-      .catch((err) => {
-        console.warn("Could not fetch users from server:", err);
-        setUsers([]);
-      });
-  }, [currentShortCode]);
+    fetchUsers();
+  }, [fetchUsers]);
 
   const saveUsers = (newUsers: UserItem[]) => {
     setUsers(newUsers);
@@ -128,11 +138,10 @@ export default function UsersPage() {
   }, [filteredUsers, validCurrentPage, pageSize]);
 
   // --- Handlers ---
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    setTimeout(() => {
-      setIsRefreshing(false);
-    }, 400);
+    await fetchUsers();
+    setIsRefreshing(false);
   };
 
   const handleExport = () => {
@@ -437,14 +446,63 @@ export default function UsersPage() {
             </div>
 
             {/* Users Cards Grid */}
-            {paginatedUsers.length === 0 ? (
+            {isLoading ? (
+              /* Loading Skeleton State */
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                {Array.from({ length: pageSize > 12 ? 12 : pageSize }).map((_, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col items-center rounded-3xl border border-[#EEE5DC] bg-white/70 p-6 text-center shadow-sm backdrop-blur-xs animate-pulse"
+                  >
+                    {/* User Avatar Circle Skeleton */}
+                    <div className="mb-4 h-20 w-20 rounded-full bg-[#EADBCE]/70" />
+
+                    {/* Full Name Skeleton */}
+                    <div className="h-5 w-32 rounded-lg bg-[#EADBCE]/90" />
+
+                    {/* Email Skeleton */}
+                    <div className="mt-2 h-3.5 w-44 rounded-md bg-[#EADBCE]/60" />
+
+                    {/* User Name Skeleton */}
+                    <div className="mt-2 h-3 w-24 rounded-md bg-[#EADBCE]/50" />
+
+                    {/* Mobile Number Skeleton */}
+                    <div className="mt-2 h-3.5 w-28 rounded-md bg-[#EADBCE]/60" />
+
+                    {/* Role Badge Skeleton */}
+                    <div className="mt-4 h-6 w-20 rounded-md bg-[#EADBCE]/70" />
+                  </div>
+                ))}
+              </div>
+            ) : fetchError ? (
+              /* Error State with Retry */
+              <div className="my-8 flex flex-col items-center justify-center rounded-3xl border border-amber-200 bg-amber-50/80 p-10 text-center shadow-sm backdrop-blur-md">
+                <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                  <AlertCircle size={28} />
+                </div>
+                <h3 className="text-base font-bold text-amber-900">Failed to load users</h3>
+                <p className="mt-1 max-w-md text-xs text-amber-800">{fetchError}</p>
+                <button
+                  type="button"
+                  onClick={fetchUsers}
+                  className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#75472D] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#5C3620] cursor-pointer"
+                >
+                  <RotateCw size={14} />
+                  <span>Retry</span>
+                </button>
+              </div>
+            ) : paginatedUsers.length === 0 ? (
               <div className="my-8 rounded-3xl border border-[#EEE5DC] bg-white/80 p-12 text-center backdrop-blur-md">
                 <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#F2E6D9] text-[#75472D]">
                   <UserRound size={32} />
                 </div>
-                <h3 className="text-lg font-bold text-[#342219]">No users found</h3>
+                <h3 className="text-lg font-bold text-[#342219]">
+                  {searchQuery ? "No matching users found" : "No users found"}
+                </h3>
                 <p className="mt-1 text-sm text-[#897B71]">
-                  Try adjusting your search criteria or create a new user.
+                  {searchQuery
+                    ? "Try adjusting your search criteria or clearing the search query."
+                    : "No users have been registered yet. Click Create to add a new user."}
                 </p>
               </div>
             ) : (

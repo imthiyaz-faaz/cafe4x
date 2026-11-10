@@ -41,6 +41,7 @@ import { organizationApi } from "../../services/organizationApi";
 import { workingHoursApi } from "../../services/workingHoursApi";
 import { getDateStringsInTimezone } from "../../utils/orderTimeClassification";
 import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatOrderId } from "../../utils/orderFormatter";
 
 type ActiveView = "locations" | "employees" | "orders";
 type DateFilterType = "today" | "yesterday" | "custom";
@@ -298,6 +299,7 @@ export default function OrdersPage() {
       (o) =>
         o.id.toLowerCase().includes(q) ||
         (o.displayId && o.displayId.toLowerCase().includes(q)) ||
+        formatOrderId(o).toLowerCase().includes(q) ||
         (o.seat && o.seat.toLowerCase().includes(q)) ||
         o.items.some((it) => it.name.toLowerCase().includes(q))
     );
@@ -855,7 +857,7 @@ export default function OrdersPage() {
                           {/* Order ID */}
                           <td className="px-6 py-4">
                             <span className="font-mono font-bold text-stone-900 text-xs">
-                              {order.displayId || order.id}
+                              {formatOrderId(order)}
                             </span>
                           </td>
 
@@ -990,7 +992,7 @@ export default function OrdersPage() {
                 Order Details
               </span>
               <h3 className="text-xl font-bold text-stone-900 mt-1">
-                {inspectedOrder.displayId || inspectedOrder.id}
+                {formatOrderId(inspectedOrder)}
               </h3>
               <p className="text-xs text-stone-500">
                 Placed by {inspectedOrder.employeeName} • {inspectedOrder.time}

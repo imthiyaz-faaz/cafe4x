@@ -1,6 +1,6 @@
 import { useOrgCurrency } from '../../utils/currencies';
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import {
   ChevronLeft,
@@ -30,6 +30,7 @@ import {
   Edit3,
   Trash2,
   AlertCircle,
+  RotateCw,
 } from "lucide-react";
 import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
@@ -323,9 +324,13 @@ export default function ProviderPage() {
   }, [authUser, urlShortCode]);
 
   const [serverLocations, setServerLocations] = useState<ProviderLocation[]>([]);
+  const [isLoadingLocations, setIsLoadingLocations] = useState<boolean>(true);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
 
   // Fetch locations assigned to this provider from backend
-  useEffect(() => {
+  const fetchProviderLocations = useCallback(async () => {
+    setIsLoadingLocations(true);
+    setLocationsError(null);
     let providerId = currentUser?.userType === "Provider" && currentUser?.id ? String(currentUser.id) : "";
     
     // Resolve organization shortCode specifically for provider workspace
@@ -346,44 +351,50 @@ export default function ProviderPage() {
       providerShortCode = "FTS"; // Default provider linked organization
     }
 
-    import("../../services/locations").then(({ locationApi }) => {
-      locationApi
-        .getLocations(providerId || undefined, providerShortCode || undefined)
-        .then((locList) => {
-          if (Array.isArray(locList)) {
-            const mapped: ProviderLocation[] = locList.map((loc: any, idx: number) => ({
-              id: String(loc.id || idx),
-              name: loc.name || "Location",
-              badgeCount: loc.totalSeats || 12,
-              isRedBadge: idx % 2 === 1,
-              image: loc.image || OFFICE_IMG,
-              totalSeats: loc.totalSeats || 12,
-              assignedProviderId: loc.assignedProviderId,
-              assignedProviderEmail: loc.assignedProviderEmail,
-              assignedProviderName: loc.assignedProviderName,
-            }));
-            setServerLocations(mapped);
+    try {
+      const { locationApi } = await import("../../services/locations");
+      const locList = await locationApi.getLocations(providerId || undefined, providerShortCode || undefined);
+      if (Array.isArray(locList)) {
+        const mapped: ProviderLocation[] = locList.map((loc: any, idx: number) => ({
+          id: String(loc.id || idx),
+          name: loc.name || "Location",
+          badgeCount: loc.totalSeats || 12,
+          isRedBadge: idx % 2 === 1,
+          image: loc.image || OFFICE_IMG,
+          totalSeats: loc.totalSeats || 12,
+          assignedProviderId: loc.assignedProviderId,
+          assignedProviderEmail: loc.assignedProviderEmail,
+          assignedProviderName: loc.assignedProviderName,
+        }));
+        setServerLocations(mapped);
 
-            // Auto-select location if specified in URL query
-            const targetLocParam = searchParams.get("locationId") || searchParams.get("location");
-            if (targetLocParam) {
-              const matched = mapped.find(
-                (l) =>
-                  String(l.id) === targetLocParam ||
-                  l.name.toLowerCase() === targetLocParam.toLowerCase()
-              );
-              if (matched) {
-                setSelectedLocation(matched);
-                setSelectedCategory(null);
-              }
-            }
+        // Auto-select location if specified in URL query
+        const targetLocParam = searchParams.get("locationId") || searchParams.get("location");
+        if (targetLocParam) {
+          const matched = mapped.find(
+            (l) =>
+              String(l.id) === targetLocParam ||
+              l.name.toLowerCase() === targetLocParam.toLowerCase()
+          );
+          if (matched) {
+            setSelectedLocation(matched);
+            setSelectedCategory(null);
           }
-        })
-        .catch((err) => {
-          console.warn("Could not fetch assigned locations for provider:", err);
-        });
-    });
+        }
+      } else {
+        setServerLocations([]);
+      }
+    } catch (err: any) {
+      console.warn("Could not fetch assigned locations for provider:", err);
+      setLocationsError(err?.message || "Failed to load provider locations. Please check your connection and try again.");
+    } finally {
+      setIsLoadingLocations(false);
+    }
   }, [currentUser, searchParams, urlShortCode]);
+
+  useEffect(() => {
+    fetchProviderLocations();
+  }, [fetchProviderLocations]);
 
   // Also listen for custom location selection event from dropdown
   useEffect(() => {
@@ -735,12 +746,57 @@ export default function ProviderPage() {
                 </div>
 
                 {/* Location Cards Grid */}
-                {paginatedLocations.length === 0 ? (
+                {isLoadingLocations ? (
+                  /* Loading Skeleton State */
+                  <div className="flex flex-wrap items-center justify-center gap-8 sm:justify-start sm:gap-10">
+                    {Array.from({ length: pageSize > 6 ? 6 : pageSize }).map((_, idx) => (
+                      <div
+                        key={idx}
+                        className="flex w-[280px] sm:w-[310px] flex-col overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white/70 shadow-sm backdrop-blur-xs animate-pulse"
+                      >
+                        {/* Top Card Image Skeleton */}
+                        <div className="relative h-48 w-full bg-[#ECE8E1] p-3">
+                          <div className="h-full w-full rounded-xl bg-[#EADBCE]/70" />
+                        </div>
+
+                        {/* Bottom Card Banner Skeleton */}
+                        <div className="flex min-h-[3.5rem] flex-col items-center justify-center py-2.5 px-4 bg-[#F3EFEA]/80">
+                          <div className="flex items-center gap-2">
+                            <div className="h-4 w-28 rounded-md bg-[#EADBCE]/90" />
+                            <div className="h-4 w-6 rounded bg-[#EADBCE]/70" />
+                          </div>
+                          <div className="mt-2 h-3 w-36 rounded-md bg-[#EADBCE]/50" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : locationsError ? (
+                  /* Error State with Retry */
+                  <div className="my-16 flex flex-col items-center justify-center rounded-3xl border border-amber-200 bg-amber-50/80 p-10 text-center shadow-sm backdrop-blur-md">
+                    <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100 text-amber-700">
+                      <AlertCircle size={28} />
+                    </div>
+                    <h3 className="text-base font-bold text-amber-900">Failed to load provider locations</h3>
+                    <p className="mt-1 max-w-md text-xs text-amber-800">{locationsError}</p>
+                    <button
+                      type="button"
+                      onClick={fetchProviderLocations}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#75472D] px-4 py-2 text-xs font-bold text-white shadow-sm transition hover:bg-[#5C3620] cursor-pointer"
+                    >
+                      <RotateCw size={14} />
+                      <span>Retry</span>
+                    </button>
+                  </div>
+                ) : paginatedLocations.length === 0 ? (
                   <div className="my-16 rounded-3xl border border-[#EEE5DC] bg-white/80 p-12 text-center backdrop-blur-md">
                     <Layers className="mx-auto mb-3 h-12 w-12 text-[#A08C7D]" />
-                    <h3 className="text-lg font-bold text-[#342219]">No locations matched</h3>
+                    <h3 className="text-lg font-bold text-[#342219]">
+                      {searchQuery ? "No matching locations found" : "No locations found"}
+                    </h3>
                     <p className="mt-1 text-sm text-[#897B71]">
-                      Try adjusting your search query.
+                      {searchQuery
+                        ? "Try adjusting your search query."
+                        : "No provider locations have been assigned yet."}
                     </p>
                   </div>
                 ) : (

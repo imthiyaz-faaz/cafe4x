@@ -769,12 +769,6 @@ export default function UserOrderPage() {
                 <span className="rounded-full bg-[#EFE8E1] px-2 py-0.5 text-[10px] font-bold text-[#70452D]">
                   {authenticatedEmployee ? "Employee Ordering" : "Customer Order"}
                 </span>
-                {employeeName && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-[#FAF4ED] border border-[#DEC5B0] px-2.5 py-0.5 text-xs font-bold text-[#704225] shadow-2xs">
-                    <User size={11} className="text-[#8C5835]" />
-                    <span>{employeeName}</span>
-                  </span>
-                )}
                 {authenticatedEmployee && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                     <UserCheck size={10} />

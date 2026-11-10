@@ -1,10 +1,11 @@
+import { createPortal } from "react-dom";
 import { formatCurrency, getActiveOrgCurrency } from "../../utils/currencies";
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   Search,
   ChevronRight,
-  MapPin,
+  ChevronLeft,
   User,
   Clock,
   ArrowLeft,
@@ -15,16 +16,13 @@ import {
   ShoppingBag,
   Banknote,
   CheckCircle2,
-  AlertCircle,
-  FileText,
-  ChevronLeft,
-  ChevronsLeft,
-  ChevronsRight,
-  Eye,
   X,
   Coffee,
   Flame,
-  Tag,
+  Download,
+  Filter,
+  Check,
+  ChevronDown,
 } from "lucide-react";
 import { itemsApi, type MenuItem } from "../../services/itemsApi";
 
@@ -33,18 +31,26 @@ import Navbar from "../../components/navbar/navbar";
 import {
   orderApi,
   type LocationOrderSummary,
-  type LocationEmployeeOrderSummary,
-  type EmployeeOrderDetailProfile,
   type ProviderOrder,
 } from "../../services/orderApi";
+import { locationApi, type SeatItem } from "../../services/locations";
+import { userApi, type UserItem } from "../../services/userApi";
 import { organizationApi } from "../../services/organizationApi";
 import { workingHoursApi } from "../../services/workingHoursApi";
 import { getDateStringsInTimezone } from "../../utils/orderTimeClassification";
 import { formatSeatIdentifier } from "../../utils/seatFormatter";
 import { formatOrderId } from "../../utils/orderFormatter";
 
-type ActiveView = "locations" | "employees" | "orders";
-type DateFilterType = "today" | "yesterday" | "custom";
+type ActiveView = "locations" | "employees";
+type PeriodType = "daily" | "weekly" | "monthly";
+type TopDateFilterType = "today" | "yesterday" | "custom";
+
+interface EmployeeOption {
+  id: string; // user id or normalized name/email
+  name: string;
+  email?: string;
+  seatIdentifier?: string;
+}
 
 export default function OrdersPage() {
   const params = useParams();
@@ -54,29 +60,98 @@ export default function OrdersPage() {
   const [currency, setCurrency] = useState<string | null>(null);
   const [orgTimezone, setOrgTimezone] = useState<string>("Asia/Dubai");
 
-  // Navigation & Drill-Down State
+  // Navigation View State: "locations" or "employees"
   const [activeView, setActiveView] = useState<ActiveView>("locations");
   const [selectedLocation, setSelectedLocation] = useState<{ id: string; name: string } | null>(null);
-  const [selectedEmployee, setSelectedEmployee] = useState<LocationEmployeeOrderSummary | null>(null);
 
-  // Date Filter State
-  const [dateFilterType, setDateFilterType] = useState<DateFilterType>("today");
-  const [customStartDate, setCustomStartDate] = useState<string>("");
-  const [customEndDate, setCustomEndDate] = useState<string>("");
+  // Top Location Header Quick Filter State: today | yesterday | custom
+  const [topDateFilter, setTopDateFilter] = useState<TopDateFilterType>("today");
+  const [topCustomStartDate, setTopCustomStartDate] = useState<string>("");
+  const [topCustomEndDate, setTopCustomEndDate] = useState<string>("");
+
+  // Location Employees View Filters:
+  // 1. Employee Filter (All Employees vs specific employee)
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>("all");
+  const [employeeDropdownOpen, setEmployeeDropdownOpen] = useState<boolean>(false);
+  const [employeeSearchText, setEmployeeSearchText] = useState<string>("");
+  const employeeDropdownRef = useRef<HTMLDivElement>(null);
+  const employeeMenuRef = useRef<HTMLDivElement>(null);
+  const [employeeDropdownPos, setEmployeeDropdownPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  }>({ top: 0, left: 0, width: 300 });
+
+  // 2. Period Filter: Daily | Weekly | Monthly
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>("daily");
+
+  // Custom Calendar Popover state
+  const [isCalendarOpen, setIsCalendarOpen] = useState<boolean>(false);
+  const calendarPopoverRef = useRef<HTMLDivElement>(null);
+  const calendarMenuRef = useRef<HTMLDivElement>(null);
+  const [calendarViewYear, setCalendarViewYear] = useState<number>(() => new Date().getFullYear());
+  const [calendarViewMonth, setCalendarViewMonth] = useState<number>(() => new Date().getMonth()); // 0-11
+  const [calendarDropdownPos, setCalendarDropdownPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  }>({ top: 0, left: 0, width: 320 });
+
+  // 3. Date Selectors
+  const [selectedDailyDate, setSelectedDailyDate] = useState<string>(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    const d = String(today.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
+
+  const [selectedWeeklyDate, setSelectedWeeklyDate] = useState<string>(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    const d = String(today.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  });
+
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+
+  // Applied Filter State: triggers data query on "Apply Filter"
+  const [appliedFilters, setAppliedFilters] = useState<{
+    employeeId: string;
+    period: PeriodType;
+    startDate?: string;
+    endDate?: string;
+    displayDateLabel: string;
+  }>(() => {
+    const today = new Date();
+    const y = today.getFullYear();
+    const m = String(today.getMonth() + 1).padStart(2, "0");
+    const d = String(today.getDate()).padStart(2, "0");
+    const todayStr = `${y}-${m}-${d}`;
+    return {
+      employeeId: "all",
+      period: "daily",
+      startDate: todayStr,
+      endDate: todayStr,
+      displayDateLabel: formatFriendlyDisplayDate(todayStr),
+    };
+  });
 
   // Data States
   const [locations, setLocations] = useState<LocationOrderSummary[]>([]);
-  const [locationEmployees, setLocationEmployees] = useState<LocationEmployeeOrderSummary[]>([]);
-  const [employeeProfile, setEmployeeProfile] = useState<EmployeeOrderDetailProfile | null>(null);
-  const [employeeOrders, setEmployeeOrders] = useState<ProviderOrder[]>([]);
+  const [locationSeats, setLocationSeats] = useState<SeatItem[]>([]);
+  const [orgEmployees, setOrgEmployees] = useState<UserItem[]>([]);
+  const [locationOrders, setLocationOrders] = useState<ProviderOrder[]>([]);
 
-  // Loading & Error States
+  // Search & Loading States
   const [isLoading, setIsLoading] = useState<boolean>(true);
-  const [searchQuery, setSearchQuery] = useState<string>("");
-
-  // Pagination for Employee Orders view
-  const [currentPage, setCurrentPage] = useState<number>(1);
-  const pageSize = 10;
+  const [locationSearchQuery, setLocationSearchQuery] = useState<string>("");
 
   // Modal for Viewing Single Order Details
   const [inspectedOrder, setInspectedOrder] = useState<ProviderOrder | null>(null);
@@ -85,6 +160,83 @@ export default function OrdersPage() {
   const [itemImagesMap, setItemImagesMap] = useState<Record<string, string>>({});
   const [itemsByIdMap, setItemsByIdMap] = useState<Record<string, MenuItem>>({});
 
+  // Calculate and update portal position for employee dropdown
+  const updateEmployeeDropdownPos = () => {
+    if (employeeDropdownRef.current) {
+      const rect = employeeDropdownRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const width = Math.max(rect.width, 280);
+      let left = rect.left;
+      if (left + width > viewportWidth - 16) {
+        left = Math.max(16, viewportWidth - width - 16);
+      }
+      setEmployeeDropdownPos({
+        top: rect.bottom + 8,
+        left,
+        width,
+      });
+    }
+  };
+
+  // Calculate and update portal position for calendar popover
+  const updateCalendarDropdownPos = () => {
+    if (calendarPopoverRef.current) {
+      const rect = calendarPopoverRef.current.getBoundingClientRect();
+      const viewportWidth = window.innerWidth;
+      const width = Math.min(320, viewportWidth - 32);
+      let left = rect.left;
+      if (left + width > viewportWidth - 16) {
+        left = Math.max(16, viewportWidth - width - 16);
+      }
+      setCalendarDropdownPos({
+        top: rect.bottom + 8,
+        left,
+        width,
+      });
+    }
+  };
+
+  // Reposition portal popovers on window scroll or resize
+  useEffect(() => {
+    if (!employeeDropdownOpen && !isCalendarOpen) return;
+    const handleReposition = () => {
+      if (employeeDropdownOpen) updateEmployeeDropdownPos();
+      if (isCalendarOpen) updateCalendarDropdownPos();
+    };
+    window.addEventListener("scroll", handleReposition, true);
+    window.addEventListener("resize", handleReposition);
+    return () => {
+      window.removeEventListener("scroll", handleReposition, true);
+      window.removeEventListener("resize", handleReposition);
+    };
+  }, [employeeDropdownOpen, isCalendarOpen]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (
+        employeeDropdownRef.current &&
+        !employeeDropdownRef.current.contains(target) &&
+        employeeMenuRef.current &&
+        !employeeMenuRef.current.contains(target)
+      ) {
+        setEmployeeDropdownOpen(false);
+      }
+      if (
+        calendarPopoverRef.current &&
+        !calendarPopoverRef.current.contains(target) &&
+        calendarMenuRef.current &&
+        !calendarMenuRef.current.contains(target)
+      ) {
+        setIsCalendarOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Menu items cache
   useEffect(() => {
     let isMounted = true;
     itemsApi
@@ -147,32 +299,32 @@ export default function OrdersPage() {
     };
   }, [currentShortCode]);
 
-  // Compute Active Start and End Dates based on Org Timezone
-  const activeDateRange = useMemo(() => {
+  // Top Location Header Date Range Computation
+  const topDateRange = useMemo(() => {
     const { todayStr, yesterdayStr } = getDateStringsInTimezone(orgTimezone);
-    if (dateFilterType === "today") {
+    if (topDateFilter === "today") {
       return { startDate: todayStr, endDate: todayStr };
-    } else if (dateFilterType === "yesterday") {
+    } else if (topDateFilter === "yesterday") {
       return { startDate: yesterdayStr, endDate: yesterdayStr };
     } else {
       return {
-        startDate: customStartDate || undefined,
-        endDate: customEndDate || undefined,
+        startDate: topCustomStartDate || undefined,
+        endDate: topCustomEndDate || undefined,
       };
     }
-  }, [dateFilterType, customStartDate, customEndDate, orgTimezone]);
+  }, [topDateFilter, topCustomStartDate, topCustomEndDate, orgTimezone]);
 
   const formatPrice = (amount: number) => {
     return formatCurrency(amount, currency || getActiveOrgCurrency(currentShortCode));
   };
 
-  // 1. Fetch Locations with Order Aggregates
+  // 1. Fetch Locations with Order Aggregates (Locations View)
   const fetchLocations = async () => {
     setIsLoading(true);
     try {
       const data = await orderApi.getOrderLocations({
-        startDate: activeDateRange.startDate,
-        endDate: activeDateRange.endDate,
+        startDate: topDateRange.startDate,
+        endDate: topDateRange.endDate,
       });
       setLocations(data || []);
     } catch (err) {
@@ -183,971 +335,1684 @@ export default function OrdersPage() {
     }
   };
 
-  // 2. Fetch Employees for a Selected Location
-  const fetchLocationEmployees = async (locId: string) => {
+  // 2. Fetch Location Metadata & Orders for Employee View
+  const loadLocationEmployeeViewData = async (
+    locId: string,
+    filters: { employeeId: string; startDate?: string; endDate?: string }
+  ) => {
     setIsLoading(true);
     try {
-      const res = await orderApi.getLocationEmployees(locId, {
-        startDate: activeDateRange.startDate,
-        endDate: activeDateRange.endDate,
-      });
-      setLocationEmployees(res.employees || []);
-      if (res.location) {
-        setSelectedLocation(res.location);
+      // Find the employee option if a specific employee is selected, so we can resolve both ID, email, and name
+      const targetEmp = filters.employeeId !== "all" 
+        ? employeeDropdownOptions.find((e) => e.id === filters.employeeId)
+        : null;
+      
+      const employeeQueryParam = targetEmp 
+        ? (targetEmp.id || targetEmp.email || targetEmp.name) 
+        : (filters.employeeId !== "all" ? filters.employeeId : undefined);
+
+      // Fetch seats, org users, and orders in parallel
+      const [seatsRes, usersRes, ordersRes] = await Promise.all([
+        locationApi.getSeats(locId).catch(() => [] as SeatItem[]),
+        userApi.getUsers("Employee", currentShortCode || undefined).catch(() => [] as UserItem[]),
+        orderApi.getOrders({
+          location: locId,
+          startDate: filters.startDate,
+          endDate: filters.endDate,
+          employee: employeeQueryParam,
+        }).catch(() => [] as ProviderOrder[]),
+      ]);
+
+      // In case the backend matched broadly or if orders had different casing/unlinked fields,
+      // apply client-side guarantee filter when a specific employee is chosen
+      let finalOrders = ordersRes || [];
+      if (targetEmp) {
+        const empName = (targetEmp.name || "").trim().toLowerCase();
+        const empEmail = (targetEmp.email || "").trim().toLowerCase();
+        const empId = (targetEmp.id || "").trim().toLowerCase();
+
+        finalOrders = finalOrders.filter((o) => {
+          const oEmpId = (o.employeeId || "").trim().toLowerCase();
+          const oEmpName = (o.employeeName || "").trim().toLowerCase();
+          const oEmpEmail = (o.employeeEmail || "").trim().toLowerCase();
+
+          return (
+            (empId && oEmpId === empId) ||
+            (empName && oEmpName === empName) ||
+            (empEmail && oEmpEmail === empEmail) ||
+            (empName && oEmpName.includes(empName)) ||
+            (empEmail && oEmpEmail.includes(empEmail))
+          );
+        });
       }
+
+      setLocationSeats(seatsRes || []);
+      setOrgEmployees(usersRes || []);
+      setLocationOrders(finalOrders);
     } catch (err) {
-      console.error("Failed to fetch location employees:", err);
-      setLocationEmployees([]);
+      console.error("Failed to load location employee view data:", err);
+      setLocationOrders([]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // 3. Fetch Orders for a Selected Employee
-  const fetchEmployeeOrders = async (empId: string) => {
-    setIsLoading(true);
-    try {
-      const res = await orderApi.getEmployeeOrders(empId, {
-        startDate: activeDateRange.startDate,
-        endDate: activeDateRange.endDate,
-      });
-      setEmployeeProfile(res.employee || null);
-      setEmployeeOrders(res.orders || []);
-      setCurrentPage(1);
-    } catch (err) {
-      console.error("Failed to fetch employee orders:", err);
-      setEmployeeOrders([]);
-      setEmployeeProfile(null);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Load Data whenever View, Selected Target, or Date Filter changes
+  // Re-fetch when switching to locations view or when top date range changes
   useEffect(() => {
     if (activeView === "locations") {
       fetchLocations();
-    } else if (activeView === "employees" && selectedLocation) {
-      fetchLocationEmployees(selectedLocation.id);
-    } else if (activeView === "orders" && selectedEmployee) {
-      fetchEmployeeOrders(selectedEmployee.employeeId);
     }
-  }, [activeView, selectedLocation?.id, selectedEmployee?.employeeId, activeDateRange]);
+  }, [activeView, topDateRange]);
 
-  // Handle Location Click
+  // Re-fetch when in employee view and applied filters change
+  useEffect(() => {
+    if (activeView === "employees" && selectedLocation) {
+      loadLocationEmployeeViewData(selectedLocation.id, {
+        employeeId: appliedFilters.employeeId,
+        startDate: appliedFilters.startDate,
+        endDate: appliedFilters.endDate,
+      });
+    }
+  }, [activeView, selectedLocation?.id, appliedFilters]);
+
+  // Helper to calculate date range based on period & inputs
+  const calculateDateRange = (
+    period: PeriodType,
+    dailyDate: string,
+    weeklyDate: string,
+    monthStr: string
+  ): { startDate: string; endDate: string; label: string } => {
+    if (period === "daily") {
+      const d = dailyDate || new Date().toISOString().substring(0, 10);
+      return {
+        startDate: d,
+        endDate: d,
+        label: formatFriendlyDisplayDate(d),
+      };
+    } else if (period === "weekly") {
+      const base = new Date(weeklyDate ? `${weeklyDate}T00:00:00` : new Date());
+      const day = base.getDay();
+      const diffToMon = (day === 0 ? -6 : 1) - day;
+      const mon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon);
+      const sun = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon + 6);
+
+      const monStr = formatDateYMD(mon);
+      const sunStr = formatDateYMD(sun);
+      return {
+        startDate: monStr,
+        endDate: sunStr,
+        label: `${formatFriendlyDisplayDate(monStr)} – ${formatFriendlyDisplayDate(sunStr)}`,
+      };
+    } else {
+      // Monthly
+      const parts = (monthStr || "").split("-");
+      const y = parseInt(parts[0], 10) || new Date().getFullYear();
+      const m = parseInt(parts[1], 10) || (new Date().getMonth() + 1);
+
+      const firstDay = new Date(y, m - 1, 1);
+      const lastDay = new Date(y, m, 0);
+
+      const startStr = formatDateYMD(firstDay);
+      const endStr = formatDateYMD(lastDay);
+
+      const monthName = firstDay.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+      return {
+        startDate: startStr,
+        endDate: endStr,
+        label: monthName,
+      };
+    }
+  };
+
+  // Handle Apply Filter click
+  const handleApplyFilter = () => {
+    const range = calculateDateRange(
+      selectedPeriod,
+      selectedDailyDate,
+      selectedWeeklyDate,
+      selectedMonth
+    );
+
+    setAppliedFilters({
+      employeeId: selectedEmployeeId,
+      period: selectedPeriod,
+      startDate: range.startDate,
+      endDate: range.endDate,
+      displayDateLabel: range.label,
+    });
+  };
+
+  // Handle Location Click from Locations List
   const handleSelectLocation = (loc: LocationOrderSummary) => {
     setSelectedLocation({ id: loc.id, name: loc.name });
-    setSelectedEmployee(null);
-    setSearchQuery("");
     setActiveView("employees");
+
+    // Initialize with today's date
+    const today = new Date();
+    const todayStr = formatDateYMD(today);
+    setSelectedEmployeeId("all");
+    setSelectedPeriod("daily");
+    setSelectedDailyDate(todayStr);
+    setSelectedWeeklyDate(todayStr);
+    setSelectedMonth(todayStr.substring(0, 7));
+
+    setAppliedFilters({
+      employeeId: "all",
+      period: "daily",
+      startDate: todayStr,
+      endDate: todayStr,
+      displayDateLabel: formatFriendlyDisplayDate(todayStr),
+    });
   };
 
-  // Handle Employee Click
-  const handleSelectEmployee = (emp: LocationEmployeeOrderSummary) => {
-    setSelectedEmployee(emp);
-    setSearchQuery("");
-    setActiveView("orders");
-  };
+  // Seat map for fast seat identifier resolution by employee id, name, or email
+  const seatMap = useMemo(() => {
+    const map = new Map<string, SeatItem>();
+    (locationSeats || []).forEach((s) => {
+      if (s.employeeId) map.set(s.employeeId, s);
+      if (s.employeeEmail) map.set(s.employeeEmail.toLowerCase().trim(), s);
+      if (s.employee) map.set(s.employee.toLowerCase().trim(), s);
+      if (s.employeeName) map.set(s.employeeName.toLowerCase().trim(), s);
+    });
+    return map;
+  }, [locationSeats]);
 
-  // Status Badge Helper
-  const renderStatusBadge = (status?: string) => {
-    const s = (status || "Pending").toLowerCase();
-    let badgeClass = "bg-amber-100 text-amber-800 border-amber-200";
-    if (s === "delivered" || s === "completed") {
-      badgeClass = "bg-emerald-100 text-emerald-800 border-emerald-200";
-    } else if (s === "ready") {
-      badgeClass = "bg-blue-100 text-blue-800 border-blue-200";
-    } else if (s === "preparing") {
-      badgeClass = "bg-purple-100 text-purple-800 border-purple-200";
-    } else if (s === "cancelled" || s === "canceled") {
-      badgeClass = "bg-rose-100 text-rose-800 border-rose-200";
-    } else if (s === "none") {
-      badgeClass = "bg-stone-100 text-stone-600 border-stone-200";
+  // Combined Distinct Employee Options for the Employee Filter Dropdown
+  const employeeDropdownOptions = useMemo<EmployeeOption[]>(() => {
+    const optMap = new Map<string, EmployeeOption>();
+
+    // 1. Employees from location's assigned seats
+    (locationSeats || []).forEach((s) => {
+      const name = s.employeeName || (s.employee && !s.employee.includes("@") ? s.employee : "") || (s.employeeEmail ? s.employeeEmail.split("@")[0] : "");
+      const email = s.employeeEmail || (s.employee && s.employee.includes("@") ? s.employee : undefined);
+      if (name || email) {
+        const id = s.employeeId || email || name;
+        optMap.set(id, {
+          id,
+          name: name || email || "Assigned Employee",
+          email,
+          seatIdentifier: s.displayId || (s.number ? `SEAT-${parseInt(s.number, 10) || s.number}` : undefined),
+        });
+      }
+    });
+
+    // 2. Organization Employees
+    (orgEmployees || []).forEach((u) => {
+      if (u.name || u.email) {
+        const id = u.id || u.email;
+        if (!optMap.has(id)) {
+          optMap.set(id, {
+            id,
+            name: u.name || u.userName || u.email,
+            email: u.email,
+          });
+        }
+      }
+    });
+
+    // 3. Orders placed in this location (in case an unassigned employee ordered)
+    (locationOrders || []).forEach((o) => {
+      if (o.employeeName || o.employeeEmail || o.employeeId) {
+        const id = o.employeeId || o.employeeEmail || o.employeeName;
+        if (id && !optMap.has(id)) {
+          optMap.set(id, {
+            id,
+            name: o.employeeName || o.employeeEmail || "Employee",
+            email: o.employeeEmail || undefined,
+            seatIdentifier: o.seat,
+          });
+        }
+      }
+    });
+
+    return Array.from(optMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [locationSeats, orgEmployees, locationOrders]);
+
+  // Filtered dropdown options based on search input inside the dropdown
+  const filteredDropdownOptions = useMemo(() => {
+    if (!employeeSearchText.trim()) return employeeDropdownOptions;
+    const q = employeeSearchText.toLowerCase();
+    return employeeDropdownOptions.filter(
+      (opt) =>
+        opt.name.toLowerCase().includes(q) ||
+        (opt.email && opt.email.toLowerCase().includes(q))
+    );
+  }, [employeeDropdownOptions, employeeSearchText]);
+
+  // Resolve currently selected employee label for dropdown button
+  const selectedEmployeeOption = useMemo(() => {
+    if (selectedEmployeeId === "all") return null;
+    return (
+      employeeDropdownOptions.find((e) => e.id === selectedEmployeeId) || null
+    );
+  }, [selectedEmployeeId, employeeDropdownOptions]);
+
+  // Resolve currently applied employee label for table header
+  const appliedEmployeeOption = useMemo(() => {
+    if (appliedFilters.employeeId === "all") return null;
+    return (
+      employeeDropdownOptions.find((e) => e.id === appliedFilters.employeeId) || null
+    );
+  }, [appliedFilters.employeeId, employeeDropdownOptions]);
+
+  // Dynamic Summary Metrics calculated strictly from filtered location orders
+  const summaryMetrics = useMemo(() => {
+    let totalOrders = locationOrders.length;
+    let totalAmount = 0;
+    let deliveredOrders = 0;
+    let pendingOrders = 0;
+    let cancelledOrders = 0;
+
+    locationOrders.forEach((o) => {
+      totalAmount += Number(o.total) || 0;
+      const st = (o.status || "Pending").toLowerCase();
+      if (st === "delivered") {
+        deliveredOrders += 1;
+      } else if (st === "cancelled" || st === "canceled") {
+        cancelledOrders += 1;
+      } else {
+        // Pending, Preparing, Ready
+        pendingOrders += 1;
+      }
+    });
+
+    return {
+      totalOrders,
+      totalAmount,
+      deliveredOrders,
+      pendingOrders,
+      cancelledOrders,
+    };
+  }, [locationOrders]);
+
+  // Export Filtered Orders to CSV
+  const handleExportOrders = () => {
+    if (!locationOrders || locationOrders.length === 0) {
+      alert("No orders to export for the selected filter.");
+      return;
     }
 
-    return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border ${badgeClass}`}>
-        {status || "Pending"}
-      </span>
+    const headers = [
+      "Order ID",
+      "Employee Name",
+      "Employee Email",
+      "Seat",
+      "Location",
+      "Items",
+      "Subtotal",
+      "Total Amount",
+      "Order Time",
+      "Status",
+      "Created At",
+    ];
+
+    const rows = locationOrders.map((o) => {
+      const itemsSummary = (o.items || [])
+        .map((it) => `${it.name} x${it.qty}`)
+        .join("; ");
+      const seatVal = formatSeatIdentifier(
+        o.seatId || o.seat || (o.employeeId ? seatMap.get(o.employeeId)?.displayId : "")
+      );
+      return [
+        `"${formatOrderId(o)}"`,
+        `"${o.employeeName || ""}"`,
+        `"${o.employeeEmail || ""}"`,
+        `"${seatVal}"`,
+        `"${o.locationName || selectedLocation?.name || ""}"`,
+        `"${itemsSummary.replace(/"/g, '""')}"`,
+        `"${o.subtotal ?? o.total}"`,
+        `"${o.total}"`,
+        `"${o.time || ""}"`,
+        `"${o.status}"`,
+        `"${o.createdAt || ""}"`,
+      ].join(",");
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    const dateTag = appliedFilters.startDate || "orders";
+    link.setAttribute(
+      "download",
+      `${selectedLocation?.name || "location"}_orders_${dateTag}.csv`
     );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
-  // Filtered Locations
+  // Status badge renderer
+  const renderStatusBadge = (status?: string) => {
+    const s = (status || "Pending").toLowerCase();
+    if (s === "delivered") {
+      return (
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#EAF7ED] text-[#28A745] border border-[#CDEFD4]">
+          Delivered
+        </span>
+      );
+    } else if (s === "cancelled" || s === "canceled") {
+      return (
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#FDEEED] text-[#DC3545] border border-[#F9CFCC]">
+          Cancelled
+        </span>
+      );
+    } else {
+      // Pending, Preparing, Ready
+      return (
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#FEF6E9] text-[#D97706] border border-[#FDE5BD]">
+          Pending
+        </span>
+      );
+    }
+  };
+
+  // Filtered Locations (in Locations list view)
   const filteredLocations = useMemo(() => {
-    if (!searchQuery.trim()) return locations;
-    const q = searchQuery.toLowerCase();
-    return locations.filter((loc) => loc.name.toLowerCase().includes(q));
-  }, [locations, searchQuery]);
-
-  // Filtered Location Employees
-  const filteredEmployees = useMemo(() => {
-    if (!searchQuery.trim()) return locationEmployees;
-    const q = searchQuery.toLowerCase();
-    return locationEmployees.filter(
-      (e) =>
-        e.employeeName.toLowerCase().includes(q) ||
-        (e.username && e.username.toLowerCase().includes(q)) ||
-        (e.seat && e.seat.toLowerCase().includes(q))
-    );
-  }, [locationEmployees, searchQuery]);
-
-  // Filtered Employee Orders
-  const filteredOrders = useMemo(() => {
-    if (!searchQuery.trim()) return employeeOrders;
-    const q = searchQuery.toLowerCase();
-    return employeeOrders.filter(
-      (o) =>
-        o.id.toLowerCase().includes(q) ||
-        (o.displayId && o.displayId.toLowerCase().includes(q)) ||
-        formatOrderId(o).toLowerCase().includes(q) ||
-        (o.seat && o.seat.toLowerCase().includes(q)) ||
-        o.items.some((it) => it.name.toLowerCase().includes(q))
-    );
-  }, [employeeOrders, searchQuery]);
-
-  // Paginated Orders
-  const paginatedOrders = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return filteredOrders.slice(startIndex, startIndex + pageSize);
-  }, [filteredOrders, currentPage, pageSize]);
-
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
+    if (!locationSearchQuery.trim()) return locations;
+    const q = locationSearchQuery.toLowerCase();
+    return locations.filter((l) => l.name.toLowerCase().includes(q));
+  }, [locations, locationSearchQuery]);
 
   return (
     <Background>
       <div className="flex min-h-screen flex-col pt-20 text-[#4A3E3D]">
         <Navbar />
 
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-16">
-        {/* Top Header & Breadcrumbs */}
-        <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            {/* Breadcrumb Navigation */}
-            <nav className="flex items-center text-sm font-medium text-stone-500 mb-2 space-x-2">
-              <button
-                onClick={() => {
-                  setActiveView("locations");
-                  setSelectedLocation(null);
-                  setSelectedEmployee(null);
-                }}
-                className={`hover:text-[#8C6D58] transition-colors ${
-                  activeView === "locations" ? "text-[#8C6D58] font-bold" : ""
-                }`}
-              >
-                Orders
-              </button>
+        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-20">
+          {/* ========================================================================= */}
+          {/* HEADER SECTION                                                           */}
+          {/* ========================================================================= */}
+          <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              {/* Breadcrumb Navigation */}
+              <nav className="flex items-center gap-1.5 text-xs text-[#8A7667] mb-1.5">
+                <button
+                  onClick={() => {
+                    setActiveView("locations");
+                    setSelectedLocation(null);
+                  }}
+                  className={`hover:text-[#70452D] font-semibold transition-colors ${
+                    activeView === "locations" ? "text-[#70452D] font-bold" : ""
+                  }`}
+                >
+                  Orders
+                </button>
 
-              {selectedLocation && (
-                <>
-                  <ChevronRight className="w-4 h-4 text-stone-400" />
-                  <button
-                    onClick={() => {
-                      setActiveView("employees");
-                      setSelectedEmployee(null);
-                    }}
-                    className={`hover:text-[#8C6D58] transition-colors ${
-                      activeView === "employees" ? "text-[#8C6D58] font-bold" : ""
-                    }`}
-                  >
-                    {selectedLocation.name}
-                  </button>
-                </>
-              )}
-
-              {selectedEmployee && (
-                <>
-                  <ChevronRight className="w-4 h-4 text-stone-400" />
-                  <span className="text-[#8C6D58] font-bold">
-                    {employeeProfile?.name || selectedEmployee.employeeName}
-                  </span>
-                  <ChevronRight className="w-4 h-4 text-stone-400" />
-                  <span className="text-stone-500 font-semibold">Employee Orders</span>
-                </>
-              )}
-            </nav>
-
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-[#382D2C] tracking-tight flex items-center gap-3">
-              {activeView === "locations" && (
-                <>
-                  <Building2 className="w-8 h-8 text-[#8C6D58]" />
-                  <span>Orders by Location</span>
-                </>
-              )}
-              {activeView === "employees" && (
-                <>
-                  <Users className="w-8 h-8 text-[#8C6D58]" />
-                  <span>{selectedLocation?.name} – Employees</span>
-                </>
-              )}
-              {activeView === "orders" && (
-                <>
-                  <ShoppingBag className="w-8 h-8 text-[#8C6D58]" />
-                  <span>Orders – {employeeProfile?.name || selectedEmployee?.employeeName}</span>
-                </>
-              )}
-            </h1>
-            <p className="text-xs sm:text-sm text-stone-500 mt-1">
-              {activeView === "locations" && "Select a location to inspect assigned employee orders and total spending."}
-              {activeView === "employees" && `Displaying all employees and active order tallies for ${selectedLocation?.name}.`}
-              {activeView === "orders" && `Seat: ${formatSeatIdentifier(employeeProfile?.seatIdentifier || selectedEmployee?.seat)} • Location: ${employeeProfile?.locationName || selectedLocation?.name}`}
-            </p>
-          </div>
-
-          {/* Date Range Selector & Back Button */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Date Filters: Today | Yesterday | Custom */}
-            <div className="inline-flex rounded-xl bg-white p-1 shadow-sm border border-stone-200">
-              <button
-                onClick={() => setDateFilterType("today")}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  dateFilterType === "today"
-                    ? "bg-[#8C6D58] text-white shadow-sm"
-                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
-                }`}
-              >
-                Today
-              </button>
-              <button
-                onClick={() => setDateFilterType("yesterday")}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  dateFilterType === "yesterday"
-                    ? "bg-[#8C6D58] text-white shadow-sm"
-                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
-                }`}
-              >
-                Yesterday
-              </button>
-              <button
-                onClick={() => setDateFilterType("custom")}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-                  dateFilterType === "custom"
-                    ? "bg-[#8C6D58] text-white shadow-sm"
-                    : "text-stone-600 hover:text-stone-900 hover:bg-stone-50"
-                }`}
-              >
-                Custom
-              </button>
-            </div>
-
-            {/* Custom Date Pickers */}
-            {dateFilterType === "custom" && (
-              <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-xl border border-stone-200 shadow-sm text-xs">
-                <Calendar className="w-3.5 h-3.5 text-stone-400" />
-                <input
-                  type="date"
-                  value={customStartDate}
-                  onChange={(e) => setCustomStartDate(e.target.value)}
-                  className="bg-transparent border-none text-stone-700 focus:outline-none text-xs"
-                />
-                <span className="text-stone-300">to</span>
-                <input
-                  type="date"
-                  value={customEndDate}
-                  onChange={(e) => setCustomEndDate(e.target.value)}
-                  className="bg-transparent border-none text-stone-700 focus:outline-none text-xs"
-                />
-              </div>
-            )}
-
-            {/* Back Button (if inside sub-view) */}
-            {activeView === "employees" && (
-              <button
-                onClick={() => {
-                  setActiveView("locations");
-                  setSelectedLocation(null);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-700 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                Back to Locations
-              </button>
-            )}
-
-            {activeView === "orders" && (
-              <button
-                onClick={() => {
-                  setActiveView("employees");
-                  setSelectedEmployee(null);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-stone-700 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                Back to Employees
-              </button>
-            )}
-
-            {/* Refresh Button */}
-            <button
-              onClick={() => {
-                if (activeView === "locations") fetchLocations();
-                else if (activeView === "employees" && selectedLocation) fetchLocationEmployees(selectedLocation.id);
-                else if (activeView === "orders" && selectedEmployee) fetchEmployeeOrders(selectedEmployee.employeeId);
-              }}
-              title="Refresh Data"
-              className="p-2 text-stone-600 bg-white border border-stone-200 rounded-xl hover:bg-stone-50 shadow-sm transition-all"
-            >
-              <RotateCw className={`w-4 h-4 ${isLoading ? "animate-spin text-[#8C6D58]" : ""}`} />
-            </button>
-          </div>
-        </div>
-
-        {/* Search Bar */}
-        <div className="mb-6 flex items-center justify-between">
-          <div className="relative w-full max-w-md">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={
-                activeView === "locations"
-                  ? "Search locations..."
-                  : activeView === "employees"
-                  ? "Search employees or seat..."
-                  : "Search order ID, item name..."
-              }
-              className="w-full pl-10 pr-4 py-2 bg-white border border-stone-200 rounded-xl text-xs sm:text-sm text-stone-800 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-[#8C6D58] focus:border-transparent shadow-sm"
-            />
-          </div>
-        </div>
-
-        {/* ========================================================================= */}
-        {/* VIEW 1: LOCATIONS LIST VIEW                                              */}
-        {/* ========================================================================= */}
-        {activeView === "locations" && (
-          <div>
-            {isLoading ? (
-              <div className="py-24 text-center">
-                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
-                <p className="text-stone-500 text-sm">Loading location order summaries from database...</p>
-              </div>
-            ) : filteredLocations.length === 0 ? (
-              <div className="bg-white rounded-2xl border border-stone-200 p-12 text-center shadow-sm">
-                <Building2 className="w-12 h-12 text-stone-300 mx-auto mb-3" />
-                <h3 className="text-base font-bold text-stone-800 mb-1">No Locations Found</h3>
-                <p className="text-xs text-stone-500">
-                  {searchQuery ? "No locations match your search query." : "No locations exist for this organization."}
-                </p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {filteredLocations.map((loc) => (
-                  <div
-                    key={loc.id}
-                    onClick={() => handleSelectLocation(loc)}
-                    className="group relative cursor-pointer overflow-hidden rounded-3xl border border-[#EADBCE] bg-white p-5 shadow-xs hover:shadow-xl hover:border-[#8C6D58]/50 transition-all duration-300 flex flex-col justify-between"
-                  >
-                    <div>
-                      {/* Top Bar: Icon + Status Pill */}
-                      <div className="flex items-center justify-between mb-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#FDF8F3] to-[#F3E7DC] text-[#784D34] border border-[#E6D4C3] shadow-xs group-hover:scale-105 transition-transform duration-200">
-                          <Building2 className="w-5 h-5 text-[#8C5835]" />
-                        </div>
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold tracking-wide uppercase shadow-2xs ${
-                            loc.status?.toLowerCase() === "inactive"
-                              ? "bg-stone-100 text-stone-600 border border-stone-200"
-                              : "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                          }`}
-                        >
-                          <span
-                            className={`w-1.5 h-1.5 rounded-full ${
-                              loc.status?.toLowerCase() === "inactive" ? "bg-stone-400" : "bg-emerald-500"
-                            }`}
-                          />
-                          <span>{loc.status || "ACTIVE"}</span>
-                        </span>
-                      </div>
-
-                      {/* Location Name & Subtitle */}
-                      <div className="mb-4">
-                        <h3 className="text-lg font-extrabold text-[#342219] group-hover:text-[#8C5835] transition-colors leading-snug truncate">
-                          {loc.name}
-                        </h3>
-                      </div>
-
-                      {/* Primary Metrics Card */}
-                      <div className="rounded-2xl border border-[#EEE5DC] bg-[#FAF8F5]/70 p-3.5 space-y-2.5 text-xs">
-                        {/* Assigned Employees */}
-                        <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
-                            <Users className="w-4 h-4 text-[#A8907E]" />
-                            <span>Assigned Employees:</span>
-                          </span>
-                          <span className="font-bold text-[#342219]">{loc.totalEmployees}</span>
-                        </div>
-
-                        {/* Total Orders */}
-                        <div className="flex items-center justify-between">
-                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
-                            <ShoppingBag className="w-4 h-4 text-[#A8907E]" />
-                            <span>Total Orders:</span>
-                          </span>
-                          <span className="font-bold text-[#342219]">{loc.totalOrders}</span>
-                        </div>
-
-                        {/* Total Amount */}
-                        <div className="flex items-center justify-between pt-1 border-t border-[#EADBCE]/60">
-                          <span className="flex items-center gap-2 text-[#70523E] font-medium">
-                            <Banknote className="w-4 h-4 text-[#8C5835]" />
-                            <span>Total Amount:</span>
-                          </span>
-                          <span className="font-black text-sm text-[#784D34]">
-                            {formatPrice(loc.totalAmount)}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Order Status Breakdown: Pending & Delivered */}
-                      <div className="grid grid-cols-2 gap-2 mt-3 text-xs">
-                        {/* Pending Orders */}
-                        <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2">
-                          <span className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900">
-                            <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                            <span>Pending</span>
-                          </span>
-                          <span className="font-extrabold text-amber-900 text-xs">
-                            {loc.pendingOrders}
-                          </span>
-                        </div>
-
-                        {/* Delivered Orders */}
-                        <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2">
-                          <span className="flex items-center gap-1.5 font-bold text-[11px] text-emerald-900">
-                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span>Delivered</span>
-                          </span>
-                          <span className="font-extrabold text-emerald-900 text-xs">
-                            {loc.deliveredOrders}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Footer: View Employees Action */}
-                    <div className="mt-5 pt-3.5 border-t border-[#EEE5DC] flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#8C5835] group-hover:text-[#6F4228] transition-colors">
-                        View Employees
-                      </span>
-                      <div className="flex h-7 w-7 items-center justify-center rounded-xl bg-[#FAF6F1] text-[#8C5835] group-hover:bg-[#8C5835] group-hover:text-white transition-all shadow-2xs">
-                        <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ========================================================================= */}
-        {/* VIEW 2: LOCATION EMPLOYEES VIEW                                          */}
-        {/* ========================================================================= */}
-        {activeView === "employees" && (
-          <div className="bg-white rounded-3xl border border-[#EEE5DC] shadow-sm overflow-hidden">
-            <div className="p-6 border-b border-[#EEE5DC] flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#FCFAF7]">
-              <div>
-                <h2 className="text-lg font-bold text-[#342219] flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-[#8C5835]" />
-                  <span>{selectedLocation?.name} – Employee Orders</span>
-                </h2>
-                <p className="text-xs text-[#8A7667] mt-0.5">
-                  Displaying employees who have placed orders for {selectedLocation?.name} within the selected date range.
-                </p>
-              </div>
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-[#FAF6F1] text-[#70452D] border border-[#EADBCE]">
-                <span>{filteredEmployees.length} {filteredEmployees.length === 1 ? "Employee" : "Employees"} Ordered</span>
-              </div>
-            </div>
-
-            {isLoading ? (
-              <div className="py-20 text-center">
-                <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C5835] mb-3" />
-                <p className="text-[#8A7667] text-sm">Loading ordering employees for {selectedLocation?.name}...</p>
-              </div>
-            ) : filteredEmployees.length === 0 ? (
-              <div className="py-16 text-center text-[#8A7667] space-y-2">
-                <User className="w-12 h-12 text-[#D5C2B1] mx-auto" />
-                <p className="text-sm font-bold text-[#342219]">No employee orders found for this location.</p>
-                <p className="text-xs text-[#8A7667] max-w-sm mx-auto">
-                  Only employees who have placed at least one order within the selected date range appear in this list.
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-[#FAF7F2] text-stone-600 text-xs font-semibold uppercase tracking-wider border-b border-stone-200">
-                    <tr>
-                      <th className="px-6 py-3.5">Employee</th>
-                      <th className="px-6 py-3.5">Seat</th>
-                      <th className="px-6 py-3.5 text-center">Total Orders</th>
-                      <th className="px-6 py-3.5 text-right">Total Amount</th>
-                      <th className="px-6 py-3.5 text-center">Latest Status</th>
-                      <th className="px-6 py-3.5 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-100 text-stone-800">
-                    {filteredEmployees.map((emp) => (
-                      <tr
-                        key={emp.employeeId}
-                        onClick={() => handleSelectEmployee(emp)}
-                        className="hover:bg-[#FAF7F2]/60 cursor-pointer transition-colors"
-                      >
-                        {/* Employee Name & Username */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-full bg-[#8C6D58]/10 text-[#8C6D58] flex items-center justify-center font-bold text-xs uppercase">
-                              {emp.employeeName.substring(0, 2)}
-                            </div>
-                            <div>
-                              <div className="font-bold text-stone-900">{emp.employeeName}</div>
-                              <div className="text-xs text-stone-400">
-                                {emp.username ? `@${emp.username}` : emp.employeeEmail || "Active Employee"}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Seat Identifier */}
-                        <td className="px-6 py-4">
-                          <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-stone-100 text-stone-700 border border-stone-200">
-                            {formatSeatIdentifier(emp.seat)}
-                          </span>
-                        </td>
-
-                        {/* Total Orders */}
-                        <td className="px-6 py-4 text-center">
-                          <span className="font-semibold text-stone-900">{emp.totalOrders}</span>
-                        </td>
-
-                        {/* Total Amount */}
-                        <td className="px-6 py-4 text-right">
-                          <span className="font-bold text-[#8C6D58]">{formatPrice(emp.totalAmount)}</span>
-                        </td>
-
-                        {/* Latest Status */}
-                        <td className="px-6 py-4 text-center">
-                          {renderStatusBadge(emp.latestStatus)}
-                        </td>
-
-                        {/* Action Link */}
-                        <td className="px-6 py-4 text-right">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleSelectEmployee(emp);
-                            }}
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#8C6D58] hover:underline"
-                          >
-                            <span>View Orders</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ========================================================================= */}
-        {/* VIEW 3: EMPLOYEE ORDER DETAILS VIEW                                      */}
-        {/* ========================================================================= */}
-        {activeView === "orders" && (
-          <div className="space-y-6">
-            {/* Employee Summary Profile Banner */}
-            <div className="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-2xl bg-[#8C6D58]/15 text-[#8C6D58] flex items-center justify-center font-extrabold text-lg uppercase shadow-inner">
-                  {(employeeProfile?.name || selectedEmployee?.employeeName || "E").substring(0, 2)}
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-stone-900">
-                    {employeeProfile?.name || selectedEmployee?.employeeName}
-                  </h2>
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-stone-500 mt-1">
-                    {employeeProfile?.username && (
-                      <span className="text-stone-700 font-medium">@{employeeProfile.username}</span>
-                    )}
-                    <span>•</span>
-                    <span className="font-mono bg-stone-100 px-2 py-0.5 rounded border border-stone-200 text-stone-700">
-                      {formatSeatIdentifier(employeeProfile?.seatIdentifier || selectedEmployee?.seat)}
+                {selectedLocation && (
+                  <>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#A8907E]" />
+                    <span className="text-[#70452D] font-bold">
+                      {selectedLocation.name}
                     </span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1 text-stone-600">
-                      <MapPin className="w-3.5 h-3.5 text-[#8C6D58]" />
-                      {employeeProfile?.locationName || selectedLocation?.name}
-                    </span>
-                  </div>
-                </div>
-              </div>
+                  </>
+                )}
+              </nav>
 
-              {/* Quick Metrics Badges */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
-                <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200">
-                  <div className="text-xs text-stone-500">Total Orders</div>
-                  <div className="text-lg font-bold text-stone-900">{employeeProfile?.totalOrders ?? 0}</div>
-                </div>
-                <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200">
-                  <div className="text-xs text-stone-500">Total Spend</div>
-                  <div className="text-lg font-bold text-[#8C6D58]">
-                    {formatPrice(employeeProfile?.totalSpend ?? 0)}
-                  </div>
-                </div>
-                <div className="bg-amber-50/50 p-3 rounded-xl border border-amber-200/60">
-                  <div className="text-xs text-amber-700">Pending</div>
-                  <div className="text-lg font-bold text-amber-900">{employeeProfile?.pendingOrders ?? 0}</div>
-                </div>
-                <div className="bg-emerald-50/50 p-3 rounded-xl border border-emerald-200/60">
-                  <div className="text-xs text-emerald-700">Delivered</div>
-                  <div className="text-lg font-bold text-emerald-900">{employeeProfile?.deliveredOrders ?? 0}</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Individual Orders Table */}
-            <div className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
-              <div className="p-4 border-b border-stone-200 flex items-center justify-between bg-[#FCFAF7]">
-                <h3 className="text-sm font-bold text-stone-800 flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-[#8C6D58]" />
-                  <span>Order History</span>
-                </h3>
-                <span className="text-xs text-stone-500">
-                  {filteredOrders.length} {filteredOrders.length === 1 ? "order" : "orders"} found
-                </span>
-              </div>
-
-              {isLoading ? (
-                <div className="py-20 text-center">
-                  <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C6D58] mb-3" />
-                  <p className="text-stone-500 text-sm">Loading order details...</p>
-                </div>
-              ) : filteredOrders.length === 0 ? (
-                <div className="py-16 text-center text-stone-500">
-                  <ShoppingBag className="w-10 h-10 text-stone-300 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-stone-700">No orders found for this employee.</p>
-                  <p className="text-xs text-stone-400 mt-1">Try selecting a different date range or placing an order.</p>
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-[#FAF7F2] text-stone-600 text-xs font-semibold uppercase tracking-wider border-b border-stone-200">
-                      <tr>
-                        <th className="px-6 py-3.5">Order ID</th>
-                        <th className="px-6 py-3.5">Date & Time</th>
-                        <th className="px-6 py-3.5">Items</th>
-                        <th className="px-6 py-3.5 text-right">Subtotal</th>
-                        <th className="px-6 py-3.5 text-right">Total</th>
-                        <th className="px-6 py-3.5 text-center">Status</th>
-                        <th className="px-6 py-3.5 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-stone-100 text-stone-800">
-                      {paginatedOrders.map((order) => (
-                        <tr
-                          key={order.id}
-                          onClick={() => setInspectedOrder(order)}
-                          className="hover:bg-[#FAF7F2]/60 cursor-pointer transition-colors"
-                        >
-                          {/* Order ID */}
-                          <td className="px-6 py-4">
-                            <span className="font-mono font-bold text-stone-900 text-xs">
-                              {formatOrderId(order)}
-                            </span>
-                          </td>
-
-                          {/* Date & Time */}
-                          <td className="px-6 py-4 text-xs text-stone-600">
-                            <div>{order.createdAt ? order.createdAt.substring(0, 10) : "Today"}</div>
-                            <div className="text-stone-400 flex items-center gap-1 mt-0.5">
-                              <Clock className="w-3 h-3" />
-                              {order.time || "Recent"}
-                            </div>
-                          </td>
-
-                          {/* Items List Preview */}
-                          <td className="px-6 py-4">
-                            <div className="space-y-1">
-                              {order.items && order.items.length > 0 ? (
-                                order.items.map((item, idx) => (
-                                  <div key={idx} className="text-xs text-stone-700 flex items-center gap-1.5">
-                                    <span className="font-semibold text-stone-900">{item.name}</span>
-                                    <span className="text-stone-400">×{item.qty}</span>
-                                    {item.preference && (
-                                      <span className="text-[10px] bg-stone-100 text-stone-600 px-1 rounded">
-                                        {item.preference}
-                                      </span>
-                                    )}
-                                  </div>
-                                ))
-                              ) : (
-                                <span className="text-xs text-stone-400">Standard Order</span>
-                              )}
-                            </div>
-                          </td>
-
-                          {/* Subtotal */}
-                          <td className="px-6 py-4 text-right text-xs text-stone-600">
-                            {formatPrice(order.subtotal ?? order.total)}
-                          </td>
-
-                          {/* Total */}
-                          <td className="px-6 py-4 text-right">
-                            <span className="font-bold text-[#8C6D58] text-sm">
-                              {formatPrice(order.total)}
-                            </span>
-                          </td>
-
-                          {/* Status */}
-                          <td className="px-6 py-4 text-center">
-                            {renderStatusBadge(order.status)}
-                          </td>
-
-                          {/* View Detail Action */}
-                          <td className="px-6 py-4 text-right">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setInspectedOrder(order);
-                              }}
-                              className="p-1.5 text-stone-400 hover:text-[#8C6D58] transition-colors rounded-lg hover:bg-white"
-                              title="Inspect Order Details"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {/* Pagination Footer */}
-                  {totalPages > 1 && (
-                    <div className="p-4 border-t border-stone-200 flex items-center justify-between text-xs text-stone-600 bg-[#FCFAF7]">
-                      <div>
-                        Page {currentPage} of {totalPages}
-                      </div>
-                      <div className="flex items-center space-x-1">
-                        <button
-                          onClick={() => setCurrentPage(1)}
-                          disabled={currentPage === 1}
-                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronsLeft className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                          disabled={currentPage === 1}
-                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronLeft className="w-4 h-4" />
-                        </button>
-                        <span className="px-2 font-medium text-stone-800">{currentPage}</span>
-                        <button
-                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                          disabled={currentPage === totalPages}
-                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronRight className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => setCurrentPage(totalPages)}
-                          disabled={currentPage === totalPages}
-                          className="p-1.5 rounded-lg border border-stone-200 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed"
-                        >
-                          <ChevronsRight className="w-4 h-4" />
-                        </button>
-                      </div>
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-[#342219] tracking-tight flex items-center gap-3">
+                {activeView === "locations" ? (
+                  <>
+                    <div className="w-10 h-10 rounded-2xl bg-[#F6ECE2] text-[#8C5835] flex items-center justify-center shadow-xs">
+                      <Building2 className="w-5 h-5" />
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* ========================================================================= */}
-      {/* MODAL: SINGLE ORDER ITEM INSPECTION                                      */}
-      {/* ========================================================================= */}
-      {inspectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-stone-200 relative animate-scale-up">
-            {/* Close Button */}
-            <button
-              onClick={() => setInspectedOrder(null)}
-              className="absolute right-5 top-5 p-1.5 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            {/* Modal Header */}
-            <div className="mb-4">
-              <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#8C6D58]/10 text-[#8C6D58]">
-                Order Details
-              </span>
-              <h3 className="text-xl font-bold text-stone-900 mt-1">
-                {formatOrderId(inspectedOrder)}
-              </h3>
-              <p className="text-xs text-stone-500">
-                Placed by {inspectedOrder.employeeName} • {inspectedOrder.time}
+                    <span>Orders by Location</span>
+                  </>
+                ) : (
+                  <>
+                    <div className="w-10 h-10 rounded-2xl bg-[#F6ECE2] text-[#8C5835] flex items-center justify-center shadow-xs">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <span>{selectedLocation?.name} – Employees Orders</span>
+                  </>
+                )}
+              </h1>
+              <p className="text-xs sm:text-sm text-[#8A7667] mt-1">
+                {activeView === "locations"
+                  ? "Select a location to inspect assigned employee orders and total spending."
+                  : `Track and analyze employee orders for ${selectedLocation?.name} with flexible filters.`}
               </p>
             </div>
 
-            {/* Context Info Cards */}
-            <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
-              <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 block text-[10px] uppercase font-bold">Location</span>
-                <span className="font-semibold text-stone-800">{inspectedOrder.locationName}</span>
-              </div>
-              <div className="bg-[#FAF7F2] p-3 rounded-xl border border-stone-200/80">
-                <span className="text-stone-400 block text-[10px] uppercase font-bold">Seat</span>
-                <span className="font-mono font-semibold text-stone-800">
-                  {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat)}
-                </span>
-              </div>
+            {/* Quick Actions / View Controls */}
+            <div className="flex flex-wrap items-center gap-2.5">
+              {activeView === "locations" ? (
+                <>
+                  {/* Locations view quick date toggle: Today | Yesterday | Custom */}
+                  <div className="inline-flex rounded-2xl bg-white/90 p-1 shadow-xs border border-[#EEE5DC]">
+                    <button
+                      onClick={() => setTopDateFilter("today")}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                        topDateFilter === "today"
+                          ? "bg-[#70452D] text-white shadow-xs"
+                          : "text-[#70523E] hover:text-[#342219] hover:bg-[#FAF6F1]"
+                      }`}
+                    >
+                      Today
+                    </button>
+                    <button
+                      onClick={() => setTopDateFilter("yesterday")}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                        topDateFilter === "yesterday"
+                          ? "bg-[#70452D] text-white shadow-xs"
+                          : "text-[#70523E] hover:text-[#342219] hover:bg-[#FAF6F1]"
+                      }`}
+                    >
+                      Yesterday
+                    </button>
+                    <button
+                      onClick={() => setTopDateFilter("custom")}
+                      className={`px-3 py-1.5 text-xs font-semibold rounded-xl transition-all ${
+                        topDateFilter === "custom"
+                          ? "bg-[#70452D] text-white shadow-xs"
+                          : "text-[#70523E] hover:text-[#342219] hover:bg-[#FAF6F1]"
+                      }`}
+                    >
+                      Custom
+                    </button>
+                  </div>
+
+                  {topDateFilter === "custom" && (
+                    <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-2xl border border-[#EEE5DC] shadow-xs text-xs">
+                      <Calendar className="w-3.5 h-3.5 text-[#8C5835]" />
+                      <input
+                        type="date"
+                        value={topCustomStartDate}
+                        onChange={(e) => setTopCustomStartDate(e.target.value)}
+                        className="bg-transparent border-none text-[#342219] focus:outline-none text-xs"
+                      />
+                      <span className="text-[#A8907E]">to</span>
+                      <input
+                        type="date"
+                        value={topCustomEndDate}
+                        onChange={(e) => setTopCustomEndDate(e.target.value)}
+                        className="bg-transparent border-none text-[#342219] focus:outline-none text-xs"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    onClick={fetchLocations}
+                    title="Refresh Locations"
+                    className="p-2 text-[#70523E] bg-white border border-[#EEE5DC] rounded-2xl hover:bg-[#FAF6F1] shadow-xs transition-all cursor-pointer"
+                  >
+                    <RotateCw className={`w-4 h-4 ${isLoading ? "animate-spin text-[#8C5835]" : ""}`} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  {/* Back to Locations Button */}
+                  <button
+                    onClick={() => {
+                      setActiveView("locations");
+                      setSelectedLocation(null);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-[#70452D] bg-white border border-[#EEE5DC] rounded-2xl hover:bg-[#FAF6F1] shadow-xs transition-all cursor-pointer"
+                  >
+                    <ArrowLeft className="w-3.5 h-3.5" />
+                    <span>Back to Locations</span>
+                  </button>
+
+                  {/* Refresh Button */}
+                  <button
+                    onClick={() => {
+                      if (selectedLocation) {
+                        loadLocationEmployeeViewData(selectedLocation.id, {
+                          employeeId: appliedFilters.employeeId,
+                          startDate: appliedFilters.startDate,
+                          endDate: appliedFilters.endDate,
+                        });
+                      }
+                    }}
+                    title="Refresh Orders"
+                    className="p-2 text-[#70523E] bg-white border border-[#EEE5DC] rounded-2xl hover:bg-[#FAF6F1] shadow-xs transition-all cursor-pointer"
+                  >
+                    <RotateCw className={`w-4 h-4 ${isLoading ? "animate-spin text-[#8C5835]" : ""}`} />
+                  </button>
+                </>
+              )}
             </div>
+          </div>
 
-            {/* Items Breakdown with Item Image & Details */}
-            <div className="mb-5">
-              <h4 className="text-xs font-bold text-stone-700 uppercase tracking-wider mb-2.5">
-                Ordered Items ({inspectedOrder.items?.length || 0})
-              </h4>
-              <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
-                {inspectedOrder.items && inspectedOrder.items.length > 0 ? (
-                  inspectedOrder.items.map((item, idx) => {
-                    const matchedItem = item.itemId ? itemsByIdMap[item.itemId] : undefined;
-                    const rawName = (item.name || "").trim();
-                    const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
-                    const displayImg =
-                      item.image ||
-                      matchedItem?.image ||
-                      itemImagesMap[rawName.toLowerCase()] ||
-                      itemImagesMap[cleanName.toLowerCase()] ||
-                      "";
+          {/* ========================================================================= */}
+          {/* VIEW 1: LOCATIONS LIST VIEW                                               */}
+          {/* ========================================================================= */}
+          {activeView === "locations" && (
+            <div>
+              {/* Search Bar for Locations */}
+              <div className="mb-6 flex items-center justify-between">
+                <div className="relative w-full max-w-md">
+                  <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#A8907E]" />
+                  <input
+                    type="text"
+                    value={locationSearchQuery}
+                    onChange={(e) => setLocationSearchQuery(e.target.value)}
+                    placeholder="Search locations..."
+                    className="w-full pl-10 pr-4 py-2 bg-white/95 border border-[#EEE5DC] rounded-2xl text-xs sm:text-sm text-[#342219] placeholder-[#A8907E] focus:outline-none focus:ring-2 focus:ring-[#8C5835] focus:border-transparent shadow-xs"
+                  />
+                </div>
+              </div>
 
-                    const itemType = item.type || matchedItem?.type || matchedItem?.category || undefined;
-                    const itemPref = item.preference || undefined;
+              {isLoading ? (
+                <div className="py-24 text-center">
+                  <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C5835] mb-3" />
+                  <p className="text-[#8A7667] text-sm">Loading location order summaries from database...</p>
+                </div>
+              ) : filteredLocations.length === 0 ? (
+                <div className="py-20 text-center bg-white/80 rounded-3xl border border-[#EEE5DC] p-8 shadow-xs">
+                  <Building2 className="w-12 h-12 text-[#D5C2B1] mx-auto mb-3" />
+                  <h3 className="text-base font-bold text-[#342219]">No locations found</h3>
+                  <p className="text-xs text-[#8A7667] mt-1 max-w-sm mx-auto">
+                    No location order activity was found for the selected time filter.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {filteredLocations.map((loc) => (
+                    <div
+                      key={loc.id}
+                      onClick={() => handleSelectLocation(loc)}
+                      className="group flex flex-col justify-between rounded-3xl border border-[#EEE5DC] bg-white/95 p-6 shadow-sm hover:shadow-md transition-all duration-200 cursor-pointer backdrop-blur-xs hover:-translate-y-0.5"
+                    >
+                      <div>
+                        {/* Location Header */}
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#F6ECE2] text-[#8C5835]">
+                            <Building2 className="w-5 h-5" />
+                          </div>
+                          <span
+                            className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
+                              loc.status === "Active"
+                                ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                                : "bg-stone-100 text-stone-600 border border-stone-200"
+                            }`}
+                          >
+                            • {loc.status || "Active"}
+                          </span>
+                        </div>
 
-                    return (
-                      <div
-                        key={idx}
-                        className="flex items-center justify-between rounded-2xl border border-stone-200/90 bg-[#FAF7F2]/70 p-3 shadow-2xs hover:border-[#DEC5B0] transition-colors"
-                      >
-                        {/* Left: Item Image & Details */}
-                        <div className="flex items-center gap-3 min-w-0">
-                          {/* Item Image with Fallback */}
-                          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-white border border-stone-200 text-[#70452D] shadow-2xs overflow-hidden">
-                            {displayImg ? (
-                              <img
-                                src={displayImg}
-                                alt={item.name}
-                                className="h-full w-full object-cover"
-                                onError={(e) => {
-                                  (e.currentTarget as HTMLElement).style.display = "none";
-                                  const fallback = e.currentTarget.parentElement?.querySelector(".fallback-icon") as HTMLElement | null;
-                                  if (fallback) fallback.style.display = "flex";
-                                }}
-                              />
-                            ) : null}
-                            <div
-                              className="fallback-icon flex h-full w-full items-center justify-center text-[#8C6D58]"
-                              style={{ display: displayImg ? "none" : "flex" }}
-                            >
-                              <Coffee className="w-6 h-6" />
-                            </div>
+                        {/* Location Name */}
+                        <h3 className="text-lg font-bold text-[#342219] group-hover:text-[#70452D] transition-colors">
+                          {loc.name}
+                        </h3>
+
+                        {/* Location Stats */}
+                        <div className="mt-4 space-y-2 text-xs text-[#70523E]">
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 font-medium">
+                              <Users className="w-4 h-4 text-[#A8907E]" />
+                              <span>Assigned Employees:</span>
+                            </span>
+                            <span className="font-bold text-[#342219]">{loc.totalEmployees || 0}</span>
                           </div>
 
-                          {/* Info Column */}
-                          <div className="min-w-0">
-                            <h5 className="text-sm font-bold text-stone-900 truncate">
-                              {item.name}
-                            </h5>
-                            <div className="flex items-center gap-2 mt-0.5 text-xs text-stone-500">
-                              <span>Unit Price: {formatPrice(item.price)}</span>
-                              <span className="text-stone-300">•</span>
-                              <span className="font-semibold text-stone-700">Seat {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat)}</span>
-                            </div>
+                          <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-2 font-medium">
+                              <ShoppingBag className="w-4 h-4 text-[#A8907E]" />
+                              <span>Total Orders:</span>
+                            </span>
+                            <span className="font-bold text-[#342219]">{loc.totalOrders}</span>
+                          </div>
 
-                            {/* Preferences & Tags */}
-                            <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
-                              {itemPref && (
-                                <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-800 border border-amber-200/70">
-                                  <Flame className="w-2.5 h-2.5 text-amber-600" />
-                                  <span>{itemPref}</span>
-                                </span>
-                              )}
-                              {itemType && (
-                                <span className="inline-flex items-center gap-1 rounded-md bg-stone-100 px-2 py-0.5 text-[10px] font-semibold text-stone-700 border border-stone-200">
-                                  <Tag className="w-2.5 h-2.5 text-stone-500" />
-                                  <span>{itemType}</span>
-                                </span>
-                              )}
-                            </div>
+                          <div className="flex items-center justify-between pt-1 border-t border-[#EADBCE]/60">
+                            <span className="flex items-center gap-2 font-medium">
+                              <Banknote className="w-4 h-4 text-[#8C5835]" />
+                              <span>Total Amount:</span>
+                            </span>
+                            <span className="font-black text-sm text-[#784D34]">
+                              {formatPrice(loc.totalAmount)}
+                            </span>
                           </div>
                         </div>
 
-                        {/* Right: Quantity & Line Total */}
-                        <div className="flex items-center gap-3 shrink-0 ml-3">
-                          <div className="rounded-xl bg-white px-2.5 py-1 text-xs font-bold text-[#70452D] border border-stone-200 shadow-2xs">
-                            × {item.qty}
+                        {/* Order Status Breakdown: Pending & Delivered */}
+                        <div className="grid grid-cols-2 gap-2 mt-4 text-xs">
+                          <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2">
+                            <span className="flex items-center gap-1.5 font-bold text-[11px] text-amber-900">
+                              <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                              Pending
+                            </span>
+                            <span className="font-mono font-bold text-amber-900">{loc.pendingOrders}</span>
                           </div>
-                          <div className="text-sm font-black text-stone-900 text-right min-w-[70px]">
-                            {formatPrice(item.price * item.qty)}
+
+                          <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2">
+                            <span className="flex items-center gap-1.5 font-bold text-[11px] text-emerald-900">
+                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                              Delivered
+                            </span>
+                            <span className="font-mono font-bold text-emerald-900">{loc.deliveredOrders}</span>
                           </div>
                         </div>
                       </div>
-                    );
-                  })
+
+                      {/* View Button Footer */}
+                      <div className="mt-5 pt-3 border-t border-[#EEE5DC] flex items-center justify-between text-xs font-bold text-[#8C5835] group-hover:text-[#70452D]">
+                        <span>View Employees</span>
+                        <ChevronRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* VIEW 2: OFFICE – EMPLOYEES ORDERS (REDESIGNED MATCHING REFERENCE IMAGE)     */}
+          {/* ========================================================================= */}
+          {activeView === "employees" && (
+            <div className="space-y-6">
+              {/* ===================================================================== */}
+              {/* SECTION 1: FILTER BAR CARD (Glassmorphic White Panel)                 */}
+              {/* ===================================================================== */}
+              <div className="rounded-3xl border border-[#EEE5DC] bg-white/95 p-5 sm:p-6 shadow-sm backdrop-blur-md">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 sm:gap-5 items-end">
+                  {/* 1. Employee Filter Dropdown (Col 1-4 on desktop, 1 on mobile/tablet) */}
+                  <div className="sm:col-span-1 lg:col-span-4" ref={employeeDropdownRef}>
+                    <label className="block text-xs font-bold text-[#342219] mb-2 flex items-center gap-1.5">
+                      <User className="w-3.5 h-3.5 text-[#8C5835]" />
+                      <span>Employee</span>
+                    </label>
+
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!employeeDropdownOpen) {
+                            updateEmployeeDropdownPos();
+                            setEmployeeDropdownOpen(true);
+                            setIsCalendarOpen(false);
+                          } else {
+                            setEmployeeDropdownOpen(false);
+                          }
+                        }}
+                        className="w-full flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] px-4 py-2.5 sm:py-3 text-xs font-semibold text-[#342219] shadow-2xs hover:bg-[#F4EEE7] transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2.5 truncate">
+                          <User className="w-4 h-4 text-[#8C5835] shrink-0" />
+                          <span className="truncate">
+                            {selectedEmployeeOption ? selectedEmployeeOption.name : "All Employees"}
+                          </span>
+                        </div>
+                        <ChevronDown className="w-4 h-4 text-[#8A7667] shrink-0" />
+                      </button>
+
+                      {/* Dropdown Menu Rendered in React Portal to completely escape stacking contexts & clipping */}
+                      {employeeDropdownOpen &&
+                        createPortal(
+                          <div
+                            ref={employeeMenuRef}
+                            style={{
+                              position: "fixed",
+                              top: `${employeeDropdownPos.top}px`,
+                              left: `${employeeDropdownPos.left}px`,
+                              width: `${employeeDropdownPos.width}px`,
+                              maxWidth: "calc(100vw - 32px)",
+                              zIndex: 99999,
+                            }}
+                            className="rounded-2xl border border-[#EEE5DC] bg-white/98 p-2.5 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150"
+                          >
+                            {/* Search inside dropdown - Sticky Header */}
+                            <div className="sticky top-0 bg-white pb-2 z-10 border-b border-[#F4EBE2] mb-1.5">
+                              <div className="relative">
+                                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8907E]" />
+                                <input
+                                  type="text"
+                                  value={employeeSearchText}
+                                  onChange={(e) => setEmployeeSearchText(e.target.value)}
+                                  placeholder="Search employees..."
+                                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border border-[#E8DED4] bg-[#FAF8F5] text-[#342219] focus:outline-none focus:border-[#8C5835]"
+                                  autoFocus
+                                />
+                              </div>
+                            </div>
+
+                            <div className="max-h-64 sm:max-h-72 overflow-y-auto space-y-1 pr-1 pb-1">
+                              {/* All Employees Option */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedEmployeeId("all");
+                                  setEmployeeDropdownOpen(false);
+                                  setEmployeeSearchText("");
+                                }}
+                                className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition cursor-pointer ${
+                                  selectedEmployeeId === "all"
+                                    ? "bg-[#FAF4ED] text-[#70452D] font-bold"
+                                    : "hover:bg-[#FAF8F5] text-[#342219]"
+                                }`}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <Users className="w-3.5 h-3.5 text-[#8C5835]" />
+                                  <span>All Employees</span>
+                                </div>
+                                {selectedEmployeeId === "all" && (
+                                  <Check className="w-3.5 h-3.5 text-[#8C5835]" />
+                                )}
+                              </button>
+
+                              {/* Dynamically Loaded Employee List */}
+                              {filteredDropdownOptions.map((opt) => (
+                                <button
+                                  key={opt.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedEmployeeId(opt.id);
+                                    setEmployeeDropdownOpen(false);
+                                    setEmployeeSearchText("");
+                                  }}
+                                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition cursor-pointer ${
+                                    selectedEmployeeId === opt.id
+                                      ? "bg-[#FAF4ED] text-[#70452D] font-bold"
+                                      : "hover:bg-[#FAF8F5] text-[#342219]"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 min-w-0 text-left">
+                                    <div className="w-6 h-6 rounded-full bg-[#EAD5C0] text-[#70452D] flex items-center justify-center font-bold text-[10px] uppercase shrink-0">
+                                      {opt.name.substring(0, 2)}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="truncate font-medium">{opt.name}</p>
+                                      {opt.email && (
+                                        <p className="text-[10px] text-[#8A7667] truncate">{opt.email}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {selectedEmployeeId === opt.id && (
+                                    <Check className="w-3.5 h-3.5 text-[#8C5835] shrink-0 ml-2" />
+                                  )}
+                                </button>
+                              ))}
+
+                              {filteredDropdownOptions.length === 0 && (
+                                <div className="py-4 text-center text-xs text-[#8A7667]">
+                                  No employees found.
+                                </div>
+                              )}
+                            </div>
+                          </div>,
+                          document.body
+                        )}
+                    </div>
+                  </div>
+
+                  {/* 2. Period Filter (Daily | Weekly | Monthly) (Col 5-7 on desktop) */}
+                  <div className="sm:col-span-1 lg:col-span-3">
+                    <label className="block text-xs font-bold text-[#342219] mb-2">
+                      Period
+                    </label>
+
+                    <div className="flex items-center rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] p-1 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPeriod("daily")}
+                        className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
+                          selectedPeriod === "daily"
+                            ? "bg-[#70452D] text-white shadow-xs"
+                            : "text-[#70523E] hover:text-[#342219] hover:bg-white/80"
+                        }`}
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>Daily</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPeriod("weekly")}
+                        className={`flex-1 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
+                          selectedPeriod === "weekly"
+                            ? "bg-[#70452D] text-white shadow-xs"
+                            : "text-[#70523E] hover:text-[#342219] hover:bg-white/80"
+                        }`}
+                      >
+                        Weekly
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPeriod("monthly")}
+                        className={`flex-1 py-2 text-xs font-bold rounded-xl transition cursor-pointer ${
+                          selectedPeriod === "monthly"
+                            ? "bg-[#70452D] text-white shadow-xs"
+                            : "text-[#70523E] hover:text-[#342219] hover:bg-white/80"
+                        }`}
+                      >
+                        Monthly
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 3. Date Selection Input with Custom Modern Calendar (Col 8-10 on desktop) */}
+                  <div className="sm:col-span-1 lg:col-span-3" ref={calendarPopoverRef}>
+                    <label className="block text-xs font-bold text-[#342219] mb-2 flex items-center justify-between">
+                      <span>Date</span>
+                      <span className="text-[10px] font-semibold text-[#8C5835] uppercase tracking-wider">
+                        {selectedPeriod === "daily" ? "Day" : selectedPeriod === "weekly" ? "Week" : "Month"}
+                      </span>
+                    </label>
+
+                    <div className="relative">
+                      {/* Interactive Custom Date Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!isCalendarOpen) {
+                            // Initialize viewing month/year from current selection
+                            if (selectedPeriod === "monthly" && selectedMonth) {
+                              const [y, m] = selectedMonth.split("-").map(Number);
+                              if (y && m) {
+                                setCalendarViewYear(y);
+                                setCalendarViewMonth(m - 1);
+                              }
+                            } else {
+                              const refDate = selectedPeriod === "weekly" ? selectedWeeklyDate : selectedDailyDate;
+                              if (refDate) {
+                                const [y, m] = refDate.split("-").map(Number);
+                                if (y && m) {
+                                  setCalendarViewYear(y);
+                                  setCalendarViewMonth(m - 1);
+                                }
+                              }
+                            }
+                            updateCalendarDropdownPos();
+                            setIsCalendarOpen(true);
+                            setEmployeeDropdownOpen(false);
+                          } else {
+                            setIsCalendarOpen(false);
+                          }
+                        }}
+                        className="w-full flex items-center justify-between rounded-2xl border border-[#E8DED4] bg-[#FAF8F5] px-4 py-2.5 text-xs font-semibold text-[#342219] shadow-2xs hover:bg-[#F4EEE7] hover:border-[#D5C2B1] transition cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2 truncate">
+                          <Calendar className="w-4 h-4 text-[#8C5835] shrink-0" />
+                          <span className="truncate">
+                            {selectedPeriod === "daily" && formatFriendlyDisplayDate(selectedDailyDate)}
+                            {selectedPeriod === "weekly" && (() => {
+                              const base = new Date(selectedWeeklyDate ? `${selectedWeeklyDate}T00:00:00` : new Date());
+                              const day = base.getDay();
+                              const diffToMon = (day === 0 ? -6 : 1) - day;
+                              const mon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon);
+                              const sun = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon + 6);
+                              return `${formatFriendlyDisplayDate(formatDateYMD(mon))} - ${formatFriendlyDisplayDate(formatDateYMD(sun))}`;
+                            })()}
+                            {selectedPeriod === "monthly" && (() => {
+                              const [y, m] = selectedMonth.split("-").map(Number);
+                              const d = new Date(y || new Date().getFullYear(), (m || 1) - 1, 1);
+                              return d.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+                            })()}
+                          </span>
+                        </div>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#8A7667] shrink-0 rotate-90" />
+                      </button>
+
+                      {/* Custom Glassmorphism Calendar Popover Rendered via React Portal */}
+                      {isCalendarOpen &&
+                        createPortal(
+                          <div
+                            ref={calendarMenuRef}
+                            style={{
+                              position: "fixed",
+                              top: `${calendarDropdownPos.top}px`,
+                              left: `${calendarDropdownPos.left}px`,
+                              width: `${calendarDropdownPos.width}px`,
+                              maxWidth: "calc(100vw - 32px)",
+                              zIndex: 99999,
+                            }}
+                            className="rounded-2xl border border-[#EEE5DC] bg-white/98 p-4 shadow-2xl backdrop-blur-xl animate-in fade-in zoom-in-95 duration-150"
+                          >
+                            {/* Calendar Header: Month/Year and Prev/Next */}
+                            <div className="flex items-center justify-between mb-3 pb-2 border-b border-[#F4EBE2]">
+                              <div className="text-xs font-extrabold text-[#342219]">
+                                {selectedPeriod === "monthly" ? (
+                                  <span>{calendarViewYear}</span>
+                                ) : (
+                                  <span>
+                                    {new Date(calendarViewYear, calendarViewMonth).toLocaleDateString("en-US", {
+                                      month: "long",
+                                      year: "numeric",
+                                    })}
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (selectedPeriod === "monthly") {
+                                      setCalendarViewYear((y) => y - 1);
+                                    } else {
+                                      if (calendarViewMonth === 0) {
+                                        setCalendarViewMonth(11);
+                                        setCalendarViewYear((y) => y - 1);
+                                      } else {
+                                        setCalendarViewMonth((m) => m - 1);
+                                      }
+                                    }
+                                  }}
+                                  className="p-1 rounded-xl text-[#70523E] hover:bg-[#FAF6F1] hover:text-[#342219] transition cursor-pointer"
+                                  title="Previous"
+                                >
+                                  <ChevronLeft className="w-4 h-4" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={(() => {
+                                    const today = new Date();
+                                    if (selectedPeriod === "monthly") {
+                                      return calendarViewYear >= today.getFullYear();
+                                    }
+                                    return (
+                                      calendarViewYear > today.getFullYear() ||
+                                      (calendarViewYear === today.getFullYear() && calendarViewMonth >= today.getMonth())
+                                    );
+                                  })()}
+                                  onClick={() => {
+                                    if (selectedPeriod === "monthly") {
+                                      setCalendarViewYear((y) => y + 1);
+                                    } else {
+                                      if (calendarViewMonth === 11) {
+                                        setCalendarViewMonth(0);
+                                        setCalendarViewYear((y) => y + 1);
+                                      } else {
+                                        setCalendarViewMonth((m) => m + 1);
+                                      }
+                                    }
+                                  }}
+                                  className={`p-1 rounded-xl transition ${
+                                    (() => {
+                                      const today = new Date();
+                                      const isNextDisabled =
+                                        selectedPeriod === "monthly"
+                                          ? calendarViewYear >= today.getFullYear()
+                                          : calendarViewYear > today.getFullYear() ||
+                                            (calendarViewYear === today.getFullYear() && calendarViewMonth >= today.getMonth());
+                                      return isNextDisabled
+                                        ? "text-[#D5C2B1] opacity-30 cursor-not-allowed"
+                                        : "text-[#70523E] hover:bg-[#FAF6F1] hover:text-[#342219] cursor-pointer";
+                                    })()
+                                  }`}
+                                  title="Next"
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* MONTHLY PERIOD: 12-Month Grid */}
+                            {selectedPeriod === "monthly" && (
+                              <div>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {Array.from({ length: 12 }, (_, idx) => {
+                                    const today = new Date();
+                                    const isFuture =
+                                      calendarViewYear > today.getFullYear() ||
+                                      (calendarViewYear === today.getFullYear() && idx > today.getMonth());
+                                    const monthVal = `${calendarViewYear}-${String(idx + 1).padStart(2, "0")}`;
+                                    const isSelected = selectedMonth === monthVal;
+                                    const isCurrentMonth =
+                                      today.getFullYear() === calendarViewYear && today.getMonth() === idx;
+
+                                    const monthLabel = new Date(calendarViewYear, idx).toLocaleDateString("en-US", {
+                                      month: "short",
+                                    });
+
+                                    return (
+                                      <button
+                                        key={idx}
+                                        type="button"
+                                        disabled={isFuture}
+                                        onClick={() => {
+                                          setSelectedMonth(monthVal);
+                                          setIsCalendarOpen(false);
+                                        }}
+                                        className={`py-2 px-1 text-xs font-bold rounded-xl transition ${
+                                          isFuture
+                                            ? "text-stone-300 opacity-40 cursor-not-allowed select-none"
+                                            : isSelected
+                                            ? "bg-[#70452D] text-white shadow-xs font-extrabold cursor-pointer"
+                                            : isCurrentMonth
+                                            ? "border border-[#8C5835] text-[#70452D] bg-[#FAF4ED] hover:bg-[#F3E7DC] cursor-pointer"
+                                            : "text-[#342219] hover:bg-[#FAF8F5] cursor-pointer"
+                                        }`}
+                                      >
+                                        {monthLabel}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+
+                                <div className="mt-3 pt-2 border-t border-[#F4EBE2] flex items-center justify-between">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const today = new Date();
+                                      const mVal = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+                                      setSelectedMonth(mVal);
+                                      setCalendarViewYear(today.getFullYear());
+                                      setCalendarViewMonth(today.getMonth());
+                                      setIsCalendarOpen(false);
+                                    }}
+                                    className="text-xs font-bold text-[#8C5835] hover:text-[#70452D] cursor-pointer"
+                                  >
+                                    Current Month
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsCalendarOpen(false)}
+                                    className="text-xs font-semibold text-[#8A7667] hover:text-[#342219] cursor-pointer"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* DAILY & WEEKLY PERIODS: Days Matrix */}
+                            {selectedPeriod !== "monthly" && (
+                              <div>
+                                {/* Day-of-week Headers */}
+                                <div className="grid grid-cols-7 gap-1 text-center mb-1">
+                                  {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d, i) => (
+                                    <span key={i} className="text-[10px] font-bold text-[#8A7667] py-1">
+                                      {d}
+                                    </span>
+                                  ))}
+                                </div>
+
+                                {/* Days Matrix */}
+                                <div className="grid grid-cols-7 gap-1">
+                                  {(() => {
+                                    const today = new Date();
+                                    today.setHours(0, 0, 0, 0);
+
+                                    const firstDayOfMonth = new Date(calendarViewYear, calendarViewMonth, 1);
+                                    const daysInMonth = new Date(calendarViewYear, calendarViewMonth + 1, 0).getDate();
+                                    const startDayOfWeek = firstDayOfMonth.getDay(); // 0 (Sun) to 6 (Sat)
+
+                                    // Calculate weekly selection bounds if in weekly mode
+                                    let weekStartStr = "";
+                                    let weekEndStr = "";
+                                    if (selectedPeriod === "weekly" && selectedWeeklyDate) {
+                                      const base = new Date(`${selectedWeeklyDate}T00:00:00`);
+                                      const day = base.getDay();
+                                      const diffToMon = (day === 0 ? -6 : 1) - day;
+                                      const mon = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon);
+                                      const sun = new Date(base.getFullYear(), base.getMonth(), base.getDate() + diffToMon + 6);
+                                      weekStartStr = formatDateYMD(mon);
+                                      weekEndStr = formatDateYMD(sun);
+                                    }
+
+                                    const cells: React.ReactNode[] = [];
+
+                                    // Padding days from previous month
+                                    for (let i = 0; i < startDayOfWeek; i++) {
+                                      cells.push(
+                                        <div key={`empty-${i}`} className="h-8 w-8" />
+                                      );
+                                    }
+
+                                    // Days of current viewing month
+                                    for (let day = 1; day <= daysInMonth; day++) {
+                                      const cellDate = new Date(calendarViewYear, calendarViewMonth, day);
+                                      cellDate.setHours(0, 0, 0, 0);
+
+                                      const isFuture = cellDate.getTime() > today.getTime();
+                                      const ymd = formatDateYMD(cellDate);
+                                      const isToday = cellDate.getTime() === today.getTime();
+
+                                      const isDailySelected = selectedPeriod === "daily" && selectedDailyDate === ymd;
+                                      const isInSelectedWeek =
+                                        selectedPeriod === "weekly" &&
+                                        weekStartStr &&
+                                        weekEndStr &&
+                                        ymd >= weekStartStr &&
+                                        ymd <= weekEndStr;
+
+                                      cells.push(
+                                        <button
+                                          key={day}
+                                          type="button"
+                                          disabled={isFuture}
+                                          onClick={() => {
+                                            if (selectedPeriod === "daily") {
+                                              setSelectedDailyDate(ymd);
+                                              setIsCalendarOpen(false);
+                                            } else {
+                                              // Weekly mode
+                                              setSelectedWeeklyDate(ymd);
+                                              setIsCalendarOpen(false);
+                                            }
+                                          }}
+                                          className={`h-8 w-8 rounded-xl text-xs font-semibold flex items-center justify-center transition ${
+                                            isFuture
+                                              ? "text-stone-300 opacity-30 cursor-not-allowed select-none"
+                                              : isDailySelected
+                                              ? "bg-[#70452D] text-white font-bold shadow-xs cursor-pointer"
+                                              : isInSelectedWeek
+                                              ? "bg-[#FAF4ED] text-[#70452D] font-bold border border-[#E8D0BD] cursor-pointer"
+                                              : isToday
+                                              ? "border border-[#8C5835] text-[#70452D] font-bold hover:bg-[#FAF6F1] cursor-pointer"
+                                              : "text-[#342219] hover:bg-[#FAF8F5] cursor-pointer"
+                                          }`}
+                                        >
+                                          {day}
+                                        </button>
+                                      );
+                                    }
+
+                                    return cells;
+                                  })()}
+                                </div>
+
+                                {/* Footer Actions */}
+                                <div className="mt-3 pt-2 border-t border-[#F4EBE2] flex items-center justify-between">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const today = new Date();
+                                      const todayStr = formatDateYMD(today);
+                                      if (selectedPeriod === "daily") {
+                                        setSelectedDailyDate(todayStr);
+                                      } else {
+                                        setSelectedWeeklyDate(todayStr);
+                                      }
+                                      setCalendarViewYear(today.getFullYear());
+                                      setCalendarViewMonth(today.getMonth());
+                                      setIsCalendarOpen(false);
+                                    }}
+                                    className="text-xs font-bold text-[#8C5835] hover:text-[#70452D] cursor-pointer"
+                                  >
+                                    Today
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setIsCalendarOpen(false)}
+                                    className="text-xs font-semibold text-[#8A7667] hover:text-[#342219] cursor-pointer"
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>,
+                          document.body
+                        )}
+                    </div>
+                  </div>
+
+                  {/* 4. Action Button: Apply Filter (Col 11-12 on desktop, full span on mobile) */}
+                  <div className="sm:col-span-2 lg:col-span-2 flex items-center">
+                    <button
+                      type="button"
+                      onClick={handleApplyFilter}
+                      className="w-full flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-[#6F3F24] via-[#854E2D] to-[#9A5F38] px-4 py-2.5 sm:py-3 text-xs font-bold text-white shadow-md shadow-[#754329]/20 hover:shadow-lg transition cursor-pointer active:scale-98 whitespace-nowrap"
+                    >
+                      <Filter className="w-3.5 h-3.5" />
+                      <span>Apply Filter</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* ===================================================================== */}
+              {/* SECTION 2: 5 SUMMARY CARDS                                            */}
+              {/* ===================================================================== */}
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4">
+                {/* 1. Total Orders Card (Warm Peach/Orange Accent) */}
+                <div className="flex items-center justify-between rounded-3xl border border-[#F4E3D7] bg-[#FDF7F2] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                  <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+                    <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F6DEC9] text-[#A75D28] shadow-xs">
+                      <ShoppingBag className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#8A7667] truncate">Orders</span>
+                      <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-xl sm:text-2xl font-black text-[#342219]">
+                          {summaryMetrics.totalOrders}
+                        </span>
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-bold text-emerald-800 shrink-0">
+                          ↑ 100%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. Total Amount Card (Mint Green Accent) */}
+                <div className="flex items-center justify-between rounded-3xl border border-[#D9EFE3] bg-[#F2FAF6] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                  <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+                    <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#D2F0E1] text-[#1E7E4E] shadow-xs">
+                      <Banknote className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#6C897B] truncate">Total Amount</span>
+                      <div className="flex items-baseline gap-1.5 mt-0.5 flex-wrap">
+                        <span className="text-xl sm:text-2xl font-black text-[#1D3B2E] truncate">
+                          {formatPrice(summaryMetrics.totalAmount)}
+                        </span>
+                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] sm:text-[10px] font-bold text-emerald-800 shrink-0">
+                          ↑ 100%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Delivered Card (Soft Sky Blue Accent) */}
+                <div className="flex items-center justify-between rounded-3xl border border-[#DBEAFE] bg-[#EFF6FF] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                  <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+                    <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#BFDBFE] text-[#1D4ED8] shadow-xs">
+                      <CheckCircle2 className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#607D9B] truncate">Delivered</span>
+                      <span className="text-xl sm:text-2xl font-black text-[#1E3A5F] mt-0.5 block">
+                        {summaryMetrics.deliveredOrders}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. Pending Card (Warm Cream / Amber Accent) */}
+                <div className="flex items-center justify-between rounded-3xl border border-[#FEF3C7] bg-[#FFFBEB] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                  <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+                    <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FDE68A] text-[#B45309] shadow-xs">
+                      <Clock className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#8C7650] truncate">Pending</span>
+                      <span className="text-xl sm:text-2xl font-black text-[#4B3B1B] mt-0.5 block">
+                        {summaryMetrics.pendingOrders}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Cancelled Card (Soft Rose Accent - spans 2 cols on mobile for balanced grid) */}
+                <div className="col-span-2 md:col-span-1 flex items-center justify-between rounded-3xl border border-[#FFE4E6] bg-[#FFF1F2] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 hover:-translate-y-0.5">
+                  <div className="flex items-center gap-3 sm:gap-3.5 min-w-0">
+                    <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#FECDD3] text-[#E11D48] shadow-xs">
+                      <X className="w-5 h-5 sm:w-6 sm:h-6" />
+                    </div>
+                    <div className="min-w-0">
+                      <span className="block text-xs font-semibold text-[#9C6D75] truncate">Cancelled</span>
+                      <span className="text-xl sm:text-2xl font-black text-[#4C1D24] mt-0.5 block">
+                        {summaryMetrics.cancelledOrders}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ===================================================================== */}
+              {/* SECTION 3: EMPLOYEE ORDERS TABLE CARD                                 */}
+              {/* ===================================================================== */}
+              <div className="rounded-3xl border border-[#EEE5DC] bg-white/95 shadow-sm overflow-hidden backdrop-blur-md">
+                {/* Header with Title and Export Button */}
+                <div className="p-6 border-b border-[#EEE5DC] flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-[#FAF4ED] to-[#FAF8F5]">
+                  <div>
+                    <h2 className="text-lg font-extrabold text-[#342219] flex items-center gap-2">
+                      <ShoppingBag className="w-5 h-5 text-[#8C5835]" />
+                      <span>Employee Orders</span>
+                    </h2>
+                    <p className="text-xs text-[#8A7667] mt-1">
+                      Showing orders for{" "}
+                      <span className="font-bold text-[#70452D]">
+                        {appliedEmployeeOption ? appliedEmployeeOption.name : "All Employees"}
+                      </span>{" "}
+                      &bull; <span className="capitalize">{appliedFilters.period}</span> &bull;{" "}
+                      {appliedFilters.displayDateLabel}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="rounded-2xl bg-white px-3.5 py-1.5 font-bold text-xs text-[#70452D] border border-[#E8DED4] shadow-2xs">
+                      {locationOrders.length} {locationOrders.length === 1 ? "Order" : "Orders"} Found
+                    </span>
+
+                    <button
+                      type="button"
+                      onClick={handleExportOrders}
+                      className="inline-flex items-center gap-1.5 rounded-2xl border border-[#E8DED4] bg-white px-4 py-2 text-xs font-bold text-[#70452D] shadow-2xs hover:bg-[#FAF6F1] transition cursor-pointer"
+                      title="Export Filtered Orders as CSV"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Export</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Table Body */}
+                {isLoading ? (
+                  <div className="py-20 text-center">
+                    <RotateCw className="w-8 h-8 animate-spin mx-auto text-[#8C5835] mb-3" />
+                    <p className="text-[#8A7667] text-sm font-medium">Loading orders...</p>
+                  </div>
+                ) : locationOrders.length === 0 ? (
+                  <div className="py-20 text-center text-[#8A7667] space-y-2.5">
+                    <div className="w-14 h-14 rounded-3xl bg-[#FAF4ED] text-[#8C5835] flex items-center justify-center mx-auto shadow-2xs">
+                      <Coffee className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-base font-bold text-[#342219]">No Orders Found</h3>
+                    <p className="text-xs text-[#8A7667] max-w-sm mx-auto">
+                      No order records match the selected employee and date filter for {selectedLocation?.name}.
+                    </p>
+                  </div>
                 ) : (
-                  <div className="text-xs text-stone-400 py-3 text-center">No detailed items recorded.</div>
+                  <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-[#D5C2B1] scrollbar-track-[#FAF8F5]">
+                    <table className="w-full min-w-[850px] text-left text-xs sm:text-sm">
+                      <thead className="bg-[#FAF7F2] text-[#8A7667] text-[11px] font-bold uppercase tracking-wider border-b border-[#EEE5DC]">
+                        <tr>
+                          <th className="px-5 py-4 min-w-[200px]">Employee</th>
+                          <th className="px-4 py-4 min-w-[130px] whitespace-nowrap">Seat</th>
+                          <th className="px-4 py-4 min-w-[110px] whitespace-nowrap">Order ID</th>
+                          <th className="px-5 py-4 min-w-[200px]">Items</th>
+                          <th className="px-4 py-4 min-w-[120px] text-right whitespace-nowrap">Total Amount</th>
+                          <th className="px-4 py-4 min-w-[120px] whitespace-nowrap">Order Time</th>
+                          <th className="px-4 py-4 min-w-[110px] text-center whitespace-nowrap">Status</th>
+                          <th className="px-5 py-4 min-w-[110px] text-right whitespace-nowrap">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#EEE5DC]/70 text-[#342219]">
+                        {locationOrders.map((order) => {
+                          const assignedSeat = order.employeeId
+                            ? seatMap.get(order.employeeId)
+                            : (order.employeeEmail ? seatMap.get(order.employeeEmail.toLowerCase().trim()) : null);
+
+                          const rawSeat =
+                            assignedSeat?.displayId ||
+                            order.seatId ||
+                            order.seat ||
+                            (assignedSeat?.number ? `SEAT-${assignedSeat.number}` : "SEAT-1");
+
+                          const displaySeat = formatSeatIdentifier(
+                            rawSeat,
+                            selectedLocation?.name
+                          );
+
+                          const displayOrderId = formatOrderId(order);
+
+                          // Formatted items summary string e.g. "Tea x1, Coffee x1"
+                          const itemsSummary = (order.items || [])
+                            .map((it) => `${it.name} × ${it.qty}`)
+                            .join(", ");
+
+                          return (
+                            <tr
+                              key={order.id}
+                              onClick={() => setInspectedOrder(order)}
+                              className="hover:bg-[#FAF7F2]/70 cursor-pointer transition-colors"
+                            >
+                              {/* 1. Employee with Avatar */}
+                              <td className="px-5 py-4">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-9 h-9 rounded-full bg-[#EAD5C0] text-[#70452D] flex items-center justify-center font-bold text-xs uppercase shadow-2xs shrink-0">
+                                    {(order.employeeName || "E").substring(0, 2)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-[#342219] truncate">
+                                      {order.employeeName || "Employee"}
+                                    </div>
+                                    <div className="text-[11px] text-[#8A7667] truncate">
+                                      {order.employeeEmail || `${(order.employeeName || "user").toLowerCase().replace(/\s+/g, "")}@faaz.com`}
+                                    </div>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Seat Badge - No Line Break */}
+                              <td className="px-4 py-4 whitespace-nowrap">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-[#FAF6F1] text-[#70452D] border border-[#EADBCE] whitespace-nowrap">
+                                  {displaySeat}
+                                </span>
+                              </td>
+
+                              {/* 3. Order ID Badge - No Line Break */}
+                              <td className="px-4 py-4 whitespace-nowrap">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-mono font-bold bg-[#FFF4ED] text-[#A75D28] border border-[#F8DCBF] whitespace-nowrap">
+                                  {displayOrderId}
+                                </span>
+                              </td>
+
+                              {/* 4. Items Summary */}
+                              <td className="px-5 py-4 text-xs text-[#5C4535] max-w-xs">
+                                <div className="line-clamp-2 leading-relaxed" title={itemsSummary}>
+                                  {itemsSummary || "1 Item"}
+                                </div>
+                              </td>
+
+                              {/* 5. Total Amount - No Line Break */}
+                              <td className="px-4 py-4 text-right whitespace-nowrap">
+                                <span className="font-extrabold text-[#70452D] whitespace-nowrap">
+                                  {formatPrice(order.total)}
+                                </span>
+                              </td>
+
+                              {/* 6. Order Time - No Line Break */}
+                              <td className="px-4 py-4 text-xs text-[#70523E] whitespace-nowrap">
+                                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <Clock className="w-3.5 h-3.5 text-[#A8907E] shrink-0" />
+                                  <span>{order.time || "Recent"}</span>
+                                </div>
+                              </td>
+
+                              {/* 7. Status Badge */}
+                              <td className="px-4 py-4 text-center whitespace-nowrap">
+                                {renderStatusBadge(order.status)}
+                              </td>
+
+                              {/* 8. Action - No Line Break */}
+                              <td className="px-5 py-4 text-right whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setInspectedOrder(order);
+                                  }}
+                                  className="inline-flex items-center gap-1 text-xs font-bold text-[#8C5835] hover:text-[#70452D] hover:underline cursor-pointer whitespace-nowrap"
+                                >
+                                  <span>View Order</span>
+                                  <ChevronRight className="w-3.5 h-3.5 shrink-0" />
+                                </button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             </div>
+          )}
 
-            {/* Financial Summary */}
-            <div className="pt-4 border-t border-stone-200 space-y-1.5 text-xs text-stone-600 mb-6">
-              <div className="flex justify-between">
-                <span>Subtotal</span>
-                <span>{formatPrice(inspectedOrder.subtotal ?? inspectedOrder.total)}</span>
-              </div>
-              {inspectedOrder.adjustmentAmount !== undefined && inspectedOrder.adjustmentAmount !== 0 && (
-                <div className="flex justify-between text-stone-500">
-                  <span>Adjustment</span>
-                  <span>{formatPrice(inspectedOrder.adjustmentAmount)}</span>
+          {/* ========================================================================= */}
+          {/* MODAL: SINGLE ORDER ITEM INSPECTION                                       */}
+          {/* ========================================================================= */}
+          {inspectedOrder && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200">
+              <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-[#EEE5DC] relative animate-in zoom-in-95 duration-150">
+                {/* Close Button */}
+                <button
+                  onClick={() => setInspectedOrder(null)}
+                  className="absolute right-5 top-5 p-1.5 rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+
+                {/* Modal Header */}
+                <div className="mb-4">
+                  <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#8C5835]/10 text-[#8C5835]">
+                    Order Details
+                  </span>
+                  <h3 className="text-xl font-bold text-[#342219] mt-1">
+                    {formatOrderId(inspectedOrder)}
+                  </h3>
+                  <p className="text-xs text-[#8A7667]">
+                    Placed by {inspectedOrder.employeeName} • {inspectedOrder.time}
+                  </p>
                 </div>
-              )}
-              {inspectedOrder.discount !== undefined && inspectedOrder.discount > 0 && (
-                <div className="flex justify-between text-emerald-600 font-medium">
-                  <span>Discount</span>
-                  <span>-{formatPrice(inspectedOrder.discount)}</span>
+
+                {/* Context Info Cards */}
+                <div className="grid grid-cols-2 gap-3 mb-5 text-xs">
+                  <div className="bg-[#FAF7F2] p-3 rounded-2xl border border-[#EEE5DC]">
+                    <span className="text-[#8A7667] block text-[10px] uppercase font-bold">Location</span>
+                    <span className="font-semibold text-[#342219]">
+                      {inspectedOrder.locationName || selectedLocation?.name}
+                    </span>
+                  </div>
+                  <div className="bg-[#FAF7F2] p-3 rounded-2xl border border-[#EEE5DC]">
+                    <span className="text-[#8A7667] block text-[10px] uppercase font-bold">Seat</span>
+                    <span className="font-mono font-semibold text-[#342219]">
+                      {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat, selectedLocation?.name)}
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className="flex justify-between text-sm font-bold text-stone-900 pt-2 border-t border-stone-100">
-                <span>Total Amount</span>
-                <span className="text-[#8C6D58]">{formatPrice(inspectedOrder.total)}</span>
+
+                {/* Ordered Items List */}
+                <div className="mb-5">
+                  <h4 className="text-xs font-bold text-[#342219] uppercase tracking-wider mb-2.5">
+                    Ordered Items ({inspectedOrder.items?.length || 0})
+                  </h4>
+                  <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+                    {inspectedOrder.items && inspectedOrder.items.length > 0 ? (
+                      inspectedOrder.items.map((item, idx) => {
+                        const matchedItem = item.itemId ? itemsByIdMap[item.itemId] : undefined;
+                        const rawName = (item.name || "").trim();
+                        const cleanName = rawName.replace(/\s*\(.*?\)\s*$/, "").trim();
+                        const effectiveImage = item.image || itemImagesMap[rawName.toLowerCase()] || itemImagesMap[cleanName.toLowerCase()] || matchedItem?.image;
+
+                        return (
+                          <div
+                            key={item.id || idx}
+                            className="flex items-center justify-between p-3 rounded-2xl border border-[#EEE5DC] bg-white shadow-2xs"
+                          >
+                            <div className="flex items-center gap-3">
+                              {effectiveImage ? (
+                                <img
+                                  src={effectiveImage}
+                                  alt={item.name}
+                                  className="w-12 h-12 rounded-xl object-cover border border-[#EEE5DC]"
+                                />
+                              ) : (
+                                <div className="w-12 h-12 rounded-xl bg-[#FAF4ED] text-[#8C5835] flex items-center justify-center border border-[#EEE5DC]">
+                                  <Coffee className="w-6 h-6" />
+                                </div>
+                              )}
+                              <div>
+                                <h5 className="font-bold text-xs text-[#342219]">
+                                  {item.name}
+                                </h5>
+                                <div className="flex items-center gap-2 mt-0.5 text-xs text-[#8A7667]">
+                                  <span>Unit Price: {formatPrice(item.price)}</span>
+                                  <span className="text-stone-300">•</span>
+                                  <span className="font-semibold text-[#70452D]">
+                                    Seat {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat, selectedLocation?.name)}
+                                  </span>
+                                </div>
+
+                                {/* Preferences & Tags */}
+                                {item.preference && (
+                                  <div className="flex items-center gap-1.5 mt-1">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                      <Flame className="w-2.5 h-2.5 text-amber-600" />
+                                      {item.preference}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                              <div className="text-xs font-bold text-[#8A7667]">
+                                × {item.qty}
+                              </div>
+                              <div className="text-sm font-black text-[#342219] text-right min-w-[70px]">
+                                {formatPrice(item.price * item.qty)}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="text-xs text-[#8A7667] py-3 text-center">No detailed items recorded.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Financial Summary */}
+                <div className="pt-4 border-t border-[#EEE5DC] space-y-1.5 text-xs text-[#70523E] mb-6">
+                  <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>{formatPrice(inspectedOrder.subtotal ?? inspectedOrder.total)}</span>
+                  </div>
+                  {inspectedOrder.adjustmentAmount !== undefined && inspectedOrder.adjustmentAmount !== 0 && (
+                    <div className="flex justify-between text-[#8A7667]">
+                      <span>Adjustment</span>
+                      <span>{formatPrice(inspectedOrder.adjustmentAmount)}</span>
+                    </div>
+                  )}
+                  {inspectedOrder.discount !== undefined && inspectedOrder.discount > 0 && (
+                    <div className="flex justify-between text-emerald-600 font-medium">
+                      <span>Discount</span>
+                      <span>-{formatPrice(inspectedOrder.discount)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between text-sm font-bold text-[#342219] pt-2 border-t border-[#EEE5DC]">
+                    <span>Total Amount</span>
+                    <span className="text-[#8C5835]">{formatPrice(inspectedOrder.total)}</span>
+                  </div>
+                </div>
+
+                {/* Status Footer */}
+                <div className="flex items-center justify-between pt-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#8A7667]">Status:</span>
+                    {renderStatusBadge(inspectedOrder.status)}
+                  </div>
+                  <button
+                    onClick={() => setInspectedOrder(null)}
+                    className="px-4 py-2 bg-[#70452D] hover:bg-[#5C3824] text-white text-xs font-bold rounded-2xl shadow-sm transition-colors cursor-pointer"
+                  >
+                    Close Details
+                  </button>
+                </div>
               </div>
             </div>
-
-            {/* Status Footer */}
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-stone-500">Status:</span>
-                {renderStatusBadge(inspectedOrder.status)}
-              </div>
-              <button
-                onClick={() => setInspectedOrder(null)}
-                className="px-4 py-2 bg-[#8C6D58] hover:bg-[#785C49] text-white text-xs font-semibold rounded-xl shadow-sm transition-colors"
-              >
-                Close Details
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          )}
+        </main>
       </div>
     </Background>
   );
+}
+
+/**
+ * Date formatting helpers
+ */
+function formatDateYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatFriendlyDisplayDate(ymd: string): string {
+  try {
+    const parts = ymd.split("-");
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      const dt = new Date(year, month, day);
+      return dt.toLocaleDateString("en-US", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      });
+    }
+  } catch {}
+  return ymd;
 }

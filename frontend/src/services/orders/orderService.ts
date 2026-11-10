@@ -23,6 +23,7 @@ export interface ProviderOrder {
   locationId?: string;
   employeeName: string;
   employeeId?: string | null;
+  employeeEmail?: string | null;
   qrToken?: string | null;
   tempSessionToken?: string | null;
   items: OrderItem[];

@@ -12,7 +12,7 @@
  * @param identifier The raw seat identifier (e.g. "ORG-000001-LOC-000001-SEAT-001", "OFFICE-001")
  * @returns Clean display identifier (e.g. "OFFICE-1", "SEAT-1")
  */
-export function formatSeatIdentifier(identifier?: string | null): string {
+export function formatSeatIdentifier(identifier?: string | null, locationName?: string): string {
   if (!identifier) return "";
   const trimmed = String(identifier).trim();
   if (!trimmed) return "";
@@ -20,7 +20,17 @@ export function formatSeatIdentifier(identifier?: string | null): string {
   // Check if it's the global composite format ORG-XXXXXX-LOC-XXXXXX-SEAT-XXX
   const globalMatch = trimmed.match(/^ORG-\d+-LOC-\d+-SEAT-0*(\d+)$/i);
   if (globalMatch) {
-    return `SEAT-${parseInt(globalMatch[1], 10) || globalMatch[1]}`;
+    const seatNum = parseInt(globalMatch[1], 10) || globalMatch[1];
+    if (locationName) {
+      const locPrefix = locationName
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^A-Z0-9-]+/g, "")
+        .replace(/^-+|-+$/g, "") || "OFFICE";
+      return `${locPrefix}-${seatNum}`;
+    }
+    return `SEAT-${seatNum}`;
   }
 
   // If friendly identifier like OFFICE-001 or LOC-0001, strip leading zeros from number

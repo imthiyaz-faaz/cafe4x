@@ -127,8 +127,20 @@ export const orderController = {
       }
 
       if (employee) {
-        query += ` AND (o.employee_id = ? OR LOWER(o.employee_name) = LOWER(?) OR LOWER(u.email) = LOWER(?))`;
-        params.push(employee, employee, employee);
+        // Robust employee matching by employee_id, employee_name, user email/name, or assigned seat
+        query += ` AND (
+          o.employee_id = ?
+          OR LOWER(TRIM(o.employee_name)) = LOWER(TRIM(?))
+          OR LOWER(TRIM(u.email)) = LOWER(TRIM(?))
+          OR LOWER(TRIM(u.name)) = LOWER(TRIM(?))
+          OR o.seat_id IN (
+            SELECT id FROM seats 
+            WHERE employee_id = ? 
+               OR LOWER(TRIM(employee_name)) = LOWER(TRIM(?)) 
+               OR LOWER(TRIM(employee_email)) = LOWER(TRIM(?))
+          )
+        )`;
+        params.push(employee, employee, employee, employee, employee, employee, employee);
       }
 
       if (startDate) {

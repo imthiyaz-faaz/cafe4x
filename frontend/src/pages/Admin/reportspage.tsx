@@ -37,6 +37,7 @@ import {
 } from "../../utils/orderTimeClassification";
 import { organizationApi } from "../../services/organizations";
 import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatOrderId } from "../../utils/orderFormatter";
 
 // Order item detail with preference & seat
 export interface DailyOrderItemDetail {
@@ -793,7 +794,7 @@ export default function AdminReportPage() {
         targetMap[itemKey].quantitySold += itQty;
         targetMap[itemKey].totalAmount += itTotal;
         targetMap[itemKey].orders.push({
-          orderId: o.displayId || o.id,
+          orderId: formatOrderId(o),
           seatId: o.seat || o.locationName || "-",
           orderTime: displayTime || o.time || "-",
           qty: itQty,

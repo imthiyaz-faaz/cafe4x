@@ -74,8 +74,8 @@ export async function createTemporaryOrderToken(
 
   const payload: TempOrderingTokenPayload = {
     sub: claims.sessionId,
-    orgId: String(claims.organizationId),
-    orgCode: claims.shortCode.toUpperCase(),
+    orgId: String(claims.organizationId || ""),
+    orgCode: String(claims.shortCode || "FTS").toUpperCase(),
     empId: claims.employeeId ? String(claims.employeeId) : null,
     empName: claims.employeeName ? String(claims.employeeName) : null,
     locId: claims.locationId ? String(claims.locationId) : null,

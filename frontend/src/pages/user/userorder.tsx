@@ -24,6 +24,7 @@ import { locationApi } from "../../services/locations";
 import { userApi } from "../../services/userApi";
 import { qrApi } from "../../services/qrApi";
 import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatOrderId } from "../../utils/orderFormatter";
 
 
 export interface UserOrderItem {
@@ -793,7 +794,7 @@ export default function UserOrderPage() {
             <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${getStatusBadge(placedOrder.status)}`}>
                 <span className="h-2 w-2 rounded-full bg-current animate-pulse" />
-                Order {placedOrder.id}: {placedOrder.status}
+                Order {formatOrderId(placedOrder)}: {placedOrder.status}
               </span>
             </div>
           )}
@@ -1165,7 +1166,7 @@ export default function UserOrderPage() {
                     <div className="flex items-center gap-2">
                       <h3 className="text-lg font-black text-[#342219]">Order Details</h3>
                       <span className="text-xs font-bold text-[#704225] bg-[#EFE8E1] px-2 py-0.5 rounded-md">
-                        {placedOrder.id}
+                        {formatOrderId(placedOrder)}
                       </span>
                     </div>
                     <p className="text-xs text-[#8A7667] mt-0.5">

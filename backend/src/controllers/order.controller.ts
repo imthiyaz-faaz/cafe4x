@@ -127,8 +127,20 @@ export const orderController = {
       }
 
       if (employee) {
-        query += ` AND (o.employee_id = ? OR LOWER(o.employee_name) = LOWER(?) OR LOWER(u.email) = LOWER(?))`;
-        params.push(employee, employee, employee);
+        // Robust employee matching by employee_id, employee_name, user email/name, or assigned seat
+        query += ` AND (
+          o.employee_id = ?
+          OR LOWER(TRIM(o.employee_name)) = LOWER(TRIM(?))
+          OR LOWER(TRIM(u.email)) = LOWER(TRIM(?))
+          OR LOWER(TRIM(u.name)) = LOWER(TRIM(?))
+          OR o.seat_id IN (
+            SELECT id FROM seats 
+            WHERE employee_id = ? 
+               OR LOWER(TRIM(employee_name)) = LOWER(TRIM(?)) 
+               OR LOWER(TRIM(employee_email)) = LOWER(TRIM(?))
+          )
+        )`;
+        params.push(employee, employee, employee, employee, employee, employee, employee);
       }
 
       if (startDate) {
@@ -449,7 +461,7 @@ export const orderController = {
         .prepare(
           `SELECT 
              s.id as seatId, 
-             s.display_id as seatDisplayId,
+             s.id as seatDisplayId,
              s.number as seatNumber, 
              s.employee_id as employeeId, 
              s.employee_name as employeeName, 
@@ -648,7 +660,7 @@ export const orderController = {
       try {
         assignedSeat = await db
           .prepare(
-            `SELECT s.id as seatId, s.display_id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
+            `SELECT s.id as seatId, s.id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
              FROM seats s
              JOIN locations l ON s.location_id = l.id
              WHERE s.organization_id = ? AND (

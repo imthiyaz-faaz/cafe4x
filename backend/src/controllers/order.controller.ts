@@ -461,7 +461,7 @@ export const orderController = {
         .prepare(
           `SELECT 
              s.id as seatId, 
-             s.display_id as seatDisplayId,
+             s.id as seatDisplayId,
              s.number as seatNumber, 
              s.employee_id as employeeId, 
              s.employee_name as employeeName, 
@@ -660,7 +660,7 @@ export const orderController = {
       try {
         assignedSeat = await db
           .prepare(
-            `SELECT s.id as seatId, s.display_id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
+            `SELECT s.id as seatId, s.id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
              FROM seats s
              JOIN locations l ON s.location_id = l.id
              WHERE s.organization_id = ? AND (

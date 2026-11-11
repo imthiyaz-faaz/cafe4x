@@ -247,12 +247,14 @@ export const qrSessionController = {
       // Case A: Look up authoritative seat by unique permanent seat QR token
       if (rawSeatToken) {
         let found: any = null;
+
+        // Try 1: Modern lookup from `seats` table with employee_seat_assignments join
         try {
           found = (await db
             .prepare(
               `SELECT 
                  s.id, 
-                 s.display_id as displayId, 
+                 s.id as displayId, 
                  s.location_id as locationId, 
                  s.organization_id as organizationId,
                  s.number, 
@@ -277,46 +279,89 @@ export const qrSessionController = {
                JOIN organizations o ON s.organization_id = o.id
                LEFT JOIN employee_seat_assignments esa ON s.id = esa.seat_id AND s.location_id = esa.location_id
                LEFT JOIN users u ON (esa.employee_id = u.id OR s.employee_id = u.id)
-               WHERE s.qr_token = ? OR s.id = ? OR s.display_id = ?
+               WHERE s.qr_token = ? OR s.id = ?
                LIMIT 1`
             )
-            .bind(rawSeatToken, rawSeatToken, rawSeatToken)
+            .bind(rawSeatToken, rawSeatToken)
             .get()) as any;
-        } catch {
-          // Fallback if employee_seat_assignments table is not present in D1 instance
-          found = (await db
-            .prepare(
-              `SELECT 
-                 s.id, 
-                 s.display_id as displayId, 
-                 s.location_id as locationId, 
-                 s.organization_id as organizationId,
-                 s.number, 
-                 s.qr_token as qrToken,
-                 s.order_url as orderUrl,
-                 COALESCE(u.email, s.employee_email, s.employee) as employee, 
-                 COALESCE(u.name, s.employee_name) as employeeName, 
-                 COALESCE(u.email, s.employee_email) as employeeEmail, 
-                 COALESCE(u.id, s.employee_id) as employeeId,
-                 u.qr_token as employeeQrToken,
-                 u.qr_token_status as qrTokenStatus,
-                 u.perm_token_status as permTokenStatus,
-                 l.id as locId,
-                 l.name as locName,
-                 l.status as locStatus,
-                 l.total_seats as locTotalSeats,
-                 o.id as orgId,
-                 o.short_code as orgShortCode,
-                 o.name as orgName
-               FROM seats s
-               JOIN locations l ON s.location_id = l.id
-               JOIN organizations o ON s.organization_id = o.id
-               LEFT JOIN users u ON (s.employee_id = u.id)
-               WHERE s.qr_token = ? OR s.id = ? OR s.display_id = ?
-               LIMIT 1`
-            )
-            .bind(rawSeatToken, rawSeatToken, rawSeatToken)
-            .get()) as any;
+        } catch {}
+
+        // Try 2: If not found, lookup from `seats` without employee_seat_assignments
+        if (!found) {
+          try {
+            found = (await db
+              .prepare(
+                `SELECT 
+                   s.id, 
+                   s.id as displayId, 
+                   s.location_id as locationId, 
+                   s.organization_id as organizationId,
+                   s.number, 
+                   s.qr_token as qrToken,
+                   s.order_url as orderUrl,
+                   COALESCE(u.email, s.employee_email, s.employee) as employee, 
+                   COALESCE(u.name, s.employee_name) as employeeName, 
+                   COALESCE(u.email, s.employee_email) as employeeEmail, 
+                   COALESCE(u.id, s.employee_id) as employeeId,
+                   u.qr_token as employeeQrToken,
+                   u.qr_token_status as qrTokenStatus,
+                   u.perm_token_status as permTokenStatus,
+                   l.id as locId,
+                   l.name as locName,
+                   l.status as locStatus,
+                   l.total_seats as locTotalSeats,
+                   o.id as orgId,
+                   o.short_code as orgShortCode,
+                   o.name as orgName
+                 FROM seats s
+                 JOIN locations l ON s.location_id = l.id
+                 JOIN organizations o ON s.organization_id = o.id
+                 LEFT JOIN users u ON (s.employee_id = u.id)
+                 WHERE s.qr_token = ? OR s.id = ?
+                 LIMIT 1`
+              )
+              .bind(rawSeatToken, rawSeatToken)
+              .get()) as any;
+          } catch {}
+        }
+
+        // Try 3: Fallback check against `location_table_seats` table
+        if (!found) {
+          try {
+            found = (await db
+              .prepare(
+                `SELECT 
+                   lts.id,
+                   lts.id as displayId,
+                   lts.location_id as locationId,
+                   lts.organization_id as organizationId,
+                   lts.seat_number as number,
+                   lts.qr_token as qrToken,
+                   lts.order_url as orderUrl,
+                   COALESCE(u.email, lts.employee_email) as employee,
+                   COALESCE(u.name, lts.employee_name) as employeeName,
+                   COALESCE(u.email, lts.employee_email) as employeeEmail,
+                   COALESCE(u.id, lts.employee_id) as employeeId,
+                   u.qr_token as employeeQrToken,
+                   u.qr_token_status as qrTokenStatus,
+                   u.perm_token_status as permTokenStatus,
+                   l.id as locId,
+                   l.name as locName,
+                   l.status as locStatus,
+                   l.total_seats as locTotalSeats,
+                   o.id as orgId,
+                   o.short_code as orgShortCode,
+                   o.name as orgName
+                 FROM location_table_seats lts
+                 JOIN locations l ON lts.location_id = l.id
+                 JOIN organizations o ON lts.organization_id = o.id
+                 LEFT JOIN users u ON (lts.employee_id = u.id)
+                 WHERE lts.qr_token = ? OR lts.id = ?
+                 LIMIT 1`
+              )
+              .bind(rawSeatToken, rawSeatToken)
+              .get()) as any;
+          } catch {}
         }
 
         if (found) {
@@ -418,18 +463,20 @@ export const qrSessionController = {
         const parsedSeatNum = parseInt(rawSeatNumber, 10);
         const paddedSeatNum = !isNaN(parsedSeatNum) ? String(parsedSeatNum).padStart(2, "0") : rawSeatNumber;
 
-        seatRow = (await db
-          .prepare(
-            `SELECT id, display_id as displayId, location_id as locationId, organization_id as organizationId,
-                    number, qr_token as qrToken, order_url as orderUrl,
-                    employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId
-             FROM seats
-             WHERE location_id = ?
-               AND (number = ? OR number = ? OR id = ? OR display_id = ?)
-             LIMIT 1`
-          )
-          .bind(locRow.id, rawSeatNumber, paddedSeatNum, rawSeatId || rawSeatNumber, rawSeatId || rawSeatNumber)
-          .get()) as any;
+        try {
+          seatRow = (await db
+            .prepare(
+              `SELECT id, id as displayId, location_id as locationId, organization_id as organizationId,
+                      number, qr_token as qrToken, order_url as orderUrl,
+                      employee, employee_name as employeeName, employee_email as employeeEmail, employee_id as employeeId
+               FROM seats
+               WHERE location_id = ?
+                 AND (number = ? OR number = ? OR id = ?)
+               LIMIT 1`
+            )
+            .bind(locRow.id, rawSeatNumber, paddedSeatNum, rawSeatId || rawSeatNumber)
+            .get()) as any;
+        } catch {}
 
         if (!seatRow && !isNaN(parsedSeatNum) && parsedSeatNum >= 1 && parsedSeatNum <= (locRow.totalSeats || 12)) {
           const locPrefix = normalizeLocationPrefix(locRow.name);
@@ -441,10 +488,10 @@ export const qrSessionController = {
           try {
             await db
               .prepare(
-                `INSERT INTO seats (id, display_id, location_id, organization_id, number, qr_token, order_url, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT INTO seats (id, location_id, organization_id, number, qr_token, order_url, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
               )
-              .bind(generatedSeatId, generatedDisplayId, locRow.id, orgRow.id, paddedSeatNum, generatedToken, targetUrl, nowIso, nowIso)
+              .bind(generatedSeatId, locRow.id, orgRow.id, paddedSeatNum, generatedToken, targetUrl, nowIso, nowIso)
               .run();
 
             seatRow = {
@@ -584,7 +631,15 @@ export const qrSessionController = {
       );
     } catch (err: any) {
       console.error("Error in createSeatSession:", err);
-      return c.json({ success: false, message: "Internal server error occurred while preparing your ordering session." }, 500);
+      const errorMessage = err?.message || "Internal server error occurred while preparing your ordering session.";
+      return c.json(
+        {
+          success: false,
+          message: errorMessage,
+          detail: err?.stack || String(err),
+        },
+        500
+      );
     }
   },
 

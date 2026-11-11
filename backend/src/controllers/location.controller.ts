@@ -10,6 +10,7 @@ export interface LocationModel {
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;
+  tableLimit?: number;
   image?: string;
   organizationId?: string;
   shortCode?: string;
@@ -290,6 +291,7 @@ export const locationController = {
           name: row.name,
           status: row.status,
           totalSeats: Number(row.totalSeats) || 12,
+          tableLimit: Number(row.table_limit) || 5,
           image: row.image || "",
           assignedProviderId: row.assignedProviderId || undefined,
           assignedProviderName: row.assignedProviderName || undefined,
@@ -299,6 +301,123 @@ export const locationController = {
         },
       });
     } catch (err: any) {
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/locations/:id/statistics
+  async getLocationStatistics(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const id = c.req.param("id");
+      const db = getUniversalDb(c.env?.DB);
+
+      // Support environments where table_limit might or might not be in locations
+      let loc: any = null;
+      try {
+        loc = await db
+          .prepare(`SELECT id, name, table_limit, total_seats FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+          .bind(id, id, org.organizationId)
+          .get();
+      } catch (e: any) {
+        loc = await db
+          .prepare(`SELECT id, name, total_seats FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+          .bind(id, id, org.organizationId)
+          .get();
+      }
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      // Dynamic statistics from location_tables / tables and location_table_seats / seats
+      let totalTables = 0;
+      try {
+        const countRow = (await db
+          .prepare(`SELECT COUNT(*) as cnt FROM location_tables WHERE location_id = ?`)
+          .bind(effectiveLocId)
+          .get()) as any;
+        totalTables = Number(countRow?.cnt) || 0;
+      } catch {
+        try {
+          const countRow = (await db
+            .prepare(`SELECT COUNT(*) as cnt FROM tables WHERE location_id = ?`)
+            .bind(effectiveLocId)
+            .get()) as any;
+          totalTables = Number(countRow?.cnt) || 0;
+        } catch {}
+      }
+
+      let totalSeats = 0;
+      let occupiedSeats = 0;
+      let availableSeats = 0;
+      let inactiveSeats = 0;
+
+      try {
+        const seatStatsRow = (await db
+          .prepare(
+            `SELECT 
+               COUNT(*) as totalSeats,
+               COUNT(CASE WHEN status = 'occupied' OR (employee_id IS NOT NULL AND employee_id != '') OR (employee_email IS NOT NULL AND employee_email != '') THEN 1 END) as occupiedSeats,
+               COUNT(CASE WHEN status = 'available' AND (employee_id IS NULL OR employee_id = '') AND (employee_email IS NULL OR employee_email = '') THEN 1 END) as availableSeats,
+               COUNT(CASE WHEN status = 'inactive' OR status = 'blocked' THEN 1 END) as inactiveSeats
+             FROM location_table_seats
+             WHERE location_id = ?`
+          )
+          .bind(effectiveLocId)
+          .get()) as any;
+
+        totalSeats = Number(seatStatsRow?.totalSeats) || 0;
+        occupiedSeats = Number(seatStatsRow?.occupiedSeats) || 0;
+        availableSeats = Number(seatStatsRow?.availableSeats) || 0;
+        inactiveSeats = Number(seatStatsRow?.inactiveSeats) || 0;
+      } catch {
+        try {
+          const seatStatsRow = (await db
+            .prepare(
+              `SELECT 
+                 COUNT(*) as totalSeats,
+                 COUNT(CASE WHEN status = 'occupied' OR (employee_id IS NOT NULL AND employee_id != '') OR (employee_email IS NOT NULL AND employee_email != '') OR (employee IS NOT NULL AND employee != '') THEN 1 END) as occupiedSeats,
+                 COUNT(CASE WHEN (status = 'available' OR status IS NULL) AND (employee_id IS NULL OR employee_id = '') AND (employee_email IS NULL OR employee_email = '') AND (employee IS NULL OR employee = '') THEN 1 END) as availableSeats,
+                 COUNT(CASE WHEN status = 'blocked' OR status = 'inactive' THEN 1 END) as inactiveSeats
+               FROM seats
+               WHERE location_id = ?`
+            )
+            .bind(effectiveLocId)
+            .get()) as any;
+
+          totalSeats = Number(seatStatsRow?.totalSeats) || 0;
+          occupiedSeats = Number(seatStatsRow?.occupiedSeats) || 0;
+          availableSeats = Number(seatStatsRow?.availableSeats) || 0;
+          inactiveSeats = Number(seatStatsRow?.inactiveSeats) || 0;
+        } catch {}
+      }
+
+      if (availableSeats === 0 && totalSeats > 0 && occupiedSeats < totalSeats) {
+        availableSeats = Math.max(0, totalSeats - occupiedSeats - inactiveSeats);
+      }
+      const occupancyPercentage = totalSeats > 0 ? Math.round((occupiedSeats / totalSeats) * 100) : 0;
+
+      return c.json({
+        success: true,
+        statistics: {
+          totalTables,
+          totalSeats,
+          occupiedSeats,
+          availableSeats,
+          inactiveSeats,
+          occupancyPercentage,
+          tableLimit: Number(loc?.table_limit) || 5,
+        },
+      });
+    } catch (err: any) {
+      console.error("getLocationStatistics error:", err);
       return c.json({ success: false, message: err.message }, 500);
     }
   },
@@ -654,7 +773,7 @@ export const locationController = {
           .prepare(
             `SELECT 
                s.id, 
-               s.display_id as displayId, 
+               s.id as displayId, 
                s.location_id as locationId, 
                s.organization_id as organizationId,
                s.number, 
@@ -853,10 +972,10 @@ export const locationController = {
       const number = generated.number;
       const displayId = generated.displayId; // OFFICE-001
 
-      // Check for duplicate seat number or display identifier within this organization and location
+      // Check for duplicate seat number or identifier within this organization and location
       const existingSeatRow = (await db
-        .prepare(`SELECT id, display_id FROM seats WHERE organization_id = ? AND location_id = ? AND (id = ? OR LOWER(TRIM(display_id)) = LOWER(TRIM(?)) OR number = ?)`)
-        .bind(org.organizationId, effectiveLocId, seatId, displayId, number)
+        .prepare(`SELECT id FROM seats WHERE organization_id = ? AND location_id = ? AND (id = ? OR number = ?)`)
+        .bind(org.organizationId, effectiveLocId, seatId, number)
         .get()) as any;
 
       if (existingSeatRow) {
@@ -920,7 +1039,7 @@ export const locationController = {
           // Check if already assigned to a seat in this organization
           const dupAssignment = (await db
             .prepare(
-              `SELECT esa.id, s.number, s.display_id as displayId, l.name as locName 
+              `SELECT esa.id, s.number, s.id as displayId, l.name as locName 
                FROM employee_seat_assignments esa 
                JOIN seats s ON esa.seat_id = s.id 
                JOIN locations l ON s.location_id = l.id 
@@ -949,12 +1068,11 @@ export const locationController = {
       // Insert seat record with unique qr_token and permanent seat order_url
       await db
         .prepare(
-          `INSERT INTO seats (id, display_id, location_id, organization_id, number, employee, employee_name, employee_email, employee_id, qr_token, order_url, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO seats (id, location_id, organization_id, number, employee, employee_name, employee_email, employee_id, qr_token, order_url, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           seatId,
-          displayId,
           effectiveLocId,
           org.organizationId,
           number,
@@ -1168,7 +1286,7 @@ export const locationController = {
       if (user) {
         const duplicateAssignment = (await db
           .prepare(
-            `SELECT esa.id, esa.seat_id, s.number, s.display_id as displayId, l.name as locName 
+            `SELECT esa.id, esa.seat_id, s.number, s.id as displayId, l.name as locName 
              FROM employee_seat_assignments esa 
              JOIN seats s ON esa.seat_id = s.id 
              JOIN locations l ON s.location_id = l.id 
@@ -1599,11 +1717,10 @@ export const locationController = {
           LOWER(u.user_name) LIKE ? OR 
           LOWER(u.email) LIKE ? OR 
           LOWER(s.number) LIKE ? OR 
-          LOWER(s.display_id) LIKE ? OR 
           LOWER(s.id) LIKE ?
         )`;
         const searchPattern = `%${search}%`;
-        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
+        params.push(searchPattern, searchPattern, searchPattern, searchPattern, searchPattern);
       }
 
       // Ensure table exists defensively before querying
@@ -1640,7 +1757,7 @@ export const locationController = {
                l.id as locationId,
                l.name as locationName,
                s.id as seatId,
-               s.display_id as seatDisplayId,
+               s.id as seatDisplayId,
                s.number as seatNumber,
                s.order_url as orderUrl
              FROM employee_seat_assignments esa

@@ -113,21 +113,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                 })
               );
             }
-          } else {
-            const currentAdmin = localStorage.getItem("cafe4x_admin_activeOrg");
-            if (!currentAdmin) {
-              const admOrg = userOrgs.find((o) => o.shortCode?.toUpperCase() === mergedUser.shortCode) || userOrgs[0];
-              localStorage.setItem(
-                "cafe4x_admin_activeOrg",
-                JSON.stringify({
-                  id: admOrg.id,
-                  name: admOrg.name,
-                  shortCode: admOrg.shortCode.toUpperCase(),
-                  currency: admOrg.currency || "INR",
-                })
-              );
-            }
           }
+          // Note: For Admin, we do NOT automatically set cafe4x_admin_activeOrg on checkAuth
+          // Admin must explicitly select an organization on Choose Organization page
         }
 
         setIsLoading(false);
@@ -199,16 +187,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             })
           );
         } else {
-          const admOrg = newOrgs[0];
-          localStorage.setItem(
-            "cafe4x_admin_activeOrg",
-            JSON.stringify({
-              id: admOrg.id,
-              name: admOrg.name,
-              shortCode: admOrg.shortCode.toUpperCase(),
-              currency: admOrg.currency || "INR",
-            })
-          );
+          // Remove any stale admin active organization on login so Admin is prompted to choose
+          localStorage.removeItem("cafe4x_admin_activeOrg");
         }
       }
     },

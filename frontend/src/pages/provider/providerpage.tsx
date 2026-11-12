@@ -65,6 +65,11 @@ export interface ProviderOrder {
   id: string;
   displayId?: string;
   seat: string;
+  seatId?: string;
+  seatNumber?: number | string | null;
+  tableId?: number | string | null;
+  tableName?: string | null;
+  seatDisplay?: string | null;
   locationId?: string;
   locationName: string;
   employeeName: string;
@@ -2069,6 +2074,7 @@ export default function ProviderPage() {
 
                 interface OrderDetailRow {
                   orderId: string;
+                  order: ProviderOrder;
                   seat: string;
                   employeeName: string;
                   qty: number;

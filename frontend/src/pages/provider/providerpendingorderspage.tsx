@@ -24,7 +24,7 @@ import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
 import { orderApi, type ProviderOrder } from "../../services/orders";
 import { itemsApi } from "../../services/items";
-import { formatSeatIdentifier, formatOrderSeat, formatOrderSeatNumber } from "../../utils/seatFormatter";
+import { formatOrderSeat } from "../../utils/seatFormatter";
 
 export default function ProviderPendingOrdersPage() {
   const { currencySymbol } = useOrgCurrency();

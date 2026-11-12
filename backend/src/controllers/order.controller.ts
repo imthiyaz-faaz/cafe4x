@@ -25,6 +25,10 @@ export interface OrderModel {
   shortCode: string;
   seat: string;
   seatId?: string;
+  seatNumber?: number | string;
+  tableName?: string;
+  tableId?: number | string;
+  seatDisplay?: string;
   locationName: string;
   locationId?: string;
   employeeName: string;
@@ -71,6 +75,7 @@ export const orderController = {
       const authUser = await getAuthUser(c);
       const location = c.req.query("location");
       const status = c.req.query("status");
+      const tableId = c.req.query("tableId");
       const employee = c.req.query("employee");
       const startDate = c.req.query("startDate");
       const endDate = c.req.query("endDate");
@@ -83,6 +88,9 @@ export const orderController = {
           o.short_code as shortCode,
           COALESCE(o.seat_id, o.seat) as seat,
           o.seat_id as seatId,
+          ord_st.number as seatNumber,
+          ord_tbl.id as tableId,
+          ord_tbl.name as tableName,
           o.location_id as locationId, 
           o.location_name as locationName,
           o.employee_name as employeeName, 
@@ -100,17 +108,29 @@ export const orderController = {
           o.updated_at as updatedAt
         FROM orders o
         LEFT JOIN users u ON o.employee_id = u.id
+        LEFT JOIN seats ord_st ON (o.seat_id = ord_st.id OR o.seat = ord_st.id)
+        LEFT JOIN tables ord_tbl ON ord_st.table_id = ord_tbl.id
       `;
       const params: any[] = [];
 
-      // If user is Provider, only return orders from locations assigned to that provider
+      // If user is Provider, only return orders from tables assigned to that provider via table_provider_assignments or fallback
       if (authUser?.userType === "Provider") {
         query += `
+          LEFT JOIN seats ord_s ON o.seat_id = ord_s.id
+          LEFT JOIN tables ord_t ON ord_s.table_id = ord_t.id
+          LEFT JOIN table_provider_assignments ord_tpa ON ord_t.id = ord_tpa.table_id
+          LEFT JOIN location_providers ord_tpa_lp ON ord_tpa.location_provider_id = ord_tpa_lp.id
           LEFT JOIN locations loc ON o.location_id = loc.id
+          LEFT JOIN location_providers lp ON o.location_id = lp.location_id
           LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
-          WHERE o.organization_id = ? AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+          WHERE o.organization_id = ? 
+            AND (
+              ord_tpa_lp.provider_id = ?
+              OR ord_t.provider_id = ? 
+              OR (ord_t.provider_id IS NULL AND ord_tpa_lp.provider_id IS NULL AND (loc.assigned_provider_id = ? OR lp.provider_id = ? OR pl.provider_id = ?))
+            )
         `;
-        params.push(org.organizationId, authUser.id, authUser.id);
+        params.push(org.organizationId, authUser.id, authUser.id, authUser.id, authUser.id, authUser.id);
       } else {
         query += ` WHERE o.organization_id = ?`;
         params.push(org.organizationId);
@@ -124,6 +144,11 @@ export const orderController = {
       if (status) {
         query += ` AND o.status = ?`;
         params.push(status);
+      }
+
+      if (tableId) {
+        query += ` AND (ord_tbl.id = ? OR ord_st.table_id = ?)`;
+        params.push(tableId, tableId);
       }
 
       if (employee) {
@@ -218,6 +243,18 @@ export const orderController = {
             ? Math.max(0, subtotal + adjustmentAmount - discount)
             : rawTotal;
 
+          const tableName = r.tableName || undefined;
+          const seatNumber = r.seatNumber ? Number(r.seatNumber) : undefined;
+          const locationName = r.locationName || undefined;
+
+          // Build dynamic user-facing seat label: Table Name - Seat Number (Location Name)
+          let seatDisplay: string | undefined = undefined;
+          if (tableName && seatNumber !== undefined) {
+            seatDisplay = locationName
+              ? `${tableName} - Seat ${seatNumber} (${locationName})`
+              : `${tableName} - Seat ${seatNumber}`;
+          }
+
           return {
             id: r.id,
             displayId: r.displayId || r.id,
@@ -225,6 +262,10 @@ export const orderController = {
             shortCode: r.shortCode || org.shortCode,
             seat: r.seatId || r.seat,
             seatId: r.seatId || undefined,
+            seatNumber,
+            tableName,
+            tableId: r.tableId || undefined,
+            seatDisplay,
             locationId: r.locationId || undefined,
             locationName: r.locationName,
             employeeName: r.employeeName,
@@ -461,7 +502,7 @@ export const orderController = {
         .prepare(
           `SELECT 
              s.id as seatId, 
-             s.display_id as seatDisplayId,
+             s.id as seatDisplayId,
              s.number as seatNumber, 
              s.employee_id as employeeId, 
              s.employee_name as employeeName, 
@@ -660,7 +701,7 @@ export const orderController = {
       try {
         assignedSeat = await db
           .prepare(
-            `SELECT s.id as seatId, s.display_id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
+            `SELECT s.id as seatId, s.id as seatDisplayId, s.number as seatNumber, l.id as locationId, l.name as locationName
              FROM seats s
              JOIN locations l ON s.location_id = l.id
              WHERE s.organization_id = ? AND (
@@ -867,12 +908,22 @@ export const orderController = {
       const row = (await db
         .prepare(
           `SELECT 
-            id, display_id as displayId, organization_id as organizationId, short_code as shortCode,
-            seat, seat_id as seatId, location_id as locationId, location_name as locationName,
-            employee_name as employeeName, subtotal, adjustment_amount as adjustmentAmount, discount,
-            total, time, status, notes,
-            items_json as itemsJson, created_at as createdAt, updated_at as updatedAt
-           FROM orders WHERE id = ? OR display_id = ?`
+            o.id, o.display_id as displayId, o.organization_id as organizationId, o.short_code as shortCode,
+            COALESCE(o.seat_id, o.seat) as seat, o.seat_id as seatId,
+            ord_st.number as seatNumber,
+            ord_tbl.id as tableId,
+            ord_tbl.name as tableName,
+            o.location_id as locationId, o.location_name as locationName,
+            o.employee_name as employeeName, o.employee_id as employeeId,
+            u.email as employeeEmail,
+            o.subtotal, o.adjustment_amount as adjustmentAmount, o.discount,
+            o.total, o.time, o.status, o.notes,
+            o.items_json as itemsJson, o.created_at as createdAt, o.updated_at as updatedAt
+           FROM orders o
+           LEFT JOIN users u ON o.employee_id = u.id
+           LEFT JOIN seats ord_st ON (o.seat_id = ord_st.id OR o.seat = ord_st.id)
+           LEFT JOIN tables ord_tbl ON ord_st.table_id = ord_tbl.id
+           WHERE o.id = ? OR o.display_id = ?`
         )
         .bind(id, id)
         .get()) as any;
@@ -933,6 +984,17 @@ export const orderController = {
         ? Math.max(0, subtotal + adjustmentAmount - discount)
         : rawTotal;
 
+      const tableName = row.tableName || undefined;
+      const seatNumber = row.seatNumber ? Number(row.seatNumber) : undefined;
+      const locationName = row.locationName || undefined;
+
+      let seatDisplay: string | undefined = undefined;
+      if (tableName && seatNumber !== undefined) {
+        seatDisplay = locationName
+          ? `${tableName} - Seat ${seatNumber} (${locationName})`
+          : `${tableName} - Seat ${seatNumber}`;
+      }
+
       return c.json({
         success: true,
         order: {
@@ -942,6 +1004,10 @@ export const orderController = {
           shortCode: row.shortCode,
           seat: row.seatId || row.seat,
           seatId: row.seatId || undefined,
+          seatNumber,
+          tableName,
+          tableId: row.tableId || undefined,
+          seatDisplay,
           locationId: row.locationId || undefined,
           locationName: row.locationName,
           employeeName: row.employeeName,
@@ -1066,18 +1132,22 @@ export const orderController = {
             .bind(payload.empId, org.organizationId)
             .get()) as any;
 
-          if (!empRow) {
-            return c.json({ success: false, message: "Assigned employee not found in this organization." }, 403);
-          }
+          if (empRow) {
+            const legacyRevoked = empRow.qrTokenStatus && empRow.qrTokenStatus !== "active";
+            const newRevoked = empRow.permTokenStatus && empRow.permTokenStatus !== "active";
+            if (legacyRevoked || newRevoked) {
+              return c.json({ success: false, message: "Employee QR credential has been revoked." }, 403);
+            }
 
-          const legacyRevoked = empRow.qrTokenStatus && empRow.qrTokenStatus !== "active";
-          const newRevoked = empRow.permTokenStatus && empRow.permTokenStatus !== "active";
-          if (legacyRevoked || newRevoked) {
-            return c.json({ success: false, message: "Employee QR credential has been revoked." }, 403);
+            employeeId = String(empRow.id);
+            employeeName = empRow.name || empRow.email || employeeName;
+          } else {
+            // Employee is managed independently of the users table (seat-level employee)
+            employeeId = String(payload.empId);
+            if (payload.empName && (!employeeName || employeeName === "Guest")) {
+              employeeName = payload.empName;
+            }
           }
-
-          employeeId = String(empRow.id);
-          employeeName = empRow.name || empRow.email || employeeName;
         }
 
         // Authoritatively lock seat and location from the signed token payload
@@ -1359,6 +1429,37 @@ export const orderController = {
       const status = body.status || "Pending";
       const now = new Date().toISOString();
       const db = getUniversalDb(c.env?.DB);
+
+      // Provider authorization check: if user is Provider, ensure order belongs to their assigned table or location
+      const authUser = await getAuthUser(c);
+      if (authUser?.userType === "Provider") {
+        const canManageOrder = (await db
+          .prepare(
+            `SELECT o.id FROM orders o
+             LEFT JOIN seats s ON o.seat_id = s.id
+             LEFT JOIN tables t ON s.table_id = t.id
+             LEFT JOIN table_provider_assignments tpa ON t.id = tpa.table_id
+             LEFT JOIN location_providers lp ON tpa.location_provider_id = lp.id
+             LEFT JOIN locations loc ON o.location_id = loc.id
+             LEFT JOIN location_providers loc_lp ON o.location_id = loc_lp.location_id
+             LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
+             WHERE (o.id = ? OR o.display_id = ?)
+               AND (
+                 lp.provider_id = ?
+                 OR t.provider_id = ?
+                 OR (t.provider_id IS NULL AND lp.provider_id IS NULL AND (loc.assigned_provider_id = ? OR loc_lp.provider_id = ? OR pl.provider_id = ?))
+               )`
+          )
+          .bind(id, id, authUser.id, authUser.id, authUser.id, authUser.id, authUser.id)
+          .get()) as any;
+
+        if (!canManageOrder) {
+          return c.json({
+            success: false,
+            message: "Unauthorized: You can only update orders from tables assigned to you.",
+          }, 403);
+        }
+      }
 
       await db
         .prepare(`UPDATE orders SET status = ?, updated_at = ? WHERE id = ? OR display_id = ?`)

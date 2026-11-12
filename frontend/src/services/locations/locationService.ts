@@ -1,14 +1,25 @@
 import { api } from "../apiClient";
 
+export interface LocationProviderSummary {
+  id: string;
+  name: string;
+  email: string;
+  userName?: string;
+  userType?: string;
+}
+
 export interface LocationItem {
   id: string;
   displayId?: string;
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;
+  tableLimit?: number;
   assignedProviderId?: string;
   assignedProviderEmail?: string;
   assignedProviderName?: string;
+  assignedProviders?: LocationProviderSummary[];
+  assignedProvidersCount?: number;
   shortCode?: string;
   image?: string;
   organizationId?: string;
@@ -139,12 +150,26 @@ export const locationApi = {
     return res.location;
   },
 
-  async assignProvider(locationId: string, provider: AssignProviderPayload): Promise<LocationItem> {
+  async assignProvider(
+    locationId: string,
+    provider: { assignedProviderId?: string; assignedProviderEmail?: string; assignedProviderName?: string; providerIds?: string[] }
+  ): Promise<LocationItem> {
     const res = await api.post<{ success: boolean; location: LocationItem }>(
       `/api/locations/${locationId}/assign`,
       provider
     );
     return res.location;
+  },
+
+  async getLocationProviders(locationId: string): Promise<LocationProviderSummary[]> {
+    const res = await api.get<{ success: boolean; providers: LocationProviderSummary[] }>(
+      `/api/locations/${locationId}/providers`
+    );
+    return res.providers || [];
+  },
+
+  async removeProviderFromLocation(locationId: string, providerId: string): Promise<void> {
+    await api.delete<{ success: boolean }>(`/api/locations/${locationId}/providers/${providerId}`);
   },
 
   async deleteLocation(id: string): Promise<void> {

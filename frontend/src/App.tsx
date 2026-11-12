@@ -16,6 +16,8 @@ import Login from './pages/Admin/login/login'
 import Signup from './pages/Admin/login/signup'
 import ChooseOrganizationPage from './pages/Admin/login/chooseorganization'
 import ProtectedRoute from './components/common/ProtectedRoute'
+import LocationDetails from './pages/locations/LocationDetails'
+import TableDetails from './pages/locations/TableDetails'
 
 export default function App() {
   return (
@@ -45,10 +47,18 @@ export default function App() {
 
       {/* Authenticated Global/Default Admin & Provider Routes */}
       <Route
+        path="/admin/location/:locationId/table/:tableId"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']}>
+            <TableDetails />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/admin/locationseats/:locationId"
         element={
           <ProtectedRoute allowedRoles={['Admin']}>
-            <LocationPage />
+            <LocationDetails />
           </ProtectedRoute>
         }
       />
@@ -135,10 +145,18 @@ export default function App() {
 
       {/* Organization-specific routes with :shortCode prefix */}
       <Route
+        path="/:shortCode/admin/location/:locationId/table/:tableId"
+        element={
+          <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
+            <TableDetails />
+          </ProtectedRoute>
+        }
+      />
+      <Route
         path="/:shortCode/admin/locationseats/:locationId"
         element={
           <ProtectedRoute allowedRoles={['Admin']} requireOrgMatch>
-            <LocationPage />
+            <LocationDetails />
           </ProtectedRoute>
         }
       />

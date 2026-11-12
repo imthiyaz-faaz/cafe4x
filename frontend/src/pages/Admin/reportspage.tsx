@@ -1,10 +1,11 @@
 import { formatCurrency, getActiveOrgCurrency } from '../../utils/currencies';
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useParams } from "react-router-dom";
 import {
   Calendar,
   Search,
   ChevronRight,
+  ChevronLeft,
   ChevronDown,
   ChevronUp,
   X,
@@ -16,6 +17,10 @@ import {
   Percent,
   Wallet,
   TrendingUp,
+  Filter,
+  ArrowLeft,
+  Clock,
+  Check,
 } from "lucide-react";
 
 import Background from "../../components/background";
@@ -23,7 +28,7 @@ import Navbar from "../../components/navbar/navbar";
 import { reportApi } from "../../services/reports";
 import type { ProviderOrder } from "../../services/orders";
 import { itemsApi, type MenuItem } from "../../services/items";
-import { workingHoursApi } from "../../services/workingHoursApi";
+import { workingHoursApi, type BreakSession } from "../../services/workingHoursApi";
 import {
   classifyOrderPeriod,
   DEFAULT_ORDER_PERIODS,
@@ -134,6 +139,81 @@ export default function AdminReportPage() {
   const pageSize = 10;
 
   // 1. Fetch Working Hours to get configured breaks and timezone
+  const [configuredBreaks, setConfiguredBreaks] = useState<BreakSession[]>([]);
+
+  // Break filter state
+  const [selectedBreakId, setSelectedBreakId] = useState<string>("");
+  const [isBreakDropdownOpen, setIsBreakDropdownOpen] = useState(false);
+  const [breakDropdownSearch, setBreakDropdownSearch] = useState("");
+  const breakDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  const [filterFromDate, setFilterFromDate] = useState<string>("");
+  const [filterToDate, setFilterToDate] = useState<string>("");
+  // Spending period filter option: "daily" | "weekly" | "monthly"
+  const [spendingPeriodMode, setSpendingPeriodMode] = useState<"daily" | "weekly" | "monthly">("daily");
+  // Whether to show custom date range picker
+  const [showCustomDateRange, setShowCustomDateRange] = useState<boolean>(false);
+
+  // Custom Calendar Popover state for "from", "to", and "month" pickers
+  const [calendarOpenField, setCalendarOpenField] = useState<"from" | "to" | "month" | null>(null);
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(() => new Date());
+  const fromDatePickerRef = useRef<HTMLDivElement | null>(null);
+  const toDatePickerRef = useRef<HTMLDivElement | null>(null);
+  const monthPickerRef = useRef<HTMLDivElement | null>(null);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (breakDropdownRef.current && !breakDropdownRef.current.contains(target)) {
+        setIsBreakDropdownOpen(false);
+      }
+      if (
+        calendarOpenField === "from" &&
+        fromDatePickerRef.current &&
+        !fromDatePickerRef.current.contains(target)
+      ) {
+        setCalendarOpenField(null);
+      }
+      if (
+        calendarOpenField === "to" &&
+        toDatePickerRef.current &&
+        !toDatePickerRef.current.contains(target)
+      ) {
+        setCalendarOpenField(null);
+      }
+      if (
+        calendarOpenField === "month" &&
+        monthPickerRef.current &&
+        !monthPickerRef.current.contains(target)
+      ) {
+        setCalendarOpenField(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [calendarOpenField]);
+
+  // Active applied break filter
+  const [appliedBreakFilter, setAppliedBreakFilter] = useState<{
+    breakSession: BreakSession;
+    fromDate: string;
+    toDate: string;
+  } | null>(null);
+
+  // Orders for break filter view
+  const [breakFilteredOrders, setBreakFilteredOrders] = useState<ProviderOrder[]>([]);
+  const [isBreakFiltering, setIsBreakFiltering] = useState(false);
+  const [breakFilterError, setBreakFilterError] = useState<string | null>(null);
+  const [breakSearchQuery, setBreakSearchQuery] = useState("");
+  const [breakCurrentPage, setBreakCurrentPage] = useState(1);
+  const breakPageSize = 10;
+
+  // Selected date when drilling down into a date from Weekly or Monthly summary table
+  const [selectedBreakDateDrilldown, setSelectedBreakDateDrilldown] = useState<string | null>(null);
+
   useEffect(() => {
     workingHoursApi
       .getWorkingHours()
@@ -143,6 +223,7 @@ export default function AdminReportPage() {
 
         const breaks = res?.workingHours?.breakSessions || [];
         if (Array.isArray(breaks) && breaks.length > 0) {
+          setConfiguredBreaks(breaks);
           const morningBreaks = breaks.filter((b: any) => (b.startTime || "00:00") < "13:00" && b.isEnabled !== false);
           const eveningBreaks = breaks.filter((b: any) => (b.startTime || "00:00") >= "13:00" && b.isEnabled !== false);
 
@@ -157,6 +238,8 @@ export default function AdminReportPage() {
             eveningStart: eStart,
             eveningEnd: eEnd,
           });
+        } else {
+          setConfiguredBreaks([]);
         }
       })
       .catch(() => { });
@@ -226,6 +309,378 @@ export default function AdminReportPage() {
   useEffect(() => {
     fetchMonthOrders();
   }, [selectedMonth, currentShortCode]);
+
+  // Helper to format Date to YYYY-MM-DD
+  const formatDateToIso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  // Helper to get Today's date range
+  const getTodayDateRange = () => {
+    const today = formatDateToIso(new Date());
+    return { start: today, end: today };
+  };
+
+  // Helper to get this week's start (Monday) and end (Sunday)
+  const getThisWeekDateRange = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0 is Sunday, 1 is Monday...
+    const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diffToMonday);
+
+    const sunday = new Date(monday);
+    sunday.setDate(monday.getDate() + 6);
+
+    return {
+      start: formatDateToIso(monday),
+      end: formatDateToIso(sunday),
+    };
+  };
+
+  // Helper to get this month's start and end date
+  const getThisMonthDateRange = () => {
+    const now = new Date();
+    const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      start: formatDateToIso(firstDay),
+      end: formatDateToIso(lastDay),
+    };
+  };
+
+  // Handler for applying Break and Spending Filter
+  const handleApplyBreakFilter = async (overridePeriod?: "daily" | "weekly" | "monthly") => {
+    const activePeriod = overridePeriod || spendingPeriodMode;
+
+    if (!selectedBreakId) {
+      setBreakFilterError("Please select a break session to filter.");
+      return;
+    }
+    const targetBreak = configuredBreaks.find((b) => b.id === selectedBreakId);
+    if (!targetBreak) {
+      setBreakFilterError("The selected break session is not configured.");
+      return;
+    }
+
+    let effectiveFrom = filterFromDate;
+    let effectiveTo = filterToDate;
+
+    if (showCustomDateRange && filterFromDate && filterToDate) {
+      if (filterFromDate > filterToDate) {
+        setBreakFilterError("From Date cannot be later than To Date.");
+        return;
+      }
+      effectiveFrom = filterFromDate;
+      effectiveTo = filterToDate;
+    } else {
+      if (activePeriod === "daily") {
+        const todayRange = getTodayDateRange();
+        effectiveFrom = todayRange.start;
+        effectiveTo = todayRange.end;
+      } else if (activePeriod === "weekly") {
+        const weekRange = getThisWeekDateRange();
+        effectiveFrom = weekRange.start;
+        effectiveTo = weekRange.end;
+      } else {
+        const monthRange = getThisMonthDateRange();
+        effectiveFrom = monthRange.start;
+        effectiveTo = monthRange.end;
+      }
+    }
+
+    setBreakFilterError(null);
+    setIsBreakFiltering(true);
+    setBreakCurrentPage(1);
+    setSelectedDayRecord(null);
+    setSelectedBreakDateDrilldown(null);
+
+    try {
+      const fetchedOrders = await reportApi.getReportOrders({
+        startDate: effectiveFrom,
+        endDate: effectiveTo,
+      });
+
+      // Filter fetched orders specifically for the break's configured start and end time in orgTimezone
+      const matchingOrders = (fetchedOrders || []).filter((o) => {
+        if (o.status === "Canceled") return false;
+        const dateField = o.createdAt || new Date().toISOString();
+        const { dateStr, timeStr } = getTimeInTimezone(dateField, orgTimezone);
+        if (!dateStr || dateStr < effectiveFrom || dateStr > effectiveTo) return false;
+
+        const breakStart = targetBreak.startTime || "00:00";
+        const breakEnd = targetBreak.endTime || "23:59";
+
+        // Check if order time falls within the break start and end boundaries
+        if (breakStart <= breakEnd) {
+          return timeStr >= breakStart && timeStr <= breakEnd;
+        } else {
+          // Overnight break boundary
+          return timeStr >= breakStart || timeStr <= breakEnd;
+        }
+      });
+
+      setBreakFilteredOrders(matchingOrders);
+      setAppliedBreakFilter({
+        breakSession: targetBreak,
+        fromDate: effectiveFrom,
+        toDate: effectiveTo,
+      });
+    } catch (err: any) {
+      console.error("Failed to fetch break filtered orders:", err);
+      setBreakFilterError(err?.message || "Failed to load orders for the selected break.");
+    } finally {
+      setIsBreakFiltering(false);
+    }
+  };
+
+  // Back Button to return to normal Monthly Reports view
+  const handleBackToMonthlyReports = () => {
+    setAppliedBreakFilter(null);
+    setSelectedBreakId("");
+    setFilterFromDate("");
+    setFilterToDate("");
+    setBreakFilteredOrders([]);
+    setBreakFilterError(null);
+    setBreakSearchQuery("");
+    setBreakCurrentPage(1);
+    setSelectedBreakDateDrilldown(null);
+    if (dailyRecords.length > 0) {
+      setSelectedDayRecord(dailyRecords[0]);
+    }
+  };
+
+  // Flattened order items for break report view: Date, Item Name, Quantity, Total Amount
+  interface BreakReportRow {
+    id: string;
+    orderId: string;
+    displayOrderId: string;
+    dateStr: string;
+    displayDate: string;
+    displayTime: string;
+    periodGroup: string; // Group label based on daily, weekly, or monthly mode
+    seat: string;
+    locationName: string;
+    employeeName: string;
+    itemName: string;
+    quantity: number;
+    price: number;
+    amount: number;
+  }
+
+  const breakReportRows = useMemo(() => {
+    if (!appliedBreakFilter) return [];
+
+    const rows: BreakReportRow[] = [];
+
+    breakFilteredOrders.forEach((o) => {
+      const dateField = o.createdAt || new Date().toISOString();
+      const { dateStr, displayTime } = getTimeInTimezone(dateField, orgTimezone);
+
+      let formattedDate = dateStr;
+      let periodGroup = dateStr;
+      try {
+        const [y, m, d] = dateStr.split("-").map(Number);
+        const dateObj = new Date(y, m - 1, d);
+        formattedDate = dateObj.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+
+        if (spendingPeriodMode === "daily") {
+          periodGroup = formattedDate;
+        } else if (spendingPeriodMode === "weekly") {
+          // Calculate week number or week range
+          const day = dateObj.getDay();
+          const diffToMon = day === 0 ? -6 : 1 - day;
+          const mon = new Date(dateObj);
+          mon.setDate(dateObj.getDate() + diffToMon);
+          const sun = new Date(mon);
+          sun.setDate(mon.getDate() + 6);
+          periodGroup = `${mon.toLocaleDateString("en-US", { month: "short", day: "numeric" })} - ${sun.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+        } else {
+          // Monthly
+          periodGroup = dateObj.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+        }
+      } catch { }
+
+      const locationLabel = (o.locationName || (o as any).location || "").trim() || "office";
+      const empLabel = (o.employeeName || (o as any).userName || (o as any).name || "").trim() || "Employee";
+
+      let itemsList: any[] = [];
+      if (Array.isArray(o.items) && o.items.length > 0) {
+        itemsList = o.items;
+      } else if ((o as any).itemsJson) {
+        try {
+          itemsList = JSON.parse((o as any).itemsJson);
+        } catch { }
+      }
+
+      if (itemsList.length === 0) {
+        rows.push({
+          id: `${o.id}-generic`,
+          orderId: o.id,
+          displayOrderId: o.displayId || o.id,
+          dateStr,
+          displayDate: formattedDate,
+          displayTime: displayTime || o.time || "-",
+          periodGroup,
+          seat: o.seat || "-",
+          locationName: locationLabel,
+          employeeName: empLabel,
+          itemName: "Order " + (o.displayId || o.id),
+          quantity: 1,
+          price: Number(o.total) || 0,
+          amount: Number(o.total) || 0,
+        });
+      } else {
+        itemsList.forEach((it, idx) => {
+          const qty = Number(it.qty) || 1;
+          const price = Number(it.price) || 0;
+          const itTotal = qty * price;
+          rows.push({
+            id: `${o.id}-${idx}`,
+            orderId: o.id,
+            displayOrderId: o.displayId || o.id,
+            dateStr,
+            displayDate: formattedDate,
+            displayTime: displayTime || o.time || "-",
+            periodGroup,
+            seat: o.seat || "-",
+            locationName: locationLabel,
+            employeeName: empLabel,
+            itemName: (it.name || "Item").trim(),
+            quantity: qty,
+            price,
+            amount: itTotal,
+          });
+        });
+      }
+    });
+
+    return rows;
+  }, [appliedBreakFilter, breakFilteredOrders, orgTimezone, spendingPeriodMode]);
+
+  // Calculate Total Net Amount for all matching orders during the break filter
+  const breakTotalNetAmount = useMemo(() => {
+    return breakFilteredOrders.reduce((acc, o) => acc + (Number(o.total) || 0), 0);
+  }, [breakFilteredOrders]);
+
+  // Aggregate break orders by Date for Weekly and Monthly summary table views
+  interface BreakDateSummary {
+    dateStr: string;
+    displayDate: string;
+    dayOfWeek: string;
+    totalQuantity: number;
+    totalAmount: number;
+    ordersCount: number;
+  }
+
+  const breakDateSummaries = useMemo(() => {
+    if (!appliedBreakFilter) return [];
+
+    const map: Record<string, BreakDateSummary> = {};
+
+    breakFilteredOrders.forEach((o) => {
+      const dateField = o.createdAt || new Date().toISOString();
+      const { dateStr } = getTimeInTimezone(dateField, orgTimezone);
+      if (!dateStr) return;
+
+      let formattedDate = dateStr;
+      let dayOfWeek = "";
+      try {
+        const [y, m, d] = dateStr.split("-").map(Number);
+        const dateObj = new Date(y, m - 1, d);
+        formattedDate = dateObj.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        dayOfWeek = dateObj.toLocaleDateString("en-US", { weekday: "short" });
+      } catch { }
+
+      if (!map[dateStr]) {
+        map[dateStr] = {
+          dateStr,
+          displayDate: formattedDate,
+          dayOfWeek,
+          totalQuantity: 0,
+          totalAmount: 0,
+          ordersCount: 0,
+        };
+      }
+
+      // Compute total quantity of items in this order
+      let orderQty = 0;
+      if (Array.isArray(o.items) && o.items.length > 0) {
+        orderQty = o.items.reduce((sum, it) => sum + (Number(it.qty) || 1), 0);
+      } else if ((o as any).itemsJson) {
+        try {
+          const parsed = JSON.parse((o as any).itemsJson);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            orderQty = parsed.reduce((sum, it) => sum + (Number(it.qty) || 1), 0);
+          } else {
+            orderQty = 1;
+          }
+        } catch {
+          orderQty = 1;
+        }
+      } else {
+        orderQty = 1;
+      }
+
+      map[dateStr].totalQuantity += orderQty;
+      map[dateStr].totalAmount += Number(o.total) || 0;
+      map[dateStr].ordersCount += 1;
+    });
+
+    // Sort descending by date
+    return Object.values(map).sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+  }, [appliedBreakFilter, breakFilteredOrders, orgTimezone]);
+
+  // Filtered Date Summaries based on breakSearchQuery
+  const filteredBreakDateSummaries = useMemo(() => {
+    const q = breakSearchQuery.trim().toLowerCase();
+    if (!q) return breakDateSummaries;
+    return breakDateSummaries.filter(
+      (s) =>
+        s.displayDate.toLowerCase().includes(q) ||
+        s.dayOfWeek.toLowerCase().includes(q) ||
+        s.dateStr.includes(q)
+    );
+  }, [breakDateSummaries, breakSearchQuery]);
+
+  const breakDateTotalPages = Math.ceil(filteredBreakDateSummaries.length / breakPageSize) || 1;
+  const paginatedBreakDateSummaries = useMemo(() => {
+    const start = (breakCurrentPage - 1) * breakPageSize;
+    return filteredBreakDateSummaries.slice(start, start + breakPageSize);
+  }, [filteredBreakDateSummaries, breakCurrentPage, breakPageSize]);
+
+  // Search filtering for Break report individual rows (optionally filtered by selectedBreakDateDrilldown)
+  const filteredBreakRows = useMemo(() => {
+    let sourceRows = breakReportRows;
+    if (selectedBreakDateDrilldown) {
+      sourceRows = sourceRows.filter((r) => r.dateStr === selectedBreakDateDrilldown);
+    }
+
+    const q = breakSearchQuery.trim().toLowerCase();
+    if (!q) return sourceRows;
+    return sourceRows.filter(
+      (r) =>
+        r.itemName.toLowerCase().includes(q) ||
+        r.displayDate.toLowerCase().includes(q) ||
+        r.displayOrderId.toLowerCase().includes(q) ||
+        r.seat.toLowerCase().includes(q) ||
+        r.locationName.toLowerCase().includes(q) ||
+        r.employeeName.toLowerCase().includes(q)
+    );
+  }, [breakReportRows, selectedBreakDateDrilldown, breakSearchQuery]);
+
+  const breakTotalPages = Math.ceil(filteredBreakRows.length / breakPageSize) || 1;
+  const paginatedBreakRows = useMemo(() => {
+    const start = (breakCurrentPage - 1) * breakPageSize;
+    return filteredBreakRows.slice(start, start + breakPageSize);
+  }, [filteredBreakRows, breakCurrentPage, breakPageSize]);
 
   // 5. Aggregate Orders into Daily Records matching the screenshot table exactly
   const dailyRecords = useMemo(() => {
@@ -432,6 +887,7 @@ export default function AdminReportPage() {
       }
     } else {
       setSelectedDayRecord(null);
+    setSelectedBreakDateDrilldown(null);
     }
   }, [dailyRecords]);
 
@@ -489,106 +945,810 @@ export default function AdminReportPage() {
                 className={`transition-all duration-300 w-full ${selectedDayRecord ? "lg:w-[63%] xl:w-[65%]" : "lg:w-full"
                   }`}
               >
-                {/* Header Title + Month Selector */}
-                <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h1 className="text-3xl font-extrabold tracking-tight text-[#1E140E]">
-                      Daily Reports
-                    </h1>
-                    <p className="mt-1 text-sm font-medium text-[#7C6B5E]">
-                      Monthly office cafe expenditure, daily spending, and order inspection
-                    </p>
+                {/* Header Title + Month Selector / Filter Controls */}
+                <div className="mb-6 flex flex-col gap-4">
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h1 className="text-3xl font-extrabold tracking-tight text-[#1E140E]">
+                        {appliedBreakFilter ? "Break Reports" : "Daily Reports"}
+                      </h1>
+                      <p className="mt-1 text-sm font-medium text-[#7C6B5E]">
+                        {appliedBreakFilter
+                          ? `Orders placed during "${appliedBreakFilter.breakSession.name}" (${appliedBreakFilter.breakSession.startTime} - ${appliedBreakFilter.breakSession.endTime}) from ${appliedBreakFilter.fromDate} to ${appliedBreakFilter.toDate}`
+                          : "Monthly office cafe expenditure, daily spending, and order inspection"}
+                      </p>
+                    </div>
+
+                    {/* Right Action: Date Range Picker / Back Button */}
+                    <div className="flex items-center gap-3">
+                      {appliedBreakFilter ? (
+                        <button
+                          type="button"
+                          onClick={handleBackToMonthlyReports}
+                          className="inline-flex items-center gap-2 rounded-2xl border border-[#DEC5B0] bg-white px-4 py-2.5 text-xs font-bold text-[#75472D] shadow-sm transition hover:bg-[#FAF8F5] cursor-pointer"
+                        >
+                          <ArrowLeft size={16} />
+                          <span>Back to Monthly Reports</span>
+                        </button>
+                      ) : (
+                        <div className="relative flex items-center" ref={monthPickerRef}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const [y, m] = selectedMonth.split("-").map(Number);
+                              setCalendarViewDate(new Date(y, m - 1, 1));
+                              setCalendarOpenField((prev) => (prev === "month" ? null : "month"));
+                            }}
+                            className="relative flex items-center gap-2 cursor-pointer rounded-2xl border border-[#DEC5B0] bg-white hover:bg-[#FAF8F5] transition-colors px-4 py-2 text-xs font-bold text-[#342219] shadow-sm"
+                          >
+                            <Calendar size={15} className="text-[#75472D]" />
+                            <span>{activeDateRange.formattedRangeDisplay}</span>
+                            <ChevronDown size={14} className="ml-1 text-[#8A7667]" />
+                          </button>
+
+                          {/* Custom Month Picker Popover */}
+                          {calendarOpenField === "month" && (
+                            <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-[#DEC5B0]/70 bg-white p-4 shadow-xl backdrop-blur-md animate-in fade-in-50 zoom-in-95 duration-150 text-[#342219]">
+                              <div className="flex items-center justify-between pb-3 border-b border-[#F0E6DD]">
+                                <h3 className="text-sm font-bold text-[#342219]">
+                                  {calendarViewDate.getFullYear()}
+                                </h3>
+                                <div className="flex items-center gap-1 text-[#75472D]">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCalendarViewDate(
+                                        new Date(
+                                          calendarViewDate.getFullYear() - 1,
+                                          calendarViewDate.getMonth(),
+                                          1
+                                        )
+                                      )
+                                    }
+                                    className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                  >
+                                    <ChevronLeft size={16} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCalendarViewDate(
+                                        new Date(
+                                          calendarViewDate.getFullYear() + 1,
+                                          calendarViewDate.getMonth(),
+                                          1
+                                        )
+                                      )
+                                    }
+                                    className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                  >
+                                    <ChevronRight size={16} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Month Grid (12 months) */}
+                              <div className="grid grid-cols-3 gap-2 pt-3 text-xs">
+                                {[
+                                  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+                                ].map((mName, idx) => {
+                                  const y = calendarViewDate.getFullYear();
+                                  const monthKey = `${y}-${String(idx + 1).padStart(2, "0")}`;
+                                  const isSelected = selectedMonth === monthKey;
+
+                                  return (
+                                    <button
+                                      key={mName}
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedMonth(monthKey);
+                                        setCurrentPage(1);
+                                        setCalendarOpenField(null);
+                                      }}
+                                      className={`py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
+                                        isSelected
+                                          ? "bg-[#70452D] text-white font-bold shadow-xs"
+                                          : "hover:bg-[#FAF8F5] text-[#342219]"
+                                      }`}
+                                    >
+                                      {mName}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="mt-4 pt-3 border-t border-[#F0E6DD] flex items-center justify-between text-xs font-bold">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const now = new Date();
+                                    const curMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+                                    setSelectedMonth(curMonth);
+                                    setCurrentPage(1);
+                                    setCalendarOpenField(null);
+                                  }}
+                                  className="text-[#75472D] hover:underline cursor-pointer"
+                                >
+                                  This Month
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setCalendarOpenField(null)}
+                                  className="text-[#8A7667] hover:text-[#342219] cursor-pointer"
+                                >
+                                  Close
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* Date Range Picker Input */}
-                  <div className="relative flex items-center">
-                    <label className="relative flex items-center gap-2 cursor-pointer rounded-2xl border border-[#DEC5B0] bg-white hover:bg-[#FAF8F5] transition-colors px-4 py-2.5 text-xs font-bold text-[#342219] shadow-sm">
-                      <Calendar size={16} className="text-[#75472D] pointer-events-none" />
-                      <span className="pointer-events-none">{activeDateRange.formattedRangeDisplay}</span>
-                      <input
-                        type="month"
-                        value={selectedMonth}
-                        onChange={(e) => {
-                          if (e.target.value) {
-                            setSelectedMonth(e.target.value);
-                            setCurrentPage(1);
-                          }
-                        }}
-                        onClick={(e) => {
-                          try {
-                            (e.currentTarget as any).showPicker?.();
-                          } catch {}
-                        }}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
-                      />
-                      <ChevronDown size={15} className="ml-1 text-[#8A7667] pointer-events-none" />
-                    </label>
+                  {/* Step 1: Filter Controls Card (Break Filter, From Date, To Date, Filter Button, Back Button) */}
+                  <div className="relative z-40 rounded-2xl border border-[#EEE5DC] bg-white/90 p-4 shadow-sm backdrop-blur-xs">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      {/* Left: Filter Controls Fields */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        {/* Break Filter Dropdown (Custom Searchable Dropdown matching reference UI) */}
+                        <div className="relative flex items-center gap-2" ref={breakDropdownRef}>
+                          <label className="text-xs font-bold text-[#75472D] flex items-center gap-1.5 whitespace-nowrap">
+                            <Coffee size={14} className="text-[#75472D]" />
+                            <span>Break:</span>
+                          </label>
+
+                          {/* Trigger Button */}
+                          <button
+                            type="button"
+                            onClick={() => setIsBreakDropdownOpen((prev) => !prev)}
+                            className="flex items-center justify-between gap-3 rounded-2xl border border-[#DEC5B0] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#342219] shadow-2xs outline-none transition focus:border-[#75472D] hover:bg-[#FAF8F5] cursor-pointer min-w-[210px]"
+                          >
+                            <span className="truncate">
+                              {(() => {
+                                const selected = configuredBreaks.find((b) => b.id === selectedBreakId);
+                                if (!selected) return "Select Break Session...";
+                                return `${selected.name} (${selected.startTime} - ${selected.endTime})`;
+                              })()}
+                            </span>
+                            <ChevronDown
+                              size={15}
+                              className={`text-[#8A7667] transition-transform duration-200 ${
+                                isBreakDropdownOpen ? "rotate-180" : ""
+                              }`}
+                            />
+                          </button>
+
+                          {/* Dropdown Menu Modal / Popover */}
+                          {isBreakDropdownOpen && (
+                            <div className="absolute left-0 top-full z-50 mt-2 w-80 rounded-2xl border border-[#DEC5B0]/70 bg-white p-3 shadow-xl backdrop-blur-md animate-in fade-in-50 zoom-in-95 duration-150">
+                              {/* Search Input matching reference screenshot */}
+                              <div className="relative mb-2.5">
+                                <Search
+                                  size={15}
+                                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                                />
+                                <input
+                                  type="text"
+                                  value={breakDropdownSearch}
+                                  onChange={(e) => setBreakDropdownSearch(e.target.value)}
+                                  placeholder="Search break sessions..."
+                                  autoFocus
+                                  className="w-full rounded-2xl border border-[#E8DED4] bg-[#FAF8F5]/80 py-2 pl-9 pr-3 text-xs text-[#342219] placeholder:text-[#A08C7D] outline-none transition focus:border-[#75472D] focus:bg-white focus:ring-1 focus:ring-[#75472D]/20"
+                                />
+                              </div>
+
+                              <div className="h-[1px] w-full bg-[#F0E6DD] mb-2" />
+
+                              {/* Break Options List */}
+                              <div className="max-h-60 overflow-y-auto space-y-1 pr-1">
+                                {configuredBreaks
+                                  .filter((b) => {
+                                    const q = breakDropdownSearch.trim().toLowerCase();
+                                    if (!q) return true;
+                                    return (
+                                      b.name.toLowerCase().includes(q) ||
+                                      (b.startTime && b.startTime.includes(q)) ||
+                                      (b.endTime && b.endTime.includes(q))
+                                    );
+                                  })
+                                  .map((b) => {
+                                    const isSelected = selectedBreakId === b.id;
+                                    // Generate initials for avatar circle like reference screenshot (e.g., "B1", "MB", etc.)
+                                    const initials = b.name
+                                      .split(" ")
+                                      .map((n) => n[0])
+                                      .join("")
+                                      .slice(0, 2)
+                                      .toUpperCase() || "BR";
+
+                                    return (
+                                      <button
+                                        key={b.id}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedBreakId(b.id);
+                                          setBreakFilterError(null);
+                                          setIsBreakDropdownOpen(false);
+                                        }}
+                                        className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left transition-colors cursor-pointer ${
+                                          isSelected
+                                            ? "bg-[#FAF3EB] text-[#75472D]"
+                                            : "hover:bg-[#FAF8F5] text-[#342219]"
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-3">
+                                          {/* Circle Avatar badge like screenshot */}
+                                          <div
+                                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                                              isSelected
+                                                ? "bg-[#D9C4B3] text-[#5C3620]"
+                                                : "bg-[#EADBCE]/80 text-[#75472D]"
+                                            }`}
+                                          >
+                                            {initials}
+                                          </div>
+                                          <div>
+                                            <p className="text-xs font-bold leading-tight">
+                                              {b.name}
+                                            </p>
+                                            <p className="text-[11px] text-[#8A7667] leading-tight mt-0.5">
+                                              {b.startTime} - {b.endTime}
+                                            </p>
+                                          </div>
+                                        </div>
+
+                                        {isSelected && (
+                                          <Check size={16} className="text-[#75472D] stroke-[2.5]" />
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+
+                                {configuredBreaks.length === 0 ? (
+                                  <p className="py-4 text-center text-xs text-[#8A7667]">
+                                    No break sessions configured in Working Hours.
+                                  </p>
+                                ) : configuredBreaks.filter((b) => {
+                                    const q = breakDropdownSearch.trim().toLowerCase();
+                                    if (!q) return true;
+                                    return (
+                                      b.name.toLowerCase().includes(q) ||
+                                      (b.startTime && b.startTime.includes(q)) ||
+                                      (b.endTime && b.endTime.includes(q))
+                                    );
+                                  }).length === 0 ? (
+                                  <p className="py-4 text-center text-xs text-[#8A7667]">
+                                    No matching break sessions found.
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Spending Filters: Daily, Weekly, Monthly (Alongside Break Dropdown) */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSpendingPeriodMode("daily");
+                              setBreakFilterError(null);
+                              if (selectedBreakId && appliedBreakFilter) {
+                                handleApplyBreakFilter("daily");
+                              }
+                            }}
+                            className={`rounded-2xl px-4 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                              spendingPeriodMode === "daily"
+                                ? "bg-[#75472D] text-white shadow-xs"
+                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF8F5]"
+                            }`}
+                          >
+                            Daily
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSpendingPeriodMode("weekly");
+                              setBreakFilterError(null);
+                              if (selectedBreakId && appliedBreakFilter) {
+                                handleApplyBreakFilter("weekly");
+                              }
+                            }}
+                            className={`rounded-2xl px-4 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                              spendingPeriodMode === "weekly"
+                                ? "bg-[#75472D] text-white shadow-xs"
+                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF8F5]"
+                            }`}
+                          >
+                            Weekly
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSpendingPeriodMode("monthly");
+                              setBreakFilterError(null);
+                              if (selectedBreakId && appliedBreakFilter) {
+                                handleApplyBreakFilter("monthly");
+                              }
+                            }}
+                            className={`rounded-2xl px-4 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                              spendingPeriodMode === "monthly"
+                                ? "bg-[#75472D] text-white shadow-xs"
+                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF8F5]"
+                            }`}
+                          >
+                            Monthly
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCustomDateRange((prev) => !prev);
+                              setBreakFilterError(null);
+                            }}
+                            className={`rounded-2xl px-3.5 py-1.5 text-xs font-bold transition shadow-2xs cursor-pointer ${
+                              showCustomDateRange
+                                ? "bg-[#75472D] text-white shadow-xs"
+                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF8F5]"
+                            }`}
+                          >
+                            Custom
+                          </button>
+                        </div>
+
+                        {/* Custom Date Range Pill matching 2nd image */}
+                        {showCustomDateRange && (
+                          <div className="flex items-center rounded-2xl border border-[#DEC5B0] bg-white px-3.5 py-1.5 text-xs font-semibold text-[#342219] shadow-2xs gap-2.5">
+                            {/* From Date Trigger */}
+                            <div className="relative flex items-center gap-1.5" ref={fromDatePickerRef}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (filterFromDate) {
+                                    const [y, m, d] = filterFromDate.split("-").map(Number);
+                                    setCalendarViewDate(new Date(y, m - 1, d));
+                                  } else {
+                                    setCalendarViewDate(new Date());
+                                  }
+                                  setCalendarOpenField((prev) => (prev === "from" ? null : "from"));
+                                }}
+                                className="flex items-center gap-2 text-xs font-medium cursor-pointer text-[#342219] outline-none"
+                              >
+                                <Calendar size={14} className="text-[#8A7667]" />
+                                <span className={filterFromDate ? "text-[#342219] font-medium" : "text-[#8A7667]"}>
+                                  {filterFromDate
+                                    ? (() => {
+                                        const [y, m, d] = filterFromDate.split("-");
+                                        return `${d}-${m}-${y}`;
+                                      })()
+                                    : "dd-mm-yyyy"}
+                                </span>
+                              </button>
+
+                              {/* Custom Calendar Popover for From */}
+                              {calendarOpenField === "from" && (
+                                <div className="absolute left-0 top-full z-50 mt-2 w-72 rounded-2xl border border-[#DEC5B0]/70 bg-white p-4 shadow-xl backdrop-blur-md animate-in fade-in-50 zoom-in-95 duration-150 text-[#342219]">
+                                  {/* Header: Month Year + Prev/Next controls */}
+                                  <div className="flex items-center justify-between pb-3 border-b border-[#F0E6DD]">
+                                    <h3 className="text-sm font-bold text-[#342219]">
+                                      {calendarViewDate.toLocaleString("en-US", { month: "long", year: "numeric" })}
+                                    </h3>
+                                    <div className="flex items-center gap-1 text-[#75472D]">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCalendarViewDate(
+                                            new Date(
+                                              calendarViewDate.getFullYear(),
+                                              calendarViewDate.getMonth() - 1,
+                                              1
+                                            )
+                                          )
+                                        }
+                                        className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                      >
+                                        <ChevronLeft size={16} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCalendarViewDate(
+                                            new Date(
+                                              calendarViewDate.getFullYear(),
+                                              calendarViewDate.getMonth() + 1,
+                                              1
+                                            )
+                                          )
+                                        }
+                                        className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                      >
+                                        <ChevronRight size={16} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Weekdays row: Su, Mo, Tu, We, Th, Fr, Sa */}
+                                  <div className="grid grid-cols-7 gap-1 pt-3 text-center text-xs font-semibold text-[#8A7667]">
+                                    <span>Su</span>
+                                    <span>Mo</span>
+                                    <span>Tu</span>
+                                    <span>We</span>
+                                    <span>Th</span>
+                                    <span>Fr</span>
+                                    <span>Sa</span>
+                                  </div>
+
+                                  {/* Days Grid */}
+                                  <div className="grid grid-cols-7 gap-1 pt-2 text-center text-xs">
+                                    {(() => {
+                                      const year = calendarViewDate.getFullYear();
+                                      const month = calendarViewDate.getMonth();
+                                      const firstDayIndex = new Date(year, month, 1).getDay();
+                                      const totalDays = new Date(year, month + 1, 0).getDate();
+                                      const days = [];
+
+                                      for (let i = 0; i < firstDayIndex; i++) {
+                                        days.push(<div key={`empty-${i}`} className="h-8" />);
+                                      }
+
+                                      for (let day = 1; day <= totalDays; day++) {
+                                        const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                                        const isSelected = filterFromDate === dateStr;
+
+                                        days.push(
+                                          <button
+                                            key={day}
+                                            type="button"
+                                            onClick={() => {
+                                              setFilterFromDate(dateStr);
+                                              setBreakFilterError(null);
+                                              setCalendarOpenField(null);
+                                            }}
+                                            className={`h-8 w-8 mx-auto flex items-center justify-center rounded-full font-medium transition cursor-pointer ${
+                                              isSelected
+                                                ? "bg-[#70452D] text-white font-bold shadow-xs"
+                                                : "hover:bg-[#FAF8F5] text-[#342219]"
+                                            }`}
+                                          >
+                                            {day}
+                                          </button>
+                                        );
+                                      }
+                                      return days;
+                                    })()}
+                                  </div>
+
+                                  {/* Footer: Today & Close */}
+                                  <div className="mt-4 pt-3 border-t border-[#F0E6DD] flex items-center justify-between text-xs font-bold">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const now = new Date();
+                                        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                                        setFilterFromDate(todayStr);
+                                        setBreakFilterError(null);
+                                        setCalendarOpenField(null);
+                                      }}
+                                      className="text-[#75472D] hover:underline cursor-pointer"
+                                    >
+                                      Today
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCalendarOpenField(null)}
+                                      className="text-[#8A7667] hover:text-[#342219] cursor-pointer"
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* "to" separator text */}
+                            <span className="text-[#C4B2A3] text-xs font-normal">to</span>
+
+                            {/* To Date Trigger */}
+                            <div className="relative flex items-center gap-1.5" ref={toDatePickerRef}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (filterToDate) {
+                                    const [y, m, d] = filterToDate.split("-").map(Number);
+                                    setCalendarViewDate(new Date(y, m - 1, d));
+                                  } else if (filterFromDate) {
+                                    const [y, m, d] = filterFromDate.split("-").map(Number);
+                                    setCalendarViewDate(new Date(y, m - 1, d));
+                                  } else {
+                                    setCalendarViewDate(new Date());
+                                  }
+                                  setCalendarOpenField((prev) => (prev === "to" ? null : "to"));
+                                }}
+                                className="flex items-center gap-2 text-xs font-medium cursor-pointer text-[#342219] outline-none"
+                              >
+                                <span className={filterToDate ? "text-[#342219] font-medium" : "text-[#8A7667]"}>
+                                  {filterToDate
+                                    ? (() => {
+                                        const [y, m, d] = filterToDate.split("-");
+                                        return `${d}-${m}-${y}`;
+                                      })()
+                                    : "dd-mm-yyyy"}
+                                </span>
+                                <Calendar size={14} className="text-[#8A7667]" />
+                              </button>
+
+                              {/* Custom Calendar Popover for To */}
+                              {calendarOpenField === "to" && (
+                                <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-[#DEC5B0]/70 bg-white p-4 shadow-xl backdrop-blur-md animate-in fade-in-50 zoom-in-95 duration-150 text-[#342219]">
+                                  {/* Header: Month Year + Prev/Next controls */}
+                                  <div className="flex items-center justify-between pb-3 border-b border-[#F0E6DD]">
+                                    <h3 className="text-sm font-bold text-[#342219]">
+                                      {calendarViewDate.toLocaleString("en-US", { month: "long", year: "numeric" })}
+                                    </h3>
+                                    <div className="flex items-center gap-1 text-[#75472D]">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCalendarViewDate(
+                                            new Date(
+                                              calendarViewDate.getFullYear(),
+                                              calendarViewDate.getMonth() - 1,
+                                              1
+                                            )
+                                          )
+                                        }
+                                        className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                      >
+                                        <ChevronLeft size={16} />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setCalendarViewDate(
+                                            new Date(
+                                              calendarViewDate.getFullYear(),
+                                              calendarViewDate.getMonth() + 1,
+                                              1
+                                            )
+                                          )
+                                        }
+                                        className="p-1 rounded-lg hover:bg-[#FAF8F5] cursor-pointer transition"
+                                      >
+                                        <ChevronRight size={16} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  {/* Weekdays row: Su, Mo, Tu, We, Th, Fr, Sa */}
+                                  <div className="grid grid-cols-7 gap-1 pt-3 text-center text-xs font-semibold text-[#8A7667]">
+                                    <span>Su</span>
+                                    <span>Mo</span>
+                                    <span>Tu</span>
+                                    <span>We</span>
+                                    <span>Th</span>
+                                    <span>Fr</span>
+                                    <span>Sa</span>
+                                  </div>
+
+                                  {/* Days Grid */}
+                                  <div className="grid grid-cols-7 gap-1 pt-2 text-center text-xs">
+                                    {(() => {
+                                      const year = calendarViewDate.getFullYear();
+                                      const month = calendarViewDate.getMonth();
+                                      const firstDayIndex = new Date(year, month, 1).getDay();
+                                      const totalDays = new Date(year, month + 1, 0).getDate();
+                                      const days = [];
+
+                                      for (let i = 0; i < firstDayIndex; i++) {
+                                        days.push(<div key={`empty-${i}`} className="h-8" />);
+                                      }
+
+                                      for (let day = 1; day <= totalDays; day++) {
+                                        const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+                                        const isSelected = filterToDate === dateStr;
+
+                                        days.push(
+                                          <button
+                                            key={day}
+                                            type="button"
+                                            onClick={() => {
+                                              setFilterToDate(dateStr);
+                                              setBreakFilterError(null);
+                                              setCalendarOpenField(null);
+                                            }}
+                                            className={`h-8 w-8 mx-auto flex items-center justify-center rounded-full font-medium transition cursor-pointer ${
+                                              isSelected
+                                                ? "bg-[#70452D] text-white font-bold shadow-xs"
+                                                : "hover:bg-[#FAF8F5] text-[#342219]"
+                                            }`}
+                                          >
+                                            {day}
+                                          </button>
+                                        );
+                                      }
+                                      return days;
+                                    })()}
+                                  </div>
+
+                                  {/* Footer: Today & Close */}
+                                  <div className="mt-4 pt-3 border-t border-[#F0E6DD] flex items-center justify-between text-xs font-bold">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        const now = new Date();
+                                        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                                        setFilterToDate(todayStr);
+                                        setBreakFilterError(null);
+                                        setCalendarOpenField(null);
+                                      }}
+                                      className="text-[#75472D] hover:underline cursor-pointer"
+                                    >
+                                      Today
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setCalendarOpenField(null)}
+                                      className="text-[#8A7667] hover:text-[#342219] cursor-pointer"
+                                    >
+                                      Close
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Action Buttons (Filter & Back) */}
+                      <div className="flex items-center gap-2.5 pt-1 lg:pt-0">
+                        {/* Filter Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleApplyBreakFilter()}
+                          disabled={isBreakFiltering}
+                          className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-[#75472D] to-[#9A6747] px-4.5 py-2 text-xs font-bold text-white shadow-sm transition hover:shadow hover:-translate-y-0.5 disabled:opacity-50 cursor-pointer"
+                        >
+                          {isBreakFiltering ? (
+                            <>
+                              <RotateCw size={13} className="animate-spin" />
+                              <span>Filtering…</span>
+                            </>
+                          ) : (
+                            <>
+                              <Filter size={13} />
+                              <span>Apply Filter</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Filter error message */}
+                    {breakFilterError && (
+                      <p className="mt-2.5 text-xs font-semibold text-rose-600">
+                        {breakFilterError}
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 {/* Monthly Cafe Spending Section (Office Expenditure) */}
-                <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
-                  {/* Total Monthly Spending */}
-                  <div className="rounded-2xl border border-[#DEC5B0] bg-gradient-to-br from-white to-[#FAF6F1] p-4.5 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-[#75472D] uppercase tracking-wide">
-                        Monthly Total Spending
-                      </span>
-                      <div className="rounded-full bg-[#75472D]/10 p-1.5 text-[#75472D]">
-                        <Wallet size={16} />
+                {appliedBreakFilter ? (
+                  /* Break Filter Mode: Total Net Amount Summary Card */
+                  <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    {/* Total Net Amount for Filtered Orders */}
+                    <div className="rounded-2xl border border-[#DEC5B0] bg-gradient-to-br from-white to-[#FAF6F1] p-4.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-[#75472D] uppercase tracking-wide">
+                          {spendingPeriodMode === "daily"
+                            ? "Daily Total Net Amount"
+                            : spendingPeriodMode === "weekly"
+                            ? "Weekly Total Net Amount"
+                            : "Monthly Total Net Amount"}
+                        </span>
+                        <div className="rounded-full bg-[#75472D]/10 p-1.5 text-[#75472D]">
+                          <Wallet size={16} />
+                        </div>
                       </div>
+                      <div className="text-2xl font-black text-[#1E140E]">
+                        {formatPrice(breakTotalNetAmount)}
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#8A7667]">
+                        {spendingPeriodMode === "daily"
+                          ? `Daily spend during ${appliedBreakFilter.breakSession.name}`
+                          : spendingPeriodMode === "weekly"
+                          ? `Weekly spend during ${appliedBreakFilter.breakSession.name}`
+                          : `Monthly spend during ${appliedBreakFilter.breakSession.name}`}
+                      </p>
                     </div>
-                    <div className="text-2xl font-black text-[#1E140E]">
-                      {formatPrice(monthlySpendingSummary.totalSpending)}                    </div>
-                    <p className="mt-1 text-[11px] text-[#8A7667]">
-                      Office cafe expense across {monthlySpendingSummary.totalDaysActive} active days
-                    </p>
-                  </div>
 
-                  {/* Morning vs Evening Breakdown */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
-                        Session Spending
-                      </span>
-                      <div className="flex items-center gap-1 text-[#8E6548]">
-                        <Sun size={15} className="text-amber-500" />
-                        <Moon size={15} className="text-orange-500" />
+                    {/* Total Orders Placed in Break */}
+                    <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
+                          Matching Orders
+                        </span>
+                        <div className="rounded-full bg-emerald-50 p-1.5 text-emerald-600">
+                          <TrendingUp size={16} />
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center justify-between pt-0.5">
-                      <div>
-                        <span className="text-[10px] font-semibold text-[#8A7667] block">Morning</span>
-                        <span className="text-sm font-extrabold text-[#1E140E]">
-                          {formatPrice(monthlySpendingSummary.morningSpending)}                           </span>
+                      <div className="text-2xl font-black text-[#1E140E]">
+                        {breakFilteredOrders.length}
                       </div>
-                      <div className="h-7 w-[1px] bg-[#EEE5DC]"></div>
-                      <div>
-                        <span className="text-[10px] font-semibold text-[#8A7667] block">Evening</span>
-                        <span className="text-sm font-extrabold text-[#1E140E]">
-                          {formatPrice(monthlySpendingSummary.eveningSpending)}                        </span>
-                      </div>
+                      <p className="mt-1 text-[11px] text-[#8A7667]">
+                        {breakReportRows.length} item line(s) between {appliedBreakFilter.fromDate} and {appliedBreakFilter.toDate}
+                      </p>
                     </div>
                   </div>
+                ) : (
+                  <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    {/* Total Monthly Spending */}
+                    <div className="rounded-2xl border border-[#DEC5B0] bg-gradient-to-br from-white to-[#FAF6F1] p-4.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-[#75472D] uppercase tracking-wide">
+                          Monthly Total Spending
+                        </span>
+                        <div className="rounded-full bg-[#75472D]/10 p-1.5 text-[#75472D]">
+                          <Wallet size={16} />
+                        </div>
+                      </div>
+                      <div className="text-2xl font-black text-[#1E140E]">
+                        {formatPrice(monthlySpendingSummary.totalSpending)}                    </div>
+                      <p className="mt-1 text-[11px] text-[#8A7667]">
+                        Office cafe expense across {monthlySpendingSummary.totalDaysActive} active days
+                      </p>
+                    </div>
 
-                  {/* Total Office Orders Placed */}
-                  <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
-                    <div className="flex items-center justify-between mb-1.5">
-                      <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
-                        Total Office Orders
-                      </span>
-                      <div className="rounded-full bg-emerald-50 p-1.5 text-emerald-600">
-                        <TrendingUp size={16} />
+                    {/* Morning vs Evening Breakdown */}
+                    <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
+                          Session Spending
+                        </span>
+                        <div className="flex items-center gap-1 text-[#8E6548]">
+                          <Sun size={15} className="text-amber-500" />
+                          <Moon size={15} className="text-orange-500" />
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between pt-0.5">
+                        <div>
+                          <span className="text-[10px] font-semibold text-[#8A7667] block">Morning</span>
+                          <span className="text-sm font-extrabold text-[#1E140E]">
+                            {formatPrice(monthlySpendingSummary.morningSpending)}                           </span>
+                        </div>
+                        <div className="h-7 w-[1px] bg-[#EEE5DC]"></div>
+                        <div>
+                          <span className="text-[10px] font-semibold text-[#8A7667] block">Evening</span>
+                          <span className="text-sm font-extrabold text-[#1E140E]">
+                            {formatPrice(monthlySpendingSummary.eveningSpending)}                        </span>
+                        </div>
                       </div>
                     </div>
-                    <div className="text-2xl font-black text-[#1E140E]">
-                      {monthlySpendingSummary.totalOrdersCount}
+
+                    {/* Total Office Orders Placed */}
+                    <div className="rounded-2xl border border-[#EEE5DC] bg-white p-4.5 shadow-sm">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-bold text-[#6B574B] uppercase tracking-wide">
+                          Total Office Orders
+                        </span>
+                        <div className="rounded-full bg-emerald-50 p-1.5 text-emerald-600">
+                          <TrendingUp size={16} />
+                        </div>
+                      </div>
+                      <div className="text-2xl font-black text-[#1E140E]">
+                        {monthlySpendingSummary.totalOrdersCount}
+                      </div>
+                      <p className="mt-1 text-[11px] text-[#8A7667]">
+                        Employee cafe orders fulfilled this month
+                      </p>
                     </div>
-                    <p className="mt-1 text-[11px] text-[#8A7667]">
-                      Employee cafe orders fulfilled this month
-                    </p>
                   </div>
-                </div>
+                )}
 
                 {/* Search Bar matching screenshot */}
                 <div className="mb-5">
@@ -599,152 +1759,441 @@ export default function AdminReportPage() {
                     />
                     <input
                       type="text"
-                      value={searchDateQuery}
+                      value={appliedBreakFilter ? breakSearchQuery : searchDateQuery}
                       onChange={(e) => {
-                        setSearchDateQuery(e.target.value);
-                        setCurrentPage(1);
+                        if (appliedBreakFilter) {
+                          setBreakSearchQuery(e.target.value);
+                          setBreakCurrentPage(1);
+                        } else {
+                          setSearchDateQuery(e.target.value);
+                          setCurrentPage(1);
+                        }
                       }}
-                      placeholder="Search by date (e.g. 22, Thu), or item name..."
+                      placeholder={
+                        appliedBreakFilter
+                          ? "Search by item name, date, order ID, seat, or employee..."
+                          : "Search by date (e.g. 22, Thu), or item name..."
+                      }
                       className="w-full rounded-2xl border border-[#DEC5B0]/70 bg-white py-3 pl-11 pr-4 text-sm text-[#342219] placeholder:text-[#A8988B] outline-none transition focus:border-[#75472D] focus:ring-2 focus:ring-[#75472D]/15"
                     />
                   </div>
                 </div>
 
-                {/* Daily Reports Table Card */}
-                <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead className="border-b border-[#F0E6DD] bg-[#FAF8F5] text-xs font-bold text-[#6B574B]">
-                        <tr>
-                          <th className="py-4 pl-6 pr-4">Date</th>
-                          <th className="px-4 py-4">
-                            Morning <span className="block text-[11px] font-normal text-[#9A8778]">(Subtotal)</span>
-                          </th>
-                          <th className="px-4 py-4">
-                            Evening <span className="block text-[11px] font-normal text-[#9A8778]">(Subtotal)</span>
-                          </th>
-                          <th className="px-4 py-4">Adjustment</th>
-                          <th className="px-4 py-4">Discount</th>
-                          <th className="px-4 py-4">Net Amount</th>
-                          <th className="py-4 pl-2 pr-6 text-right"></th>
-                        </tr>
-                      </thead>
+                {/* Reports Table Card: Break-Filtered Orders OR Normal Monthly Reports */}
+                {appliedBreakFilter ? (
+                  spendingPeriodMode !== "daily" && !selectedBreakDateDrilldown ? (
+                    /* Weekly & Monthly Summary Table View: Date, Total Quantity, Total Amount */
+                    <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="border-b border-[#F0E6DD] bg-[#FAF8F5] text-xs font-bold text-[#6B574B]">
+                            <tr>
+                              <th className="py-4 pl-6 pr-4">Date</th>
+                              <th className="px-4 py-4 text-center">Total Quantity</th>
+                              <th className="px-4 py-4 text-right pr-6">Total Amount</th>
+                              <th className="py-4 pr-6 text-right w-12"></th>
+                            </tr>
+                          </thead>
 
-                      <tbody className="divide-y divide-[#F4EFEA]">
-                        {isLoading ? (
-                          <tr>
-                            <td colSpan={7} className="py-12 text-center text-sm text-[#8A7667]">
-                              <div className="flex items-center justify-center gap-2">
-                                <RotateCw size={18} className="animate-spin text-[#75472D]" />
-                                <span>Loading report data...</span>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : paginatedRecords.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="py-12 text-center text-sm text-[#8A7667]">
-                              No daily reports found for this period.
-                            </td>
-                          </tr>
-                        ) : (
-                          paginatedRecords.map((row) => {
-                            const isSelected = selectedDayRecord?.dateStr === row.dateStr;
-
-                            return (
-                              <tr
-                                key={row.dateStr}
-                                onClick={() => setSelectedDayRecord(row)}
-                                className={`group cursor-pointer transition-colors duration-150 ${isSelected
-                                  ? "bg-[#FBF1E6]"
-                                  : "hover:bg-[#FAF8F5]"
-                                  }`}
-                              >
-                                <td className="py-4 pl-6 pr-4">
-                                  <div className="font-bold text-[#231812] text-sm">
-                                    {row.displayDate}
-                                  </div>
-                                  <div className="text-xs text-[#8A7667]">{row.dayOfWeek}</div>
-                                </td>
-
-                                <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  {formatPrice(row.morningSubtotal)}                                </td>
-
-                                <td className="px-4 py-4 font-semibold text-[#342219]">
-                                  {formatPrice(row.eveningSubtotal)}                                </td>
-
-                                <td className="px-4 py-4 text-[#342219]">
-                                  {formatPrice(row.adjustment)}                                </td>
-
-                                <td className="px-4 py-4 text-[#342219]">
-                                  {formatPrice(row.discount)}                                </td>
-
-                                <td className="px-4 py-4 font-bold text-[#1E140E]">
-                                  {formatPrice(row.netAmount)}                                </td>
-
-                                <td className="py-4 pl-2 pr-6 text-right">
-                                  <div
-                                    className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border transition ${isSelected
-                                      ? "border-[#DEC5B0] bg-white text-[#75472D]"
-                                      : "border-[#E8DED4] bg-white text-[#9A8778] group-hover:border-[#DEC5B0] group-hover:text-[#75472D]"
-                                      }`}
-                                  >
-                                    <ChevronRight size={16} />
+                          <tbody className="divide-y divide-[#F4EFEA]">
+                            {isBreakFiltering ? (
+                              <tr>
+                                <td colSpan={4} className="py-12 text-center text-sm text-[#8A7667]">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <RotateCw size={18} className="animate-spin text-[#75472D]" />
+                                    <span>Loading summary data...</span>
                                   </div>
                                 </td>
                               </tr>
-                            );
-                          })
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
+                            ) : paginatedBreakDateSummaries.length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="py-12 text-center text-sm text-[#8A7667]">
+                                  <div className="flex flex-col items-center justify-center gap-2">
+                                    <Coffee size={28} className="text-[#B39B88]" />
+                                    <p className="font-semibold text-[#342219]">
+                                      No orders found for the selected break and date range.
+                                    </p>
+                                    <p className="text-xs text-[#8A7667]">
+                                      No cafe orders were placed between {appliedBreakFilter.breakSession.startTime} and {appliedBreakFilter.breakSession.endTime} from {appliedBreakFilter.fromDate} to {appliedBreakFilter.toDate}.
+                                    </p>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : (
+                              paginatedBreakDateSummaries.map((summary) => (
+                                <tr
+                                  key={summary.dateStr}
+                                  onClick={() => {
+                                    setSelectedBreakDateDrilldown(summary.dateStr);
+                                    setBreakCurrentPage(1);
+                                  }}
+                                  className="group hover:bg-[#FAF8F5] transition-colors cursor-pointer"
+                                >
+                                  <td className="py-4 pl-6 pr-4">
+                                    <div className="font-bold text-[#231812] text-sm">
+                                      {summary.displayDate}
+                                    </div>
+                                    <div className="text-xs text-[#8A7667] mt-0.5">
+                                      {summary.dayOfWeek} &bull; {summary.ordersCount} order(s)
+                                    </div>
+                                  </td>
 
-                  {/* Table Footer: Count & Pagination */}
-                  <div className="flex flex-col items-center justify-between gap-3 border-t border-[#F0E6DD] bg-white px-6 py-4 sm:flex-row">
-                    <span className="text-xs font-medium text-[#7C6B5E]">
-                      Showing {paginatedRecords.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{" "}
-                      {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} days
-                    </span>
+                                  <td className="px-4 py-4 text-center font-bold text-[#342219]">
+                                    {summary.totalQuantity}
+                                  </td>
 
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                        disabled={currentPage === 1}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
-                      >
-                        <ChevronRight size={14} className="rotate-180" />
-                      </button>
+                                  <td className="px-4 py-4 text-right pr-6 font-bold text-[#1E140E]">
+                                    {formatPrice(summary.totalAmount)}
+                                  </td>
 
-                      {Array.from({ length: totalPages }).map((_, idx) => {
-                        const pageNum = idx + 1;
-                        const isActive = currentPage === pageNum;
-                        return (
+                                  <td className="py-4 pr-6 text-right">
+                                    <div className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-[#E8DED4] bg-white text-[#9A8778] group-hover:border-[#DEC5B0] group-hover:text-[#75472D] transition">
+                                      <ChevronRight size={16} />
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Table Footer: Count & Pagination for Date Summaries */}
+                      <div className="flex flex-col items-center justify-between gap-3 border-t border-[#F0E6DD] bg-white px-6 py-4 sm:flex-row">
+                        <span className="text-xs font-medium text-[#7C6B5E]">
+                          Showing {paginatedBreakDateSummaries.length > 0 ? (breakCurrentPage - 1) * breakPageSize + 1 : 0} to{" "}
+                          {Math.min(breakCurrentPage * breakPageSize, filteredBreakDateSummaries.length)} of {filteredBreakDateSummaries.length} days
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
                           <button
-                            key={pageNum}
                             type="button"
-                            onClick={() => setCurrentPage(pageNum)}
-                            className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${isActive
-                              ? "bg-[#75472D] text-white shadow-sm"
-                              : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
-                              }`}
+                            onClick={() => setBreakCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={breakCurrentPage === 1}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
                           >
-                            {pageNum}
+                            <ChevronRight size={14} className="rotate-180" />
                           </button>
-                        );
-                      })}
 
-                      <button
-                        type="button"
-                        onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                        disabled={currentPage === totalPages || totalPages === 0}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
-                      >
-                        <ChevronRight size={14} />
-                      </button>
+                          {Array.from({ length: breakDateTotalPages }).map((_, idx) => {
+                            const pageNum = idx + 1;
+                            const isActive = breakCurrentPage === pageNum;
+                            return (
+                              <button
+                                key={pageNum}
+                                type="button"
+                                onClick={() => setBreakCurrentPage(pageNum)}
+                                className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${
+                                  isActive
+                                    ? "bg-[#75472D] text-white shadow-sm"
+                                    : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+
+                          <button
+                            type="button"
+                            onClick={() => setBreakCurrentPage((p) => Math.min(breakDateTotalPages, p + 1))}
+                            disabled={breakCurrentPage === breakDateTotalPages || breakDateTotalPages === 0}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
+                          >
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Detailed Orders Table (for Daily mode OR drilled-down Date in Weekly/Monthly mode) */
+                    <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
+                      {/* Drilldown Header with Back button when drilled down from Weekly/Monthly */}
+                      {selectedBreakDateDrilldown && (
+                        <div className="flex items-center justify-between border-b border-[#F0E6DD] bg-[#FAF8F5] px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedBreakDateDrilldown(null);
+                                setBreakCurrentPage(1);
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-xl border border-[#DEC5B0] bg-white px-3 py-1.5 text-xs font-bold text-[#75472D] shadow-2xs hover:bg-[#FAF6F1] transition cursor-pointer"
+                            >
+                              <ArrowLeft size={13} />
+                              <span>Back to {spendingPeriodMode === "weekly" ? "Weekly" : "Monthly"} Summary</span>
+                            </button>
+                            <span className="text-xs font-bold text-[#342219]">
+                              Orders for {(() => {
+                                const [y, m, d] = selectedBreakDateDrilldown.split("-").map(Number);
+                                return new Date(y, m - 1, d).toLocaleDateString("en-US", {
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                });
+                              })()}
+                            </span>
+                          </div>
+
+                          <span className="text-xs font-semibold text-[#8A7667]">
+                            {filteredBreakRows.length} item line(s)
+                          </span>
+                        </div>
+                      )}
+
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="border-b border-[#F0E6DD] bg-[#FAF8F5] text-xs font-bold text-[#6B574B]">
+                            <tr>
+                              <th className="py-4 pl-6 pr-4">Date</th>
+                              <th className="px-4 py-4">Item Name</th>
+                              <th className="px-4 py-4">Quantity</th>
+                              <th className="px-4 py-4">Price</th>
+                              <th className="px-4 py-4 text-right pr-6">Total Amount</th>
+                            </tr>
+                          </thead>
+
+                          <tbody className="divide-y divide-[#F4EFEA]">
+                            {isBreakFiltering ? (
+                              <tr>
+                                <td colSpan={5} className="py-12 text-center text-sm text-[#8A7667]">
+                                  <div className="flex items-center justify-center gap-2">
+                                    <RotateCw size={18} className="animate-spin text-[#75472D]" />
+                                    <span>Loading break orders...</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : paginatedBreakRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={5} className="py-12 text-center text-sm text-[#8A7667]">
+                                  <div className="flex flex-col items-center justify-center gap-2">
+                                    <Coffee size={28} className="text-[#B39B88]" />
+                                    <p className="font-semibold text-[#342219]">
+                                      No orders found for the selected break and date range.
+                                    </p>
+                                    <p className="text-xs text-[#8A7667]">
+                                      No cafe orders were placed between {appliedBreakFilter.breakSession.startTime} and {appliedBreakFilter.breakSession.endTime} from {appliedBreakFilter.fromDate} to {appliedBreakFilter.toDate}.
+                                    </p>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : (
+                              paginatedBreakRows.map((row) => (
+                                <tr key={row.id} className="hover:bg-[#FAF8F5] transition-colors">
+                                  <td className="py-4 pl-6 pr-4">
+                                    <div className="font-bold text-[#231812] text-sm">
+                                      {row.displayDate}
+                                    </div>
+                                    <div className="flex items-center gap-1.5 text-xs text-[#8A7667] mt-0.5 whitespace-nowrap">
+                                      <Clock size={11} className="text-[#75472D] shrink-0" />
+                                      <span>{row.displayTime}</span>
+                                      <span>&bull;</span>
+                                      <span>{row.locationName}</span>
+                                      <span>&bull;</span>
+                                      <span>{row.employeeName}</span>
+                                    </div>
+                                  </td>
+
+                                  <td className="px-4 py-4">
+                                    <div className="font-semibold text-[#342219]">
+                                      {row.itemName}
+                                    </div>
+                                    <div className="text-[11px] text-[#8A7667]">
+                                      Order #{row.displayOrderId}
+                                    </div>
+                                  </td>
+
+                                  <td className="px-4 py-4 font-bold text-[#342219]">
+                                    {row.quantity}
+                                  </td>
+
+                                  <td className="px-4 py-4 text-[#342219]">
+                                    {formatPrice(row.price)}
+                                  </td>
+
+                                  <td className="px-4 py-4 text-right pr-6 font-bold text-[#1E140E]">
+                                    {formatPrice(row.amount)}
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* Table Footer: Count & Pagination for Break View */}
+                      <div className="flex flex-col items-center justify-between gap-3 border-t border-[#F0E6DD] bg-white px-6 py-4 sm:flex-row">
+                        <span className="text-xs font-medium text-[#7C6B5E]">
+                          Showing {paginatedBreakRows.length > 0 ? (breakCurrentPage - 1) * breakPageSize + 1 : 0} to{" "}
+                          {Math.min(breakCurrentPage * breakPageSize, filteredBreakRows.length)} of {filteredBreakRows.length} items
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setBreakCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={breakCurrentPage === 1}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
+                          >
+                            <ChevronRight size={14} className="rotate-180" />
+                          </button>
+
+                          {Array.from({ length: breakTotalPages }).map((_, idx) => {
+                            const pageNum = idx + 1;
+                            const isActive = breakCurrentPage === pageNum;
+                            return (
+                              <button
+                                key={pageNum}
+                                type="button"
+                                onClick={() => setBreakCurrentPage(pageNum)}
+                                className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${
+                                  isActive
+                                    ? "bg-[#75472D] text-white shadow-sm"
+                                    : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
+                                }`}
+                              >
+                                {pageNum}
+                              </button>
+                            );
+                          })}
+
+                          <button
+                            type="button"
+                            onClick={() => setBreakCurrentPage((p) => Math.min(breakTotalPages, p + 1))}
+                            disabled={breakCurrentPage === breakTotalPages || breakTotalPages === 0}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
+                          >
+                            <ChevronRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  /* Existing Daily Reports Table Card */
+                  <div className="overflow-hidden rounded-2xl border border-[#EEE5DC] bg-white shadow-sm">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm">
+                        <thead className="border-b border-[#F0E6DD] bg-[#FAF8F5] text-xs font-bold text-[#6B574B]">
+                          <tr>
+                            <th className="py-4 pl-6 pr-4">Date</th>
+                            <th className="px-4 py-4">Adjustment</th>
+                            <th className="px-4 py-4">Discount</th>
+                            <th className="px-4 py-4">Net Amount</th>
+                            <th className="py-4 pl-2 pr-6 text-right"></th>
+                          </tr>
+                        </thead>
+
+                        <tbody className="divide-y divide-[#F4EFEA]">
+                          {isLoading ? (
+                            <tr>
+                              <td colSpan={5} className="py-12 text-center text-sm text-[#8A7667]">
+                                <div className="flex items-center justify-center gap-2">
+                                  <RotateCw size={18} className="animate-spin text-[#75472D]" />
+                                  <span>Loading report data...</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : paginatedRecords.length === 0 ? (
+                            <tr>
+                              <td colSpan={5} className="py-12 text-center text-sm text-[#8A7667]">
+                                No daily reports found for this period.
+                              </td>
+                            </tr>
+                          ) : (
+                            paginatedRecords.map((row) => {
+                              const isSelected = selectedDayRecord?.dateStr === row.dateStr;
+
+                              return (
+                                <tr
+                                  key={row.dateStr}
+                                  onClick={() => setSelectedDayRecord(row)}
+                                  className={`group cursor-pointer transition-colors duration-150 ${isSelected
+                                    ? "bg-[#FBF1E6]"
+                                    : "hover:bg-[#FAF8F5]"
+                                    }`}
+                                >
+                                  <td className="py-4 pl-6 pr-4">
+                                    <div className="font-bold text-[#231812] text-sm">
+                                      {row.displayDate}
+                                    </div>
+                                    <div className="text-xs text-[#8A7667]">{row.dayOfWeek}</div>
+                                  </td>
+
+                                  <td className="px-4 py-4 text-[#342219]">
+                                    {formatPrice(row.adjustment)}                                </td>
+
+                                  <td className="px-4 py-4 text-[#342219]">
+                                    {formatPrice(row.discount)}                                </td>
+
+                                  <td className="px-4 py-4 font-bold text-[#1E140E]">
+                                    {formatPrice(row.netAmount)}                                </td>
+
+                                  <td className="py-4 pl-2 pr-6 text-right">
+                                    <div
+                                      className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border transition ${isSelected
+                                        ? "border-[#DEC5B0] bg-white text-[#75472D]"
+                                        : "border-[#E8DED4] bg-white text-[#9A8778] group-hover:border-[#DEC5B0] group-hover:text-[#75472D]"
+                                        }`}
+                                    >
+                                      <ChevronRight size={16} />
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Table Footer: Count & Pagination */}
+                    <div className="flex flex-col items-center justify-between gap-3 border-t border-[#F0E6DD] bg-white px-6 py-4 sm:flex-row">
+                      <span className="text-xs font-medium text-[#7C6B5E]">
+                        Showing {paginatedRecords.length > 0 ? (currentPage - 1) * pageSize + 1 : 0} to{" "}
+                        {Math.min(currentPage * pageSize, filteredRecords.length)} of {filteredRecords.length} days
+                      </span>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={currentPage === 1}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
+                        >
+                          <ChevronRight size={14} className="rotate-180" />
+                        </button>
+
+                        {Array.from({ length: totalPages }).map((_, idx) => {
+                          const pageNum = idx + 1;
+                          const isActive = currentPage === pageNum;
+                          return (
+                            <button
+                              key={pageNum}
+                              type="button"
+                              onClick={() => setCurrentPage(pageNum)}
+                              className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold transition ${isActive
+                                ? "bg-[#75472D] text-white shadow-sm"
+                                : "border border-[#DEC5B0] bg-white text-[#75472D] hover:bg-[#FAF6F1]"
+                                }`}
+                            >
+                              {pageNum}
+                            </button>
+                          );
+                        })}
+
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={currentPage === totalPages || totalPages === 0}
+                          className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#DEC5B0] bg-white text-[#75472D] disabled:opacity-30 disabled:cursor-not-allowed hover:bg-[#FAF6F1]"
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* RIGHT COLUMN: Daily Detail Panel */}

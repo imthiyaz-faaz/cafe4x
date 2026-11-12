@@ -11,6 +11,8 @@ import providerRoutes from './routes/provider.routes'
 import userRoutes from './routes/user.routes'
 import workingHoursRoutes from './routes/working-hours.routes'
 import qrRoutes from './routes/qr.routes'
+import tableRoutes from './routes/table.routes'
+import seatRoutes from './routes/seat.routes'
 
 const app = new Hono<AppEnv>()
 
@@ -62,6 +64,8 @@ app.route('/api/organizations', organizationRoutes)
 app.route('/api/users', userRoutes)
 app.route('/api/items', itemsRoutes)
 app.route('/api/locations', locationRoutes)
+app.route('/api/tables', tableRoutes)
+app.route('/api/seats', seatRoutes)
 app.route('/api/orders', orderRoutes)
 app.route('/api/provider', providerRoutes)
 app.route('/api/working-hours', workingHoursRoutes)

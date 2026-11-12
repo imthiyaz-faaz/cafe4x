@@ -24,7 +24,7 @@ import Background from "../../components/background";
 import ProviderNavbar from "../../components/navbar/providernavbar";
 import { orderApi, type ProviderOrder } from "../../services/orders";
 import { itemsApi } from "../../services/items";
-import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatSeatIdentifier, formatOrderSeat, formatOrderSeatNumber } from "../../utils/seatFormatter";
 
 export default function ProviderPendingOrdersPage() {
   const { currencySymbol } = useOrgCurrency();
@@ -610,13 +610,9 @@ export default function ProviderPendingOrdersPage() {
                                 </span>
                               </p>
                               <p className="text-[#8A7667]">
-                                Location:{" "}
+                                Seating:{" "}
                                 <span className="font-semibold text-stone-800">
-                                  {order.locationName}
-                                </span>{" "}
-                                • Seat:{" "}
-                                <span className="font-semibold text-stone-800">
-                                  {formatSeatIdentifier(order.seat || (order as any).seatId) || "—"}
+                                  {formatOrderSeat(order)}
                                 </span>
                               </p>
                               <p className="text-[11px] text-[#A08C7D]">
@@ -1089,11 +1085,11 @@ export default function ProviderPendingOrdersPage() {
                                               onChange={() => toggleSelectOne(sub.order.id)}
                                               className="h-4 w-4 rounded border-gray-300 text-[#754329] focus:ring-[#754329] cursor-pointer"
                                             />
-                                            <span className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white">
-                                              Seat:{" "}
-                                              {sub.order.employeeName
-                                                ? sub.order.employeeName.split("@")[0]
-                                                : `Seat ${sub.order.seat}`}
+                                            <span
+                                              title={formatOrderSeat(sub.order)}
+                                              className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white"
+                                            >
+                                              {formatOrderSeat(sub.order)}
                                             </span>
                                             <span className="font-mono text-[11px] text-blue-600 font-bold">
                                               {formatProviderOrderId(sub.order)}

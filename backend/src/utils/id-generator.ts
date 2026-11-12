@@ -95,7 +95,8 @@ export type EntityIdType =
   | "SES"
   | "OSN"
   | "WHR"
-  | "ESA";
+  | "ESA"
+  | "EMP";
 
 const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLen: number }> = {
   ORG: { scope: "ORGANIZATIONS", prefix: "ORG", padLen: 6 },
@@ -111,6 +112,7 @@ const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLe
   OSN: { scope: "ORDERING_SESSIONS", prefix: "OSN", padLen: 6 },
   WHR: { scope: "WORKING_HOURS", prefix: "WHR", padLen: 6 },
   ESA: { scope: "EMPLOYEE_SEAT_ASSIGNMENTS", prefix: "ESA", padLen: 6 },
+  EMP: { scope: "EMPLOYEES", prefix: "EMP", padLen: 6 },
 };
 
 /**
@@ -188,7 +190,7 @@ export async function generateLocationSeatId(
 
   // Find all existing seat numbers for this location to ensure monotonically increasing sequence
   const existingSeats = (await db
-    .prepare(`SELECT number, display_id, id FROM seats WHERE organization_id = ? AND location_id = ?`)
+    .prepare(`SELECT number, id FROM seats WHERE organization_id = ? AND location_id = ?`)
     .bind(organizationId, locationId)
     .all()) as any[];
 
@@ -200,7 +202,7 @@ export async function generateLocationSeatId(
       usedNumbers.add(p);
       maxExisting = Math.max(maxExisting, p);
     }
-    const m = String(s.display_id || s.id || "").match(/(\d+)$/);
+    const m = String(s.id || "").match(/(\d+)$/);
     if (m) {
       const idNum = parseInt(m[1], 10);
       if (!isNaN(idNum) && idNum > 0) {

@@ -26,10 +26,23 @@ function getActiveLocalDbPath(): string {
       const dir = path.resolve(process.cwd(), ".wrangler/state/v3/d1/miniflare-D1DatabaseObject");
       if (fs.existsSync(dir)) {
         const files: string[] = fs.readdirSync(dir);
-        // Find the database sqlite file that is not metadata.sqlite
-        const dbFile = files.find((f: string) => f.endsWith(".sqlite") && !f.startsWith("metadata"));
-        if (dbFile) {
-          return path.join(dir, dbFile);
+        // Find the database sqlite file that is not metadata.sqlite and has data (>0 bytes)
+        const validFiles = files
+          .filter((f: string) => f.endsWith(".sqlite") && !f.startsWith("metadata"))
+          .filter((f: string) => {
+            try {
+              return fs.statSync(path.join(dir, f)).size > 0;
+            } catch {
+              return false;
+            }
+          });
+
+        if (validFiles.length > 0) {
+          // Sort by last modified descending so the most recently written database is chosen
+          validFiles.sort((a: string, b: string) => {
+            return fs.statSync(path.join(dir, b)).mtimeMs - fs.statSync(path.join(dir, a)).mtimeMs;
+          });
+          return path.join(dir, validFiles[0]);
         }
       }
     }

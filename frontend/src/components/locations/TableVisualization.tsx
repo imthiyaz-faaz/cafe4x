@@ -111,7 +111,7 @@ export const TableVisualization: React.FC<TableVisualizationProps> = ({
 
     return (
       <button
-        key={seat.id}
+        key={seat.id ? seat.id : `seat-${seat.number}`}
         type="button"
         onClick={() => onSelectSeat?.(seat)}
         className={`group relative flex flex-col items-center justify-center p-1.5 sm:p-2 rounded-2xl border transition-all duration-150 cursor-pointer hover:scale-105 active:scale-95 focus:outline-none shrink-0 ${bgClasses} ${

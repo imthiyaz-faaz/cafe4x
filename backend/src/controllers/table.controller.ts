@@ -1,8 +1,9 @@
 import { Context } from "hono";
 import { getUniversalDb } from "../db";
 import { AppEnv } from "../types";
-import { resolveAuthorizedOrg } from "../middleware/auth.middleware";
-import { generateSeatQrToken } from "../utils/id-generator";
+import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
+import { generateSeatQrToken, generateId, generateSecureQrToken, hashPassword } from "../utils/id-generator";
+import { validatePhone } from "../utils/validation";
 
 export interface TableModel {
   id: number;
@@ -10,6 +11,9 @@ export interface TableModel {
   name: string;
   seatLimit: number;
   isActive: number;
+  providerId?: string | null;
+  providerName?: string | null;
+  providerEmail?: string | null;
   occupiedSeats?: number;
   availableSeats?: number;
   createdAt: string;
@@ -47,54 +51,71 @@ export const tableController = {
       }
 
       const effectiveLocId = loc.id;
+      const authUser = await getAuthUser(c);
+      const isProvider = authUser?.userType === "Provider";
+      const currentProviderId = isProvider ? authUser.id : null;
 
-      // Query tables along with dynamic occupied / available count from seats / location_table_seats
+      // Query tables along with dynamic occupied / available count and assigned provider details
       let rows: any[] = [];
       try {
-        rows = (await db
-          .prepare(
-            `SELECT 
-               t.id,
-               t.location_id as locationId,
-               t.table_name as name,
-               t.table_limit as seatLimit,
-               CASE WHEN t.status = 'active' THEN 1 ELSE 0 END as isActive,
-               t.created_at as createdAt,
-               t.updated_at as updatedAt,
-               COUNT(s.id) as totalSeats,
-               COUNT(CASE WHEN s.status = 'occupied' OR (s.employee_id IS NOT NULL AND s.employee_id != '') OR (s.employee_email IS NOT NULL AND s.employee_email != '') THEN 1 END) as occupiedSeats,
-               COUNT(CASE WHEN (s.status = 'available' OR s.status IS NULL) AND (s.employee_id IS NULL OR s.employee_id = '') AND (s.employee_email IS NULL OR s.employee_email = '') THEN 1 END) as availableSeats
-             FROM location_tables t
-             LEFT JOIN location_table_seats s ON t.id = s.table_id
-             WHERE t.location_id = ?
-             GROUP BY t.id
-             ORDER BY t.id ASC`
-          )
-          .bind(effectiveLocId)
-          .all()) as any[];
+        let q = `
+          SELECT 
+            t.id,
+            t.location_id as locationId,
+            t.table_name as name,
+            t.table_limit as seatLimit,
+            CASE WHEN t.status = 'active' THEN 1 ELSE 0 END as isActive,
+            t.provider_id as providerId,
+            u.name as providerName,
+            u.email as providerEmail,
+            t.created_at as createdAt,
+            t.updated_at as updatedAt,
+            COUNT(s.id) as totalSeats,
+            COUNT(CASE WHEN s.status = 'occupied' OR (s.employee_id IS NOT NULL AND s.employee_id != '') OR (s.employee_email IS NOT NULL AND s.employee_email != '') THEN 1 END) as occupiedSeats,
+            COUNT(CASE WHEN (s.status = 'available' OR s.status IS NULL) AND (s.employee_id IS NULL OR s.employee_id = '') AND (s.employee_email IS NULL OR s.employee_email = '') THEN 1 END) as availableSeats
+          FROM location_tables t
+          LEFT JOIN location_table_seats s ON t.id = s.table_id
+          LEFT JOIN users u ON t.provider_id = u.id
+          WHERE t.location_id = ?
+        `;
+        const qParams: any[] = [effectiveLocId];
+        if (isProvider && currentProviderId) {
+          q += ` AND t.provider_id = ? `;
+          qParams.push(currentProviderId);
+        }
+        q += ` GROUP BY t.id ORDER BY t.id ASC`;
+
+        rows = (await db.prepare(q).bind(...qParams).all()) as any[];
       } catch {
         // Fallback to tables
-        rows = (await db
-          .prepare(
-            `SELECT 
-               t.id,
-               t.location_id as locationId,
-               t.name,
-               t.seat_limit as seatLimit,
-               t.is_active as isActive,
-               t.created_at as createdAt,
-               t.updated_at as updatedAt,
-               COUNT(s.id) as totalSeats,
-               COUNT(CASE WHEN s.status = 'occupied' OR (s.employee_id IS NOT NULL AND s.employee_id != '') OR (s.employee_email IS NOT NULL AND s.employee_email != '') OR (s.employee IS NOT NULL AND s.employee != '') THEN 1 END) as occupiedSeats,
-               COUNT(CASE WHEN (s.status = 'available' OR s.status IS NULL) AND (s.employee_id IS NULL OR s.employee_id = '') AND (s.employee_email IS NULL OR s.employee_email = '') AND (s.employee IS NULL OR s.employee = '') THEN 1 END) as availableSeats
-             FROM tables t
-             LEFT JOIN seats s ON t.id = s.table_id
-             WHERE t.location_id = ?
-             GROUP BY t.id
-             ORDER BY t.id ASC`
-          )
-          .bind(effectiveLocId)
-          .all()) as any[];
+        let q = `
+          SELECT 
+            t.id,
+            t.location_id as locationId,
+            t.name,
+            t.seat_limit as seatLimit,
+            t.is_active as isActive,
+            t.provider_id as providerId,
+            u.name as providerName,
+            u.email as providerEmail,
+            t.created_at as createdAt,
+            t.updated_at as updatedAt,
+            COUNT(s.id) as totalSeats,
+            COUNT(CASE WHEN s.status = 'occupied' OR (s.employee_id IS NOT NULL AND s.employee_id != '') OR (s.employee_email IS NOT NULL AND s.employee_email != '') OR (s.employee IS NOT NULL AND s.employee != '') THEN 1 END) as occupiedSeats,
+            COUNT(CASE WHEN (s.status = 'available' OR s.status IS NULL) AND (s.employee_id IS NULL OR s.employee_id = '') AND (s.employee_email IS NULL OR s.employee_email = '') AND (s.employee IS NULL OR s.employee = '') THEN 1 END) as availableSeats
+          FROM tables t
+          LEFT JOIN seats s ON t.id = s.table_id
+          LEFT JOIN users u ON t.provider_id = u.id
+          WHERE t.location_id = ?
+        `;
+        const qParams: any[] = [effectiveLocId];
+        if (isProvider && currentProviderId) {
+          q += ` AND t.provider_id = ? `;
+          qParams.push(currentProviderId);
+        }
+        q += ` GROUP BY t.id ORDER BY t.id ASC`;
+
+        rows = (await db.prepare(q).bind(...qParams).all()) as any[];
       }
 
       const tables = (rows || []).map((r) => ({
@@ -103,6 +124,9 @@ export const tableController = {
         name: r.name,
         seatLimit: Number(r.seatLimit),
         isActive: Number(r.isActive) === 1 ? 1 : 0,
+        providerId: r.providerId || null,
+        providerName: r.providerName || null,
+        providerEmail: r.providerEmail || null,
         occupiedSeats: Number(r.occupiedSeats) || 0,
         availableSeats: Math.max(0, (Number(r.seatLimit) || 0) - (Number(r.occupiedSeats) || 0)),
         createdAt: r.createdAt,
@@ -212,15 +236,70 @@ export const tableController = {
         }, 409);
       }
 
+      // Provider assignment validation
+      const providerId = body.providerId !== undefined ? (body.providerId ? String(body.providerId).trim() : null) : null;
+      if (!providerId) {
+        return c.json({ success: false, message: "Assigned provider is required when creating a table." }, 400);
+      }
+
+      // Verify provider exists in this organization
+      const providerUser = (await db
+        .prepare(`
+          SELECT u.id, u.name, u.email, u.user_name
+          FROM users u
+          JOIN user_organizations uo ON u.id = uo.user_id
+          WHERE u.id = ? AND uo.organization_id = ? AND LOWER(u.user_type) = 'provider'
+        `)
+        .bind(providerId, org.organizationId)
+        .get()) as any;
+
+      if (!providerUser) {
+        return c.json({
+          success: false,
+          message: "The selected provider does not exist or does not belong to this organization.",
+        }, 400);
+      }
+
+      // Verify provider is assigned to this specific location
+      let isAssignedToLoc = false;
+      try {
+        const provLoc = await db
+          .prepare(`SELECT id FROM location_providers WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+          .bind(effectiveLocId, providerId, org.organizationId)
+          .get();
+        if (provLoc) isAssignedToLoc = true;
+      } catch {}
+
+      if (!isAssignedToLoc) {
+        try {
+          const provLoc2 = await db
+            .prepare(`SELECT id FROM provider_locations WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+            .bind(effectiveLocId, providerId, org.organizationId)
+            .get();
+          if (provLoc2) isAssignedToLoc = true;
+        } catch {}
+      }
+
+      if (!isAssignedToLoc && loc.assigned_provider_id === providerId) {
+        isAssignedToLoc = true;
+      }
+
+      if (!isAssignedToLoc) {
+        return c.json({
+          success: false,
+          message: `The selected provider (${providerUser.name || providerUser.email}) is not assigned to this location. Please assign the provider to the location first.`,
+        }, 400);
+      }
+
       const now = new Date().toISOString();
 
-      // Insert Table
+      // Insert Table with provider_id
       const insertResult = (await db
         .prepare(
-          `INSERT INTO tables (location_id, name, seat_limit, is_active, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?) RETURNING id`
+          `INSERT INTO tables (location_id, name, seat_limit, is_active, provider_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`
         )
-        .bind(effectiveLocId, tableName, seatLimit, isActive, now, now)
+        .bind(effectiveLocId, tableName, seatLimit, isActive, providerId, now, now)
         .get()) as any;
 
       let newTableId = insertResult?.id;
@@ -233,8 +312,8 @@ export const tableController = {
       try {
         await db
           .prepare(
-            `INSERT OR IGNORE INTO location_tables (id, organization_id, location_id, table_name, table_limit, status, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT OR IGNORE INTO location_tables (id, organization_id, location_id, table_name, table_limit, status, provider_id, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
           )
           .bind(
             newTableId,
@@ -243,6 +322,7 @@ export const tableController = {
             tableName,
             seatLimit,
             isActive === 1 ? 'active' : 'inactive',
+            providerId,
             now,
             now
           )
@@ -312,6 +392,9 @@ export const tableController = {
           name: tableName,
           seatLimit,
           isActive,
+          providerId,
+          providerName: providerUser.name,
+          providerEmail: providerUser.email,
           occupiedSeats: 0,
           availableSeats: seatLimit,
           createdAt: now,
@@ -339,10 +422,12 @@ export const tableController = {
         .prepare(
           `SELECT 
              t.id, t.location_id as locationId, t.name, t.seat_limit as seatLimit, t.is_active as isActive,
+             t.provider_id as providerId, u.name as providerName, u.email as providerEmail,
              t.created_at as createdAt, t.updated_at as updatedAt,
              l.name as locationName, l.organization_id as organizationId, l.status as locationStatus
            FROM tables t
            JOIN locations l ON t.location_id = l.id
+           LEFT JOIN users u ON t.provider_id = u.id
            WHERE t.id = ? AND (l.organization_id = ? OR ? IS NULL)`
         )
         .bind(tableId, org.organizationId, org.organizationId)
@@ -357,10 +442,12 @@ export const tableController = {
               `SELECT 
                  t.id, t.location_id as locationId, t.table_name as name, t.table_limit as seatLimit,
                  CASE WHEN t.status = 'active' THEN 1 ELSE 0 END as isActive,
+                 t.provider_id as providerId, u.name as providerName, u.email as providerEmail,
                  t.created_at as createdAt, t.updated_at as updatedAt,
                  l.name as locationName, l.organization_id as organizationId, l.status as locationStatus
                FROM location_tables t
                JOIN locations l ON t.location_id = l.id
+               LEFT JOIN users u ON t.provider_id = u.id
                WHERE t.id = ? AND (l.organization_id = ? OR ? IS NULL)`
             )
             .bind(tableId, org.organizationId, org.organizationId)
@@ -377,10 +464,12 @@ export const tableController = {
           .prepare(
             `SELECT 
                t.id, t.location_id as locationId, t.name, t.seat_limit as seatLimit, t.is_active as isActive,
+               t.provider_id as providerId, u.name as providerName, u.email as providerEmail,
                t.created_at as createdAt, t.updated_at as updatedAt,
                l.name as locationName, l.organization_id as organizationId, l.status as locationStatus
              FROM tables t
              JOIN locations l ON t.location_id = l.id
+             LEFT JOIN users u ON t.provider_id = u.id
              WHERE t.id = ?`
           )
           .bind(tableId)
@@ -452,6 +541,9 @@ export const tableController = {
           name: resolvedTable.name,
           seatLimit: effectiveSeatLimit,
           isActive: Number(resolvedTable.isActive) === 1 ? 1 : 0,
+          providerId: resolvedTable.providerId || null,
+          providerName: resolvedTable.providerName || null,
+          providerEmail: resolvedTable.providerEmail || null,
           occupiedSeats: effectiveOccupied,
           availableSeats: effectiveAvailable,
           occupancyPercentage: effectivePercentage,
@@ -491,22 +583,84 @@ export const tableController = {
       const body = await c.req.json();
       const db = getUniversalDb(c.env?.DB);
 
-      // Verify table ownership
+      // Verify table ownership and retrieve current provider_id
       let table = (await db
-        .prepare(`SELECT t.id, t.location_id, t.name, t.seat_limit, t.is_active FROM tables t JOIN locations l ON t.location_id = l.id WHERE t.id = ? AND (l.organization_id = ? OR ? IS NULL)`)
+        .prepare(`SELECT t.id, t.location_id, t.name, t.seat_limit, t.is_active, t.provider_id FROM tables t JOIN locations l ON t.location_id = l.id WHERE t.id = ? AND (l.organization_id = ? OR ? IS NULL)`)
         .bind(tableId, org.organizationId, org.organizationId)
         .get()) as any;
 
       if (!table) {
         // Fallback check
         table = (await db
-          .prepare(`SELECT t.id, t.location_id, t.name, t.seat_limit, t.is_active FROM tables t WHERE t.id = ?`)
+          .prepare(`SELECT t.id, t.location_id, t.name, t.seat_limit, t.is_active, t.provider_id FROM tables t WHERE t.id = ?`)
           .bind(tableId)
           .get()) as any;
       }
 
       if (!table) {
         return c.json({ success: false, message: "Table not found" }, 404);
+      }
+
+      // Check if providerId is being updated
+      let targetProviderId = table.provider_id || null;
+      let targetProviderUser: any = null;
+      if (body.providerId !== undefined) {
+        const newProvId = body.providerId ? String(body.providerId).trim() : null;
+        if (!newProvId) {
+          return c.json({ success: false, message: "Assigned provider cannot be empty for a table." }, 400);
+        }
+
+        // Validate provider exists in this organization
+        targetProviderUser = (await db
+          .prepare(`
+            SELECT u.id, u.name, u.email, u.user_name
+            FROM users u
+            JOIN user_organizations uo ON u.id = uo.user_id
+            WHERE u.id = ? AND uo.organization_id = ? AND LOWER(u.user_type) = 'provider'
+          `)
+          .bind(newProvId, org.organizationId)
+          .get()) as any;
+
+        if (!targetProviderUser) {
+          return c.json({
+            success: false,
+            message: "The selected provider does not exist or does not belong to this organization.",
+          }, 400);
+        }
+
+        // Validate provider is assigned to this location
+        let isAssignedToLoc = false;
+        try {
+          const provLoc = await db
+            .prepare(`SELECT id FROM location_providers WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+            .bind(table.location_id, newProvId, org.organizationId)
+            .get();
+          if (provLoc) isAssignedToLoc = true;
+        } catch {}
+
+        if (!isAssignedToLoc) {
+          try {
+            const provLoc2 = await db
+              .prepare(`SELECT id FROM provider_locations WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+              .bind(table.location_id, newProvId, org.organizationId)
+              .get();
+            if (provLoc2) isAssignedToLoc = true;
+          } catch {}
+        }
+
+        if (!isAssignedToLoc) {
+          const locCheck = (await db.prepare(`SELECT assigned_provider_id FROM locations WHERE id = ?`).bind(table.location_id).get()) as any;
+          if (locCheck?.assigned_provider_id === newProvId) isAssignedToLoc = true;
+        }
+
+        if (!isAssignedToLoc) {
+          return c.json({
+            success: false,
+            message: `The selected provider (${targetProviderUser.name || targetProviderUser.email}) is not assigned to this location. Please assign the provider to the location first.`,
+          }, 400);
+        }
+
+        targetProviderId = newProvId;
       }
 
       const newName = body.name !== undefined ? String(body.name).trim() : null;
@@ -623,15 +777,15 @@ export const tableController = {
 
       await db
         .prepare(
-          `UPDATE tables SET name = COALESCE(?, name), seat_limit = ?, is_active = ?, updated_at = ? WHERE id = ?`
+          `UPDATE tables SET name = COALESCE(?, name), seat_limit = ?, is_active = ?, provider_id = ?, updated_at = ? WHERE id = ?`
         )
-        .bind(newName, targetSeatLimit, isActive, now, tableId)
+        .bind(newName, targetSeatLimit, isActive, targetProviderId, now, tableId)
         .run();
 
       try {
         await db
-          .prepare(`UPDATE location_tables SET table_name = COALESCE(?, table_name), table_limit = ?, status = ?, updated_at = ? WHERE id = ?`)
-          .bind(newName, targetSeatLimit, isActive === 1 ? 'active' : 'inactive', now, tableId)
+          .prepare(`UPDATE location_tables SET table_name = COALESCE(?, table_name), table_limit = ?, status = ?, provider_id = ?, updated_at = ? WHERE id = ?`)
+          .bind(newName, targetSeatLimit, isActive === 1 ? 'active' : 'inactive', targetProviderId, now, tableId)
           .run();
       } catch (errSync) {}
 
@@ -643,6 +797,9 @@ export const tableController = {
           name: newName || table.name,
           seatLimit: targetSeatLimit,
           isActive,
+          providerId: targetProviderId,
+          providerName: targetProviderUser?.name || null,
+          providerEmail: targetProviderUser?.email || null,
         },
       });
     } catch (err: any) {
@@ -859,6 +1016,39 @@ export const tableController = {
     }
   },
 
+  // GET /api/seats/next-employee-id
+  async getNextEmployeeId(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const db = getUniversalDb(c.env?.DB);
+      // Read current sequence counter for USERS
+      const seqRow = (await db.prepare(`SELECT last_val FROM id_sequences WHERE scope = 'USERS'`).get()) as any;
+      let nextNum = (Number(seqRow?.last_val) || 0) + 1;
+
+      // Find max ID currently in users table to guarantee no collision
+      const maxUser = (await db.prepare(`SELECT id FROM users WHERE id LIKE 'USR-%' ORDER BY id DESC LIMIT 1`).get()) as any;
+      if (maxUser?.id) {
+        const m = String(maxUser.id).match(/(\d+)$/);
+        if (m) {
+          const userNum = parseInt(m[1], 10);
+          if (!isNaN(userNum) && userNum >= nextNum) {
+            nextNum = userNum + 1;
+          }
+        }
+      }
+
+      const nextEmployeeId = `USR-${String(nextNum).padStart(6, "0")}`;
+      return c.json({ success: true, nextEmployeeId });
+    } catch (err: any) {
+      console.error("getNextEmployeeId error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
   // PATCH /api/seats/:seatId/assign
   async assignSeat(c: Context<AppEnv>) {
     try {
@@ -885,46 +1075,159 @@ export const tableController = {
         return c.json({ success: false, message: "Seat not found in this organization" }, 404);
       }
 
-      const employeeId = body.employeeId || null;
       const employeeEmail = (body.employeeEmail || "").trim().toLowerCase();
       const employeeName = (body.employeeName || "").trim();
+      const mobileNumber = (body.mobileNumber || "").trim();
 
-      if (!employeeId && !employeeEmail && !employeeName) {
-        return c.json({ success: false, message: "Employee details are required for assignment" }, 400);
+      if (!employeeName) {
+        return c.json({ success: false, message: "Employee Name is required" }, 400);
+      }
+      if (!employeeEmail) {
+        return c.json({ success: false, message: "Employee Email is required" }, 400);
       }
 
-      const now = new Date().toISOString();
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(employeeEmail)) {
+        return c.json({ success: false, message: "Please provide a valid email address" }, 400);
+      }
 
-      // Check if employee is already assigned to another seat in this organization
-      if (employeeId || employeeEmail) {
-        const existingAssign = (await db
-          .prepare(
-            `SELECT id, table_id, number FROM seats 
-             WHERE organization_id = ? 
-               AND (employee_id = ? OR LOWER(employee_email) = ?) 
-               AND id != ?`
-          )
-          .bind(org.organizationId, employeeId, employeeEmail, seatId)
+      // Check location-level email uniqueness: verify email is not already assigned to another seat in this location
+      const emailLocationConflict = (await db
+        .prepare(
+          `SELECT id, number FROM seats 
+           WHERE organization_id = ? 
+             AND location_id = ? 
+             AND id != ? 
+             AND (LOWER(TRIM(employee_email)) = ? OR LOWER(TRIM(employee)) = ?)`
+        )
+        .bind(org.organizationId, seat.location_id, seatId, employeeEmail, employeeEmail)
+        .get()) as any;
+
+      if (emailLocationConflict) {
+        return c.json(
+          {
+            success: false,
+            message: `This employee email is already assigned to Seat ${emailLocationConflict.number} in this location.`,
+          },
+          409
+        );
+      }
+
+      // Check organization-wide: verify whether employee already exists in users table
+      let existingUser = (await db
+        .prepare(
+          `SELECT u.id, u.name, u.email, u.mobile_number as mobileNumber
+           FROM users u
+           JOIN user_organizations uo ON u.id = uo.user_id
+           WHERE uo.organization_id = ? AND (LOWER(TRIM(u.email)) = ? OR u.id = ?)`
+        )
+        .bind(org.organizationId, employeeEmail, body.employeeId || "")
+        .get()) as any;
+
+      if (!existingUser) {
+        // Fallback: search users table globally if email matches
+        existingUser = (await db
+          .prepare(`SELECT id, name, email, mobile_number as mobileNumber FROM users WHERE LOWER(TRIM(email)) = ?`)
+          .bind(employeeEmail)
           .get()) as any;
 
-        if (existingAssign) {
-          return c.json({
-            success: false,
-            message: `This employee is already assigned to Seat ${existingAssign.number}. Please unassign them first.`,
-          }, 409);
+        if (existingUser) {
+          // Link existing user to this organization
+          try {
+            const uorId = await generateId(db, "UOR");
+            const nowIso = new Date().toISOString();
+            await db
+              .prepare(
+                `INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role, created_at)
+                 VALUES (?, ?, ?, 'Staff', ?)`
+              )
+              .bind(uorId, existingUser.id, org.organizationId, nowIso)
+              .run();
+          } catch {}
         }
       }
 
+      let finalEmployeeId: string;
+      const now = new Date().toISOString();
+
+      if (existingUser) {
+        // Check if existing user is already assigned to another seat in this organization
+        const userSeatConflict = (await db
+          .prepare(
+            `SELECT id, number FROM seats 
+             WHERE organization_id = ? AND employee_id = ? AND id != ?`
+          )
+          .bind(org.organizationId, existingUser.id, seatId)
+          .get()) as any;
+
+        if (userSeatConflict) {
+          return c.json(
+            {
+              success: false,
+              message: `Employee ${existingUser.name} is already assigned to Seat ${userSeatConflict.number}. Please unassign them first.`,
+            },
+            409
+          );
+        }
+
+        finalEmployeeId = existingUser.id;
+        // Optionally update mobileNumber or name if provided
+        if (mobileNumber && !existingUser.mobileNumber) {
+          try {
+            await db.prepare(`UPDATE users SET mobile_number = ? WHERE id = ?`).bind(mobileNumber, existingUser.id).run();
+          } catch {}
+        }
+      } else {
+        // Create new employee user record
+        finalEmployeeId = await generateId(db, "USR");
+        const defaultPassword = "ChangeMe123!";
+        const hashedPassword = await hashPassword(defaultPassword);
+        const qrToken = generateSecureQrToken(16);
+        const userName = employeeEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "") || `emp_${Date.now()}`;
+
+        await db
+          .prepare(
+            `INSERT INTO users (
+              id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Employee', ?, ?, 'active', ?)`
+          )
+          .bind(
+            finalEmployeeId,
+            finalEmployeeId,
+            employeeName,
+            userName,
+            defaultPassword,
+            hashedPassword,
+            employeeEmail,
+            mobileNumber || null,
+            qrToken,
+            now,
+            now
+          )
+          .run();
+
+        // Link new user to current organization
+        const uorId = await generateId(db, "UOR");
+        await db
+          .prepare(
+            `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
+             VALUES (?, ?, ?, 'Staff', ?)`
+          )
+          .bind(uorId, finalEmployeeId, org.organizationId, now)
+          .run();
+      }
+
+      // Update seat in seats table
       await db
         .prepare(
           `UPDATE seats 
            SET employee_id = ?, employee_name = ?, employee_email = ?, employee = ?, status = 'occupied', updated_at = ? 
            WHERE id = ?`
         )
-        .bind(employeeId, employeeName, employeeEmail, employeeEmail || employeeName, now, seatId)
+        .bind(finalEmployeeId, employeeName, employeeEmail, employeeEmail, now, seatId)
         .run();
 
-      // Mirror update to location_table_seats and employee_seat_assignments
+      // Mirror to location_table_seats
       try {
         await db
           .prepare(
@@ -932,25 +1235,33 @@ export const tableController = {
              SET employee_id = ?, employee_name = ?, employee_email = ?, status = 'occupied', updated_at = ? 
              WHERE id = ?`
           )
-          .bind(employeeId, employeeName, employeeEmail, now, seatId)
+          .bind(finalEmployeeId, employeeName, employeeEmail, now, seatId)
           .run();
       } catch {}
 
-      if (employeeId) {
-        try {
-          const esaId = `ESA-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-          await db
-            .prepare(
-              `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(location_id, seat_id) DO UPDATE SET employee_id = excluded.employee_id, updated_at = excluded.updated_at`
-            )
-            .bind(esaId, org.organizationId, seat.location_id, seatId, employeeId, now, now, now)
-            .run();
-        } catch {}
-      }
+      // Update or insert into employee_seat_assignments
+      try {
+        const esaId = await generateId(db, "ESA");
+        await db
+          .prepare(
+            `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(location_id, seat_id) DO UPDATE SET employee_id = excluded.employee_id, updated_at = excluded.updated_at`
+          )
+          .bind(esaId, org.organizationId, seat.location_id, seatId, finalEmployeeId, now, now, now)
+          .run();
+      } catch {}
 
-      return c.json({ success: true, message: "Seat assigned successfully." });
+      return c.json({
+        success: true,
+        message: "Employee successfully assigned to seat.",
+        assignedEmployee: {
+          id: finalEmployeeId,
+          name: employeeName,
+          email: employeeEmail,
+          mobileNumber: mobileNumber || null,
+        },
+      });
     } catch (err: any) {
       console.error("assignSeat error:", err);
       return c.json({ success: false, message: err.message }, 500);

@@ -103,14 +103,21 @@ export const orderController = {
       `;
       const params: any[] = [];
 
-      // If user is Provider, only return orders from locations assigned to that provider
+      // If user is Provider, only return orders from tables assigned to that provider (or location fallback if table not assigned)
       if (authUser?.userType === "Provider") {
         query += `
+          LEFT JOIN seats ord_s ON o.seat_id = ord_s.id
+          LEFT JOIN tables ord_t ON ord_s.table_id = ord_t.id
           LEFT JOIN locations loc ON o.location_id = loc.id
+          LEFT JOIN location_providers lp ON o.location_id = lp.location_id
           LEFT JOIN provider_locations pl ON o.location_id = pl.location_id
-          WHERE o.organization_id = ? AND (loc.assigned_provider_id = ? OR pl.provider_id = ?)
+          WHERE o.organization_id = ? 
+            AND (
+              ord_t.provider_id = ? 
+              OR (ord_t.provider_id IS NULL AND (loc.assigned_provider_id = ? OR lp.provider_id = ? OR pl.provider_id = ?))
+            )
         `;
-        params.push(org.organizationId, authUser.id, authUser.id);
+        params.push(org.organizationId, authUser.id, authUser.id, authUser.id, authUser.id);
       } else {
         query += ` WHERE o.organization_id = ?`;
         params.push(org.organizationId);

@@ -4,6 +4,7 @@ import { AppEnv } from "../types";
 
 const seatRoutes = new Hono<AppEnv>();
 
+seatRoutes.get("/next-employee-id", tableController.getNextEmployeeId);
 seatRoutes.get("/:seatId/details", tableController.getSeatDetails);
 seatRoutes.patch("/:seatId/assign", tableController.assignSeat);
 seatRoutes.post("/:seatId/assign", tableController.assignSeat);

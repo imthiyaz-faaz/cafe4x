@@ -8,8 +8,6 @@ import {
   Save,
   ShieldCheck,
   Plus,
-  Trash2,
-  GripVertical,
   Coffee,
   Info,
   RotateCw,
@@ -160,26 +158,10 @@ export default function WorkingHoursPage() {
     };
   }, [shortCode]);
 
-  // Break session modifications
-  const handleTimeChange = (id: string, field: "startTime" | "endTime", value: string) => {
-    setBreakSessions((prev) =>
-      prev.map((b) => {
-        if (b.id !== id) return b;
-        const updated = { ...b, [field]: value };
-        updated.durationMinutes = calculateDuration(updated.startTime, updated.endTime);
-        return updated;
-      })
-    );
-  };
-
   const handleToggleBreak = (id: string) => {
     setBreakSessions((prev) =>
       prev.map((b) => (b.id === id ? { ...b, isEnabled: !b.isEnabled } : b))
     );
-  };
-
-  const handleDeleteBreak = (id: string) => {
-    setBreakSessions((prev) => prev.filter((b) => b.id !== id));
   };
 
   const handleOpenAddBreakModal = () => {
@@ -612,12 +594,9 @@ export default function WorkingHoursPage() {
                           return (
                             <div
                               key={b.id}
-                              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:px-4 sm:py-3 transition hover:border-gray-300 shadow-sm"
+                              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3 sm:px-4 sm:py-3 shadow-sm"
                             >
                               <div className="flex items-center gap-3">
-                                {/* Drag handle dots */}
-                                <GripVertical size={16} className="text-gray-400 cursor-grab" />
-
                                 {/* Break Label Badge */}
                                 <span
                                   className={`inline-flex items-center justify-center rounded-lg border px-2.5 py-1 text-xs font-bold ${badgeColor.bg} ${badgeColor.text} ${badgeColor.border}`}
@@ -626,20 +605,22 @@ export default function WorkingHoursPage() {
                                 </span>
                               </div>
 
-                              {/* Start Time - End Time Display & Inputs */}
+                              {/* Start Time - End Time Display & Inputs (Read-only) */}
                               <div className="flex items-center gap-2">
                                 <input
                                   type="time"
                                   value={b.startTime}
-                                  onChange={(e) => handleTimeChange(b.id, "startTime", e.target.value)}
-                                  className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
+                                  readOnly
+                                  disabled
+                                  className="w-28 rounded-lg border border-gray-200 bg-gray-50/70 px-2.5 py-1.5 text-xs font-medium text-gray-700 outline-none cursor-default select-none opacity-90"
                                 />
                                 <span className="text-xs text-gray-400 font-bold">-</span>
                                 <input
                                   type="time"
                                   value={b.endTime}
-                                  onChange={(e) => handleTimeChange(b.id, "endTime", e.target.value)}
-                                  className="w-28 rounded-lg border border-gray-300 px-2.5 py-1.5 text-xs font-medium text-gray-800 outline-none transition focus:border-[#8E6548] focus:ring-1 focus:ring-[#8E6548]/20"
+                                  readOnly
+                                  disabled
+                                  className="w-28 rounded-lg border border-gray-200 bg-gray-50/70 px-2.5 py-1.5 text-xs font-medium text-gray-700 outline-none cursor-default select-none opacity-90"
                                 />
                                 <span className="hidden sm:inline-block text-[11px] font-medium text-gray-500 ml-1">
                                   ({formatTime12(b.startTime)} – {formatTime12(b.endTime)})
@@ -653,9 +634,8 @@ export default function WorkingHoursPage() {
                                 </span>
                               </div>
 
-                              {/* Enabled Toggle & Delete Button */}
+                              {/* Enabled Toggle Switch */}
                               <div className="flex items-center gap-3">
-                                {/* Toggle switch with "Enabled" label */}
                                 <div
                                   onClick={() => handleToggleBreak(b.id)}
                                   className="flex items-center gap-2 cursor-pointer select-none"
@@ -675,16 +655,6 @@ export default function WorkingHoursPage() {
                                     {b.isEnabled ? "Enabled" : "Disabled"}
                                   </span>
                                 </div>
-
-                                {/* Delete Break Icon */}
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteBreak(b.id)}
-                                  className="text-gray-400 hover:text-red-500 transition p-1 cursor-pointer"
-                                  title="Delete break session"
-                                >
-                                  <Trash2 size={16} />
-                                </button>
                               </div>
                             </div>
                           );

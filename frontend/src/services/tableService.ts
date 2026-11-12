@@ -6,6 +6,9 @@ export interface TableItem {
   name: string;
   seatLimit: number;
   isActive: number;
+  providerId?: string | null;
+  providerName?: string | null;
+  providerEmail?: string | null;
   occupiedSeats: number;
   availableSeats: number;
   createdAt?: string;
@@ -45,6 +48,7 @@ export interface LocationStatisticsData {
 export interface CreateTablePayload {
   name: string;
   seatLimit: number;
+  providerId: string;
   isActive?: boolean;
 }
 
@@ -162,7 +166,7 @@ export const tableService = {
   // Update table
   async updateTable(
     tableId: string | number,
-    payload: { name?: string; seatLimit?: number; isActive?: boolean }
+    payload: { name?: string; seatLimit?: number; isActive?: boolean; providerId?: string }
   ): Promise<void> {
     await api.put(`/api/tables/${tableId}`, payload);
   },
@@ -191,10 +195,16 @@ export const tableService = {
     return res.seatLimit;
   },
 
+  // Get next employee ID (predicted USR-XXXXXX)
+  async getNextEmployeeId(): Promise<string> {
+    const res = await api.get<{ success: boolean; nextEmployeeId: string }>("/api/seats/next-employee-id");
+    return res.nextEmployeeId;
+  },
+
   // Assign employee to seat
   async assignSeat(
     seatId: string,
-    payload: { employeeId?: string; employeeName: string; employeeEmail: string }
+    payload: { employeeId?: string; employeeName: string; employeeEmail: string; mobileNumber?: string }
   ): Promise<void> {
     await api.patch(`/api/seats/${seatId}/assign`, payload);
   },

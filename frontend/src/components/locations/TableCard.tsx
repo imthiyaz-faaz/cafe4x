@@ -1,5 +1,5 @@
 import React from "react";
-import { Users, MoreVertical, ArrowRight, Armchair } from "lucide-react";
+import { Users, MoreVertical, Armchair, Edit3, Trash2, ShieldCheck, Power } from "lucide-react";
 import type { TableItem } from "../../services/tableService";
 
 interface TableCardProps {
@@ -34,18 +34,21 @@ export const TableCard: React.FC<TableCardProps> = ({
   const isPartiallyOccupied = table.occupiedSeats > 0 && table.occupiedSeats < table.seatLimit;
 
   return (
-    <div className="group rounded-3xl border border-[#EEE5DC] bg-white/95 p-5 sm:p-6 shadow-sm hover:shadow-md transition-all duration-200 backdrop-blur-xs flex flex-col justify-between">
+    <div className="group rounded-3xl border border-[#EEE5DC] bg-white/95 p-5 shadow-xs hover:shadow-md transition-all duration-200 backdrop-blur-xs flex flex-col justify-between">
       <div>
         {/* Top Header: Table Name, Status Badge, and 3-dot menu */}
-        <div className="flex items-start justify-between gap-2 mb-4">
-          <div className="flex items-center gap-2.5">
-            <h3 className="text-base sm:text-lg font-bold text-[#342219] group-hover:text-[#70452D] transition-colors">
+        <div className="flex items-start justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2">
+            <h3
+              onClick={() => onOpen(table)}
+              className="text-base sm:text-lg font-bold text-[#342219] group-hover:text-[#70452D] transition-colors cursor-pointer"
+            >
               {table.name}
             </h3>
 
             {/* Status Badge */}
             <span
-              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+              className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${
                 isOccupied
                   ? "bg-[#FEF3C7] text-[#B45309] border border-[#FDE68A]"
                   : isPartiallyOccupied
@@ -53,7 +56,7 @@ export const TableCard: React.FC<TableCardProps> = ({
                   : "bg-[#EAF7ED] text-[#28A745] border border-[#CDEFD4]"
               }`}
             >
-              {isOccupied ? "Occupied" : "Available"}
+              {isOccupied ? "Occupied" : "Active"}
             </span>
           </div>
 
@@ -75,9 +78,10 @@ export const TableCard: React.FC<TableCardProps> = ({
                     setMenuOpen(false);
                     onEdit(table);
                   }}
-                  className="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-[#342219] hover:bg-[#FAF8F5] transition cursor-pointer"
+                  className="w-full flex items-center gap-2 text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-[#342219] hover:bg-[#FAF8F5] transition cursor-pointer"
                 >
-                  Edit Table
+                  <Edit3 className="w-3.5 h-3.5 text-[#8C5835]" />
+                  <span>Edit Table</span>
                 </button>
                 <button
                   type="button"
@@ -85,9 +89,10 @@ export const TableCard: React.FC<TableCardProps> = ({
                     setMenuOpen(false);
                     onToggleStatus(table);
                   }}
-                  className="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-[#342219] hover:bg-[#FAF8F5] transition cursor-pointer"
+                  className="w-full flex items-center gap-2 text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-[#342219] hover:bg-[#FAF8F5] transition cursor-pointer"
                 >
-                  {table.isActive === 1 ? "Deactivate" : "Activate"}
+                  <Power className="w-3.5 h-3.5 text-[#8C5835]" />
+                  <span>{table.isActive === 1 ? "Deactivate" : "Activate"}</span>
                 </button>
                 <button
                   type="button"
@@ -95,9 +100,10 @@ export const TableCard: React.FC<TableCardProps> = ({
                     setMenuOpen(false);
                     onDelete(table);
                   }}
-                  className="w-full text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition cursor-pointer"
+                  className="w-full flex items-center gap-2 text-left px-3 py-1.5 rounded-xl text-xs font-semibold text-rose-600 hover:bg-rose-50 transition cursor-pointer"
                 >
-                  Delete Table
+                  <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                  <span>Delete Table</span>
                 </button>
               </div>
             )}
@@ -105,37 +111,48 @@ export const TableCard: React.FC<TableCardProps> = ({
         </div>
 
         {/* Visual Table Illustration & Stats Container */}
-        <div className="grid grid-cols-12 gap-3 items-center py-2">
-          {/* Static Table Illustration (Left 5 cols) */}
+        <div className="grid grid-cols-12 gap-2 items-center py-1">
+          {/* Wooden tabletop illustration matching user design */}
           <div className="col-span-5 flex items-center justify-center">
-            <div className="relative w-24 h-24 sm:w-28 sm:h-28 flex items-center justify-center">
+            <div className="relative w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center">
               {/* Rounded wooden tabletop */}
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-[#D9A066] to-[#A36D38] border-2 border-[#8C5835] shadow-md flex items-center justify-center p-2">
-                <div className="w-4 h-4 rounded-full bg-emerald-600/80 shadow-xs flex items-center justify-center">
-                  <div className="w-1.5 h-1.5 rounded-full bg-white/80" />
+              <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-[#A86B3E] border-2 border-[#8C5835] shadow-md flex items-center justify-center p-2">
+                <div className="w-3.5 h-3.5 rounded-full bg-emerald-600 shadow-xs flex items-center justify-center">
+                  <div className="w-1 h-1 rounded-full bg-white" />
                 </div>
               </div>
 
               {/* Perimeter mini chairs */}
-              <div className="absolute top-0 w-5 h-3 rounded-t-md bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
-              <div className="absolute bottom-0 w-5 h-3 rounded-b-md bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
-              <div className="absolute left-0 h-5 w-3 rounded-l-md bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
-              <div className="absolute right-0 h-5 w-3 rounded-r-md bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
+              <div className="absolute top-0 w-4 h-2.5 rounded-t-sm bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
+              <div className="absolute bottom-0 w-4 h-2.5 rounded-b-sm bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
+              <div className="absolute left-0 h-4 w-2.5 rounded-l-sm bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
+              <div className="absolute right-0 h-4 w-2.5 rounded-r-sm bg-[#FAF4ED] border border-[#D5C2B1] shadow-2xs" />
             </div>
           </div>
 
-          {/* Stats info (Right 7 cols) */}
-          <div className="col-span-7 space-y-2 text-xs text-[#70523E] pl-2">
-            <div className="flex items-center gap-2">
-              <Armchair className="w-4 h-4 text-[#8C5835] shrink-0" />
-              <span className="font-semibold text-[#342219]">
-                {table.seatLimit} Seats
+          {/* Stats info matching design */}
+          <div className="col-span-7 space-y-2 text-xs pl-1">
+            {/* Assigned Provider Chip */}
+            <div className="flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-[#8C5835] shrink-0" />
+              <span
+                className="font-semibold text-[#342219] truncate max-w-[130px]"
+                title={table.providerName ? `${table.providerName} (${table.providerEmail || ""})` : "No Provider Assigned"}
+              >
+                {table.providerName || (table.providerId ? "Assigned Provider" : "No Provider")}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-[#A8907E] shrink-0" />
-              <span className="font-medium text-[#70523E]">
+            {/* Total Seats */}
+            <div className="flex items-center gap-1.5 text-[#70523E]">
+              <Armchair className="w-3.5 h-3.5 text-[#A8907E] shrink-0" />
+              <span className="font-medium">{table.seatLimit} Seats</span>
+            </div>
+
+            {/* Occupied count */}
+            <div className="flex items-center gap-1.5 text-[#70523E]">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#A8907E] shrink-0" />
+              <span className="font-medium">
                 {table.occupiedSeats} / {table.seatLimit} Occupied
               </span>
             </div>
@@ -143,15 +160,24 @@ export const TableCard: React.FC<TableCardProps> = ({
         </div>
       </div>
 
-      {/* Open Table Action Button */}
-      <div className="mt-4 pt-3 border-t border-[#EEE5DC]">
+      {/* Dual action buttons matching UI design: Manage Seats & Edit */}
+      <div className="mt-4 pt-3 border-t border-[#EEE5DC] grid grid-cols-2 gap-2">
         <button
           type="button"
           onClick={() => onOpen(table)}
-          className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-[#70452D] py-2.5 text-xs font-bold text-white shadow-xs hover:bg-[#5C3824] transition cursor-pointer active:scale-98"
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#E8DED4] bg-white py-2 px-3 text-xs font-bold text-[#342219] shadow-2xs hover:bg-[#FAF8F5] transition cursor-pointer active:scale-98"
         >
-          <span>Open Table</span>
-          <ArrowRight className="w-3.5 h-3.5" />
+          <Armchair className="w-3.5 h-3.5 text-[#8C5835]" />
+          <span>Manage Seats</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onEdit(table)}
+          className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-[#E8DED4] bg-white py-2 px-3 text-xs font-bold text-[#70523E] shadow-2xs hover:bg-[#FAF8F5] transition cursor-pointer active:scale-98"
+        >
+          <Edit3 className="w-3.5 h-3.5 text-[#8C5835]" />
+          <span>Edit</span>
         </button>
       </div>
     </div>
@@ -159,4 +185,3 @@ export const TableCard: React.FC<TableCardProps> = ({
 };
 
 export default TableCard;
-

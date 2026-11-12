@@ -95,7 +95,7 @@ export const TableDetails: React.FC = () => {
 
   const handleAssignEmployee = async (
     seatId: string,
-    emp: { employeeId?: string; employeeName: string; employeeEmail: string }
+    emp: { employeeId?: string; employeeName: string; employeeEmail: string; mobileNumber?: string }
   ) => {
     await tableService.assignSeat(seatId, emp);
     await loadData();

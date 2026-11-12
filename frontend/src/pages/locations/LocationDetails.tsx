@@ -9,8 +9,9 @@ import LocationFilters, { type FilterStatus } from "../../components/locations/L
 import TableCard from "../../components/locations/TableCard";
 import CreateTableModal from "../../components/locations/CreateTableModal";
 import EditTableModal from "../../components/locations/EditTableModal";
+import AssignCard from "../../components/locations/assigncard";
 import { tableService, type TableItem, type LocationStatisticsData } from "../../services/tableService";
-import { locationApi, type LocationItem } from "../../services/locations";
+import { locationApi, type LocationItem, type LocationProviderSummary } from "../../services/locations";
 
 export const LocationDetails: React.FC = () => {
   const { locationId, shortCode } = useParams();
@@ -19,6 +20,7 @@ export const LocationDetails: React.FC = () => {
   const [location, setLocation] = useState<LocationItem | null>(null);
   const [tables, setTables] = useState<TableItem[]>([]);
   const [tableLimit, setTableLimit] = useState<number>(5);
+  const [locationProviders, setLocationProviders] = useState<LocationProviderSummary[]>([]);
   const [stats, setStats] = useState<LocationStatisticsData>({
     totalTables: 0,
     totalSeats: 0,
@@ -31,26 +33,49 @@ export const LocationDetails: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<FilterStatus>("all");
+  const [providerFilter, setProviderFilter] = useState<string>("all");
 
   // Modals
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isAssignProvidersOpen, setIsAssignProvidersOpen] = useState(false);
   const [editingTable, setEditingTable] = useState<TableItem | null>(null);
 
   const effectiveLocId = locationId || "";
 
-  // Load Location Data, Tables, and Statistics
+  // Load Location Data, Tables, Providers, and Statistics
   const loadData = async () => {
     if (!effectiveLocId) return;
     setIsLoading(true);
     try {
-      const [locRes, tablesRes, statsRes] = await Promise.all([
+      const [locRes, tablesRes, statsRes, provRes] = await Promise.all([
         locationApi.getLocationById(effectiveLocId),
         tableService.getTablesByLocation(effectiveLocId),
         tableService.getLocationStatistics(effectiveLocId),
+        locationApi.getLocationProviders(effectiveLocId).catch(() => []),
       ]);
 
-      if (locRes) setLocation(locRes);
+      if (locRes) {
+        setLocation(locRes);
+        if (locRes.assignedProviders && locRes.assignedProviders.length > 0) {
+          setLocationProviders(locRes.assignedProviders);
+        } else if (Array.isArray(provRes) && provRes.length > 0) {
+          setLocationProviders(provRes);
+        } else if (locRes.assignedProviderId) {
+          setLocationProviders([
+            {
+              id: locRes.assignedProviderId,
+              name: locRes.assignedProviderName || "Assigned Provider",
+              email: locRes.assignedProviderEmail || "",
+            },
+          ]);
+        } else {
+          setLocationProviders([]);
+        }
+      } else if (Array.isArray(provRes)) {
+        setLocationProviders(provRes);
+      }
+
       if (tablesRes) {
         setTables(tablesRes.tables);
         setTableLimit(tablesRes.tableLimit);
@@ -70,20 +95,25 @@ export const LocationDetails: React.FC = () => {
   // Filtered Tables
   const filteredTables = useMemo(() => {
     return tables.filter((t) => {
-      // Search
+      // Search by name
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         if (!t.name.toLowerCase().includes(q)) return false;
       }
 
-      // Status
+      // Provider filter
+      if (providerFilter !== "all") {
+        if (t.providerId !== providerFilter) return false;
+      }
+
+      // Status filter
       const isOccupied = t.occupiedSeats > 0 && t.occupiedSeats >= t.seatLimit;
       if (statusFilter === "occupied" && !isOccupied) return false;
       if (statusFilter === "available" && isOccupied) return false;
 
       return true;
     });
-  }, [tables, searchQuery, statusFilter]);
+  }, [tables, searchQuery, statusFilter, providerFilter]);
 
   const counts = useMemo(() => {
     let avail = 0;
@@ -119,12 +149,20 @@ export const LocationDetails: React.FC = () => {
     }
   };
 
-  const handleCreateTableSubmit = async (data: { name: string; seatLimit: number; isActive: boolean }) => {
+  const handleCreateTableSubmit = async (data: {
+    name: string;
+    seatLimit: number;
+    isActive: boolean;
+    providerId: string;
+  }) => {
     await tableService.createTable(effectiveLocId, data);
     await loadData();
   };
 
-  const handleEditTableSubmit = async (tableId: number, data: { name?: string; isActive?: boolean }) => {
+  const handleEditTableSubmit = async (
+    tableId: number,
+    data: { name?: string; seatLimit?: number; isActive?: boolean; providerId?: string }
+  ) => {
     await tableService.updateTable(tableId, data);
     await loadData();
   };
@@ -148,16 +186,28 @@ export const LocationDetails: React.FC = () => {
     }
   };
 
+  const handleSaveProviders = async (updatedLoc: LocationItem) => {
+    const providerIds = (updatedLoc.assignedProviders || []).map((p) => p.id);
+    await locationApi.assignProvider(updatedLoc.id, {
+      assignedProviderId: updatedLoc.assignedProviderId,
+      assignedProviderEmail: updatedLoc.assignedProviderEmail,
+      assignedProviderName: updatedLoc.assignedProviderName,
+      providerIds: providerIds.length > 0 ? providerIds : (updatedLoc.assignedProviderId ? [updatedLoc.assignedProviderId] : []),
+    });
+    await loadData();
+  };
+
   return (
     <Background>
       <div className="flex min-h-screen flex-col pt-20 text-[#4A3E3D]">
         <Navbar />
 
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-20">
-          {/* Location Header */}
+          {/* Location Header with Assigned Providers widget */}
           <LocationHeader
             locationName={location?.name || "Location"}
             isActive={location?.status === "Active"}
+            assignedProviders={locationProviders}
             onBack={handleBack}
             onCreateTable={() => setIsCreateOpen(true)}
             onEditLocation={() => {
@@ -167,6 +217,7 @@ export const LocationDetails: React.FC = () => {
                 navigate("/location");
               }
             }}
+            onOpenAssignProviders={() => setIsAssignProvidersOpen(true)}
           />
 
           {/* Location Statistics */}
@@ -178,6 +229,9 @@ export const LocationDetails: React.FC = () => {
             onSearchChange={setSearchQuery}
             statusFilter={statusFilter}
             onStatusFilterChange={setStatusFilter}
+            providerFilter={providerFilter}
+            onProviderFilterChange={setProviderFilter}
+            providers={locationProviders}
             counts={counts}
           />
 
@@ -201,9 +255,9 @@ export const LocationDetails: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredTables.map((t) => (
+              {filteredTables.map((t, tIdx) => (
                 <TableCard
-                  key={t.id}
+                  key={t.id ? `tbl-${t.id}` : `tbl-idx-${tIdx}`}
                   table={t}
                   onOpen={handleOpenTable}
                   onEdit={(t) => {
@@ -226,6 +280,7 @@ export const LocationDetails: React.FC = () => {
         onSubmit={handleCreateTableSubmit}
         existingTables={tables}
         tableLimit={tableLimit}
+        locationProviders={locationProviders}
       />
 
       {/* Edit Table Modal */}
@@ -238,10 +293,20 @@ export const LocationDetails: React.FC = () => {
         table={editingTable}
         onUpdate={handleEditTableSubmit}
         existingTables={tables}
+        locationProviders={locationProviders}
       />
+
+      {/* Assign Providers Modal */}
+      {location && (
+        <AssignCard
+          location={location}
+          isOpen={isAssignProvidersOpen}
+          onClose={() => setIsAssignProvidersOpen(false)}
+          onSave={handleSaveProviders}
+        />
+      )}
     </Background>
   );
 };
 
 export default LocationDetails;
-

@@ -9,6 +9,8 @@ locationRoutes.get("/check-name", locationController.checkLocationName);
 locationRoutes.get("/", locationController.getLocations);
 locationRoutes.get("/:id", locationController.getLocationById);
 locationRoutes.get("/:id/statistics", locationController.getLocationStatistics);
+locationRoutes.get("/:id/providers", locationController.getLocationProviders);
+locationRoutes.delete("/:id/providers/:providerId", locationController.removeProviderFromLocation);
 locationRoutes.put("/:id", locationController.updateLocation);
 locationRoutes.post("/", locationController.createLocation);
 locationRoutes.post("/:id/assign", locationController.assignProvider);

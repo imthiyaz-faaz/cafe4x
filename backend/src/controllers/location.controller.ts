@@ -4,6 +4,13 @@ import { AppEnv } from "../types";
 import { resolveAuthorizedOrg, getAuthUser } from "../middleware/auth.middleware";
 import { getNextId, generateId, generateLocationSeatId, normalizeLocationPrefix, generateSeatQrToken } from "../utils/id-generator";
 
+export interface LocationProviderSummary {
+  id: string;
+  name: string;
+  email: string;
+  userName?: string;
+}
+
 export interface LocationModel {
   id: string;
   displayId?: string;
@@ -17,8 +24,37 @@ export interface LocationModel {
   assignedProviderId?: string;
   assignedProviderEmail?: string;
   assignedProviderName?: string;
+  assignedProviders?: LocationProviderSummary[];
+  assignedProvidersCount?: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export async function ensureLocationProvidersTable(db: any): Promise<void> {
+  try {
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS location_providers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        organization_id TEXT NOT NULL,
+        location_id INTEGER NOT NULL,
+        provider_id TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
+        FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
+        FOREIGN KEY (provider_id) REFERENCES users(id) ON DELETE CASCADE,
+        UNIQUE(location_id, provider_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_loc_prov_loc_id ON location_providers(location_id);
+      CREATE INDEX IF NOT EXISTS idx_loc_prov_prov_id ON location_providers(provider_id);
+      CREATE INDEX IF NOT EXISTS idx_loc_prov_org_id ON location_providers(organization_id);
+    `);
+    try {
+      await db.exec(`ALTER TABLE tables ADD COLUMN provider_id TEXT;`);
+    } catch {}
+    try {
+      await db.exec(`ALTER TABLE location_tables ADD COLUMN provider_id TEXT;`);
+    } catch {}
+  } catch {}
 }
 
 export async function ensureSeatAssignmentsTable(db: any): Promise<void> {
@@ -211,13 +247,14 @@ export const locationController = {
       `;
       const params: any[] = [];
 
-      // If requested by a provider, check both locations.assigned_provider_id and provider_locations table
+      // If requested by a provider, check locations.assigned_provider_id, location_providers and provider_locations table
       if (providerId) {
         query += `
           LEFT JOIN provider_locations pl ON l.id = pl.location_id
-          WHERE l.organization_id = ? AND (l.assigned_provider_id = ? OR pl.provider_id = ?)
+          LEFT JOIN location_providers lp ON l.id = lp.location_id
+          WHERE l.organization_id = ? AND (l.assigned_provider_id = ? OR pl.provider_id = ? OR lp.provider_id = ?)
         `;
-        params.push(org.organizationId, providerId, providerId);
+        params.push(org.organizationId, providerId, providerId, providerId);
       } else {
         query += ` WHERE l.organization_id = ?`;
         params.push(org.organizationId);
@@ -227,21 +264,68 @@ export const locationController = {
 
       const rows = (await db.prepare(query).bind(...params).all()) as any[];
 
-      const locations: LocationModel[] = (rows || []).map((r) => ({
-        id: String(r.id),
-        displayId: r.displayId || `LOC-${r.shortCode || org.shortCode}-${r.id}`,
-        organizationId: r.organizationId || org.organizationId,
-        shortCode: r.shortCode || org.shortCode,
-        name: r.name,
-        status: (r.status || "Active") as "Active" | "Inactive",
-        totalSeats: Number(r.totalSeats) || 12,
-        image: r.image || "",
-        assignedProviderId: r.assignedProviderId || undefined,
-        assignedProviderName: r.assignedProviderName || undefined,
-        assignedProviderEmail: r.assignedProviderEmail || undefined,
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-      }));
+      // Fetch all assigned providers for these locations from location_providers / provider_locations
+      let locProvidersMap: Record<string, LocationProviderSummary[]> = {};
+      try {
+        const provRows = (await db.prepare(`
+          SELECT 
+            lp.location_id as locationId,
+            u.id,
+            u.name,
+            u.email,
+            u.user_name as userName
+          FROM location_providers lp
+          JOIN users u ON lp.provider_id = u.id
+          WHERE lp.organization_id = ?
+          ORDER BY u.name ASC
+        `).bind(org.organizationId).all()) as any[];
+
+        (provRows || []).forEach((pr: any) => {
+          const lId = String(pr.locationId);
+          if (!locProvidersMap[lId]) locProvidersMap[lId] = [];
+          if (!locProvidersMap[lId].some((p) => p.id === pr.id)) {
+            locProvidersMap[lId].push({
+              id: String(pr.id),
+              name: pr.name || pr.userName || pr.email,
+              email: pr.email,
+              userName: pr.userName,
+            });
+          }
+        });
+      } catch (errProv) {
+        // Fallback or empty
+      }
+
+      const locations: LocationModel[] = (rows || []).map((r) => {
+        const lId = String(r.id);
+        const assignedList = locProvidersMap[lId] || [];
+        // If assignedList is empty but location has assigned_provider_id, include it
+        if (assignedList.length === 0 && r.assignedProviderId) {
+          assignedList.push({
+            id: String(r.assignedProviderId),
+            name: r.assignedProviderName || "Assigned Provider",
+            email: r.assignedProviderEmail || "",
+          });
+        }
+
+        return {
+          id: String(r.id),
+          displayId: r.displayId || `LOC-${r.shortCode || org.shortCode}-${r.id}`,
+          organizationId: r.organizationId || org.organizationId,
+          shortCode: r.shortCode || org.shortCode,
+          name: r.name,
+          status: (r.status || "Active") as "Active" | "Inactive",
+          totalSeats: Number(r.totalSeats) || 12,
+          image: r.image || "",
+          assignedProviderId: r.assignedProviderId || undefined,
+          assignedProviderName: r.assignedProviderName || undefined,
+          assignedProviderEmail: r.assignedProviderEmail || undefined,
+          assignedProviders: assignedList,
+          assignedProvidersCount: assignedList.length,
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+        };
+      });
 
       return c.json({
         success: true,
@@ -281,6 +365,37 @@ export const locationController = {
         return c.json({ success: false, message: "Location not found in this organization" }, 404);
       }
 
+      // Fetch assigned providers for this location
+      let assignedProviders: LocationProviderSummary[] = [];
+      try {
+        const provRows = (await db.prepare(`
+          SELECT 
+            u.id,
+            u.name,
+            u.email,
+            u.user_name as userName
+          FROM location_providers lp
+          JOIN users u ON lp.provider_id = u.id
+          WHERE lp.location_id = ? AND lp.organization_id = ?
+          ORDER BY u.name ASC
+        `).bind(row.id, org.organizationId).all()) as any[];
+
+        assignedProviders = (provRows || []).map((p: any) => ({
+          id: String(p.id),
+          name: p.name || p.userName || p.email,
+          email: p.email,
+          userName: p.userName,
+        }));
+      } catch (errProv) {}
+
+      if (assignedProviders.length === 0 && row.assignedProviderId) {
+        assignedProviders.push({
+          id: String(row.assignedProviderId),
+          name: row.assignedProviderName || "Assigned Provider",
+          email: row.assignedProviderEmail || "",
+        });
+      }
+
       return c.json({
         success: true,
         location: {
@@ -296,6 +411,8 @@ export const locationController = {
           assignedProviderId: row.assignedProviderId || undefined,
           assignedProviderName: row.assignedProviderName || undefined,
           assignedProviderEmail: row.assignedProviderEmail || undefined,
+          assignedProviders,
+          assignedProvidersCount: assignedProviders.length,
           createdAt: row.createdAt,
           updatedAt: row.updatedAt,
         },
@@ -649,6 +766,7 @@ export const locationController = {
       const body = await c.req.json();
       const now = new Date().toISOString();
       const db = getUniversalDb(c.env?.DB);
+      await ensureLocationProvidersTable(db);
 
       const existing = (await db
         .prepare(`SELECT id FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
@@ -659,9 +777,96 @@ export const locationController = {
         return c.json({ success: false, message: "Location not found in this organization" }, 404);
       }
 
-      const targetId = existing.id;
-      const providerId = body.assignedProviderId || null;
+      const targetId = Number(existing.id);
 
+      // Support both single provider and multiple provider IDs (e.g. providerIds: string[])
+      let providerIds: string[] = [];
+      if (Array.isArray(body.providerIds)) {
+        providerIds = body.providerIds.map((p: any) => String(p).trim()).filter(Boolean);
+      } else if (body.assignedProviderId) {
+        providerIds = [String(body.assignedProviderId).trim()];
+      }
+
+      // Validate all providers exist and belong to the same organization and are Providers
+      const validProviders: any[] = [];
+      for (const pId of providerIds) {
+        const u = (await db
+          .prepare(`
+            SELECT u.id, u.name, u.email, u.user_name
+            FROM users u
+            JOIN user_organizations uo ON u.id = uo.user_id
+            WHERE u.id = ? AND uo.organization_id = ? AND LOWER(u.user_type) = 'provider'
+          `)
+          .bind(pId, org.organizationId)
+          .get()) as any;
+
+        if (!u) {
+          return c.json({
+            success: false,
+            message: `Provider ID '${pId}' is invalid or does not belong to this organization.`,
+          }, 400);
+        }
+        validProviders.push(u);
+      }
+
+      // Check for tables in this location that were assigned to providers being removed
+      const removedProvidersCheck = (await db
+        .prepare(`
+          SELECT lp.provider_id
+          FROM location_providers lp
+          WHERE lp.location_id = ? AND lp.organization_id = ?
+        `)
+        .bind(targetId, org.organizationId)
+        .all()) as any[];
+
+      const currentAssignedIds = (removedProvidersCheck || []).map((r: any) => String(r.provider_id));
+      const newlyAssignedSet = new Set(validProviders.map((vp) => String(vp.id)));
+      const removedIds = currentAssignedIds.filter((cid) => !newlyAssignedSet.has(cid));
+
+      if (removedIds.length > 0) {
+        // Tables currently assigned to removed providers must be unassigned safely
+        for (const remId of removedIds) {
+          try {
+            await db
+              .prepare(`UPDATE tables SET provider_id = NULL, updated_at = ? WHERE location_id = ? AND provider_id = ?`)
+              .bind(now, targetId, remId)
+              .run();
+          } catch {}
+          try {
+            await db
+              .prepare(`UPDATE location_tables SET provider_id = NULL, updated_at = ? WHERE location_id = ? AND provider_id = ?`)
+              .bind(now, targetId, remId)
+              .run();
+          } catch {}
+        }
+      }
+
+      // Sync location_providers table
+      await db
+        .prepare(`DELETE FROM location_providers WHERE location_id = ? AND organization_id = ?`)
+        .bind(targetId, org.organizationId)
+        .run();
+
+      for (const prov of validProviders) {
+        await db
+          .prepare(
+            `INSERT OR IGNORE INTO location_providers (organization_id, location_id, provider_id, created_at)
+             VALUES (?, ?, ?, ?)`
+          )
+          .bind(org.organizationId, targetId, prov.id, now)
+          .run();
+
+        // Also mirror into legacy provider_locations for full backward compatibility
+        try {
+          const prlId = await generateId(db, "PRL");
+          await db
+            .prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`)
+            .run(prlId, org.organizationId, prov.id, targetId, now);
+        } catch {}
+      }
+
+      // Update primary location record's assigned_provider_* with first provider or null
+      const primaryProv = validProviders[0] || null;
       await db
         .prepare(
           `UPDATE locations
@@ -673,36 +878,194 @@ export const locationController = {
            WHERE id = ? AND organization_id = ?`
         )
         .run(
-          providerId,
-          body.assignedProviderName || null,
-          body.assignedProviderEmail || null,
+          primaryProv?.id || null,
+          primaryProv?.name || null,
+          primaryProv?.email || null,
           now,
           targetId,
           org.organizationId
         );
 
-      if (providerId) {
-        await db
-          .prepare(
-            `INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at)
-             VALUES (?, ?, ?, ?, ?)`
-          )
-          const prlId = await generateId(db, "PRL");
-          await db.prepare(`INSERT OR REPLACE INTO provider_locations (id, organization_id, provider_id, location_id, created_at) VALUES (?, ?, ?, ?, ?)`).run(prlId, org.organizationId, providerId, targetId, now);
-      } else {
-        await db
-          .prepare(`DELETE FROM provider_locations WHERE location_id = ? AND organization_id = ?`)
-          .bind(targetId, org.organizationId)
-          .run();
-      }
-
+      // Return updated location with full assignedProviders array
       const updated = (await db
         .prepare(`SELECT * FROM locations WHERE id = ?`)
         .bind(targetId)
         .get()) as any;
 
-      return c.json({ success: true, location: updated });
+      return c.json({
+        success: true,
+        message: "Location providers updated successfully",
+        location: {
+          ...updated,
+          assignedProviders: validProviders.map((vp) => ({
+            id: String(vp.id),
+            name: vp.name || vp.user_name || vp.email,
+            email: vp.email,
+            userName: vp.user_name,
+          })),
+          assignedProvidersCount: validProviders.length,
+        },
+      });
     } catch (err: any) {
+      console.error("assignProvider error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/locations/:id/providers
+  async getLocationProviders(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const id = c.req.param("id");
+      const db = getUniversalDb(c.env?.DB);
+      await ensureLocationProvidersTable(db);
+
+      const loc = (await db
+        .prepare(`SELECT id, name, organization_id, assigned_provider_id, assigned_provider_name, assigned_provider_email FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(id, id, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const targetId = Number(loc.id);
+
+      // Query from location_providers
+      let providers: any[] = [];
+      try {
+        providers = (await db
+          .prepare(`
+            SELECT 
+              u.id,
+              u.name,
+              u.email,
+              u.user_name as userName,
+              u.user_type as userType
+            FROM location_providers lp
+            JOIN users u ON lp.provider_id = u.id
+            WHERE lp.location_id = ? AND lp.organization_id = ?
+            ORDER BY u.name ASC
+          `)
+          .bind(targetId, org.organizationId)
+          .all()) as any[];
+      } catch {}
+
+      // Fallback if location_providers has no rows but locations has assigned_provider_id
+      if ((!providers || providers.length === 0) && loc.assigned_provider_id) {
+        const single = (await db
+          .prepare(`SELECT id, name, email, user_name as userName, user_type as userType FROM users WHERE id = ?`)
+          .bind(loc.assigned_provider_id)
+          .get()) as any;
+        if (single) providers = [single];
+      }
+
+      return c.json({
+        success: true,
+        locationId: targetId,
+        providers: (providers || []).map((p: any) => ({
+          id: String(p.id),
+          name: p.name || p.userName || p.email,
+          email: p.email,
+          userName: p.userName,
+          userType: p.userType || "Provider",
+        })),
+      });
+    } catch (err: any) {
+      console.error("getLocationProviders error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // DELETE /api/locations/:id/providers/:providerId
+  async removeProviderFromLocation(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const locationId = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const db = getUniversalDb(c.env?.DB);
+      const now = new Date().toISOString();
+
+      const loc = (await db
+        .prepare(`SELECT id FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+        .bind(locationId, locationId, org.organizationId)
+        .get()) as any;
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const targetId = Number(loc.id);
+
+      // Remove from location_providers
+      await db
+        .prepare(`DELETE FROM location_providers WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+        .bind(targetId, providerId, org.organizationId)
+        .run();
+
+      try {
+        await db
+          .prepare(`DELETE FROM provider_locations WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+          .bind(targetId, providerId, org.organizationId)
+          .run();
+      } catch {}
+
+      // Handle table assignments safely: unassign tables in this location that were assigned to this provider
+      try {
+        await db
+          .prepare(`UPDATE tables SET provider_id = NULL, updated_at = ? WHERE location_id = ? AND provider_id = ?`)
+          .bind(now, targetId, providerId)
+          .run();
+      } catch {}
+      try {
+        await db
+          .prepare(`UPDATE location_tables SET provider_id = NULL, updated_at = ? WHERE location_id = ? AND provider_id = ?`)
+          .bind(now, targetId, providerId)
+          .run();
+      } catch {}
+
+      // If location.assigned_provider_id was this provider, reassign to next available provider or null
+      const nextRemaining = (await db
+        .prepare(`
+          SELECT lp.provider_id, u.name, u.email
+          FROM location_providers lp
+          JOIN users u ON lp.provider_id = u.id
+          WHERE lp.location_id = ? AND lp.organization_id = ?
+          LIMIT 1
+        `)
+        .bind(targetId, org.organizationId)
+        .get()) as any;
+
+      await db
+        .prepare(`
+          UPDATE locations
+          SET assigned_provider_id = ?, assigned_provider_name = ?, assigned_provider_email = ?, updated_at = ?
+          WHERE id = ? AND organization_id = ?
+        `)
+        .bind(
+          nextRemaining?.provider_id || null,
+          nextRemaining?.name || null,
+          nextRemaining?.email || null,
+          now,
+          targetId,
+          org.organizationId
+        )
+        .run();
+
+      return c.json({
+        success: true,
+        message: "Provider removed from location successfully.",
+      });
+    } catch (err: any) {
+      console.error("removeProviderFromLocation error:", err);
       return c.json({ success: false, message: err.message }, 500);
     }
   },

@@ -848,10 +848,12 @@ export default function LocationPage() {
     );
     saveLocations(updated);
 
+    const providerIds = (updatedLoc.assignedProviders || []).map((p: any) => p.id);
     locationApi.assignProvider(updatedLoc.id, {
       assignedProviderId: updatedLoc.assignedProviderId,
       assignedProviderEmail: updatedLoc.assignedProviderEmail,
       assignedProviderName: updatedLoc.assignedProviderName,
+      providerIds: providerIds.length > 0 ? providerIds : (updatedLoc.assignedProviderId ? [updatedLoc.assignedProviderId] : []),
     }).catch((err) => {
       console.warn("Could not assign provider on backend:", err);
     });
@@ -1474,13 +1476,39 @@ export default function LocationPage() {
                           </span>
                         </div>
 
-                        {/* Assigned Provider Tag if assigned */}
-                        {loc.assignedProviderName && (
-                          <div className="mt-2 flex items-center gap-1.5 rounded-lg border border-[#E0D3C5] bg-[#FDFBF7] px-2.5 py-1 text-[11px] font-medium text-[#7A4B2A]">
-                            <UserCheck size={13} className="text-[#8C5835] shrink-0" />
-                            <span className="truncate">
-                              Assigned: <strong className="font-semibold text-[#342219]">{loc.assignedProviderName}</strong>
-                            </span>
+                        {/* Assigned Providers Badge / Chips */}
+                        {((loc.assignedProviders && loc.assignedProviders.length > 0) || loc.assignedProviderName) && (
+                          <div className="mt-2.5 flex flex-col gap-1 rounded-xl border border-[#E0D3C5] bg-[#FDFBF7] p-2 text-[11px] font-medium text-[#7A4B2A]">
+                            <div className="flex items-center gap-1.5 text-[#8C5835] font-bold text-[11px]">
+                              <UserCheck size={13} className="shrink-0" />
+                              <span>
+                                Assigned Providers ({loc.assignedProviders?.length || 1})
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                              {loc.assignedProviders && loc.assignedProviders.length > 0 ? (
+                                <>
+                                  {loc.assignedProviders.slice(0, 2).map((p: any) => (
+                                    <span
+                                      key={p.id}
+                                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#FAF4ED] text-[#342219] font-semibold text-[10px] border border-[#E8DED4] truncate max-w-[120px]"
+                                      title={p.name}
+                                    >
+                                      {p.name}
+                                    </span>
+                                  ))}
+                                  {loc.assignedProviders.length > 2 && (
+                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md bg-[#F2ECE4] text-[#70523E] font-bold text-[10px]">
+                                      +{loc.assignedProviders.length - 2} more
+                                    </span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#FAF4ED] text-[#342219] font-semibold text-[10px] border border-[#E8DED4] truncate max-w-[160px]">
+                                  {loc.assignedProviderName}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         )}
 
@@ -1806,14 +1834,14 @@ export default function LocationPage() {
                             <>
                               {/* Top Row Seats */}
                               <div className="flex flex-wrap items-end justify-center gap-4 sm:gap-6">
-                                {topSeats.map((seat) => {
+                                {topSeats.map((seat, sIdx) => {
                                   const isSelected = selectedSeatNumber === seat.number;
                                   const isAssigned = isSeatOccupied(seat);
                                   const assignedEmployeeLabel = seat.employeeName || seat.employee || (isAssigned ? "Occupied" : null);
 
                                   return (
                                     <div
-                                      key={seat.number}
+                                      key={seat.id ? `top-${seat.id}` : `top-${seat.number}-${sIdx}`}
                                       onClick={() => setSelectedSeatNumber(isSelected ? null : seat.number)}
                                       className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:-translate-y-1.5"
                                     >
@@ -1929,14 +1957,14 @@ export default function LocationPage() {
 
                               {/* BOTTOM ROW CHAIRS (Facing up toward table) */}
                               <div className="flex flex-wrap items-start justify-center gap-4 sm:gap-6">
-                                {bottomSeats.map((seat) => {
+                                {bottomSeats.map((seat, sIdx) => {
                                   const isSelected = selectedSeatNumber === seat.number;
                                   const isAssigned = isSeatOccupied(seat);
                                   const assignedEmployeeLabel = seat.employeeName || seat.employee || (isAssigned ? "Occupied" : null);
 
                                   return (
                                     <div
-                                      key={seat.number}
+                                      key={seat.id ? `bottom-${seat.id}` : `bottom-${seat.number}-${sIdx}`}
                                       onClick={() => setSelectedSeatNumber(isSelected ? null : seat.number)}
                                       className="group relative flex cursor-pointer flex-col items-center transition-all duration-200 hover:translate-y-1.5"
                                     >

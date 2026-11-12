@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { X, Check, AlertCircle, ShieldAlert } from "lucide-react";
+import { X, Check, AlertCircle } from "lucide-react";
 
 interface SetTableLimitModalProps {
   isOpen: boolean;

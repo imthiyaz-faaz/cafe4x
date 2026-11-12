@@ -1,16 +1,23 @@
 import React from "react";
-import { Armchair, Users, Clock } from "lucide-react";
+import { Armchair, Users, Clock, Edit2 } from "lucide-react";
 import type { LocationStatisticsData } from "../../services/tableService";
 
 interface LocationStatisticsProps {
   stats: LocationStatisticsData;
+  onEditTableLimit?: () => void;
 }
 
-export const LocationStatistics: React.FC<LocationStatisticsProps> = ({ stats }) => {
+export const LocationStatistics: React.FC<LocationStatisticsProps> = ({ stats, onEditTableLimit }) => {
   return (
     <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4 mb-6">
       {/* 1. Total Tables */}
-      <div className="flex items-center gap-3.5 rounded-3xl border border-[#F4E3D7] bg-[#FDF7F2] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200">
+      <div 
+        onClick={onEditTableLimit}
+        className={`group relative flex items-center gap-3.5 rounded-3xl border border-[#F4E3D7] bg-[#FDF7F2] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all duration-200 ${
+          onEditTableLimit ? "cursor-pointer hover:border-[#A75D28]/40" : ""
+        }`}
+        title={onEditTableLimit ? "Click to set table limit for this location" : undefined}
+      >
         <div className="flex h-11 w-11 sm:h-12 sm:w-12 shrink-0 items-center justify-center rounded-2xl bg-[#F6DEC9] text-[#A75D28] shadow-xs">
           <svg className="w-5 h-5 sm:w-6 sm:h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M4 8h16" />
@@ -19,8 +26,15 @@ export const LocationStatistics: React.FC<LocationStatisticsProps> = ({ stats })
             <path d="M20 12v6" />
           </svg>
         </div>
-        <div className="min-w-0">
-          <span className="block text-xs font-semibold text-[#8A7667] truncate">Total Tables</span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between">
+            <span className="block text-xs font-semibold text-[#8A7667] truncate">Total Tables</span>
+            {onEditTableLimit && (
+              <span className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded-md hover:bg-[#F6DEC9]/60 text-[#A75D28]" title="Edit Table Limit">
+                <Edit2 className="w-3 h-3" />
+              </span>
+            )}
+          </div>
           <div className="flex items-baseline gap-1 mt-0.5">
             <span className="text-xl sm:text-2xl font-black text-[#342219]">{stats.totalTables}</span>
             <span className="text-[10px] text-[#A8907E] font-medium">/ {stats.tableLimit}</span>

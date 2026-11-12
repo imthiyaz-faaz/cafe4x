@@ -19,6 +19,10 @@ export interface ProviderOrder {
   displayId?: string;
   seat: string;
   seatId?: string;
+  seatNumber?: number | string;
+  tableName?: string;
+  tableId?: number | string;
+  seatDisplay?: string;
   locationName: string;
   locationId?: string;
   employeeName: string;
@@ -41,6 +45,7 @@ export interface ProviderOrder {
 export interface GetOrdersParams {
   location?: string;
   status?: string;
+  tableId?: string | number;
   employee?: string;
   startDate?: string;
   endDate?: string;

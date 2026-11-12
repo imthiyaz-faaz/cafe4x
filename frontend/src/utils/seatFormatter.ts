@@ -111,3 +111,101 @@ export function getSeatDisplayIdentifier(
   return `${locPrefix}-${unpaddedNum}`;
 }
 
+/**
+ * Universal Formatter for Order Seat Display.
+ * Formats orders consistently into:
+ * `Table Name - Seat Number (Location Name)`
+ *
+ * Examples:
+ * - `Table 1 - Seat 1 (Meeting Hall)`
+ * - `Table 1 - Seat 2 (Meeting Hall)`
+ * - `Main Table - Seat 3 (Meeting Hall)`
+ *
+ * Safely falls back if table name or seat number is missing, and extracts
+ * the seat number from composite identifiers like "ORG-000001-LOC-000004-SEAT-001".
+ */
+export function formatOrderSeat(
+  order?: {
+    seat?: string | null;
+    seatId?: string | null;
+    seatNumber?: string | number | null;
+    tableName?: string | null;
+    locationName?: string | null;
+    seatDisplay?: string | null;
+  } | null,
+  fallbackLocation?: string | null
+): string {
+  if (!order) return "Seat";
+
+  // If backend already prepared seatDisplay, return it
+  if (order.seatDisplay && typeof order.seatDisplay === "string" && order.seatDisplay.trim()) {
+    return order.seatDisplay.trim();
+  }
+
+  const rawSeat = (order.seatId || order.seat || "").trim();
+  const locationName = (order.locationName || fallbackLocation || "").trim();
+  const locSuffix = locationName ? ` (${locationName})` : "";
+
+  // 1. Check if order object has explicit tableName and seatNumber
+  if (order.tableName && (order.seatNumber !== undefined && order.seatNumber !== null && String(order.seatNumber).trim() !== "")) {
+    const sNum = parseInt(String(order.seatNumber), 10) || order.seatNumber;
+    return `${order.tableName} - Seat ${sNum}${locSuffix}`;
+  }
+
+  // 2. Try parsing rawSeat if it matches ORG-XXXXXX-LOC-XXXXXX-SEAT-0*(\d+)
+  const globalMatch = rawSeat.match(/^ORG-\d+-LOC-\d+-SEAT-0*(\d+)$/i);
+  if (globalMatch) {
+    const seatNum = parseInt(globalMatch[1], 10) || globalMatch[1];
+    const tablePrefix = order.tableName || "Table 1";
+    return `${tablePrefix} - Seat ${seatNum}${locSuffix}`;
+  }
+
+  // 3. Try parsing prefix-number pattern e.g. "OFFICE-001", "SEAT-004", "T1-S2"
+  const prefixMatch = rawSeat.match(/^(?:.*-)?0*(\d+)$/);
+  if (prefixMatch && prefixMatch[1]) {
+    const seatNum = parseInt(prefixMatch[1], 10) || prefixMatch[1];
+    const tablePrefix = order.tableName || "Table 1";
+    return `${tablePrefix} - Seat ${seatNum}${locSuffix}`;
+  }
+
+  // 4. Fallback if only rawSeat or seatNumber exists
+  if (order.tableName) {
+    return `${order.tableName}${locSuffix}`;
+  }
+  if (rawSeat) {
+    return `Seat ${rawSeat}${locSuffix}`;
+  }
+
+  return locationName ? `Seat (${locationName})` : "Seat";
+}
+
+/**
+ * Short Seat Badge Label (for compact badges/pills on queue cards or chairs).
+ * e.g. "Seat 1" or "S1"
+ */
+export function formatOrderSeatNumber(
+  order?: {
+    seat?: string | null;
+    seatId?: string | null;
+    seatNumber?: string | number | null;
+  } | null
+): string {
+  if (!order) return "—";
+  if (order.seatNumber !== undefined && order.seatNumber !== null && String(order.seatNumber).trim() !== "") {
+    const sNum = parseInt(String(order.seatNumber), 10) || order.seatNumber;
+    return String(sNum);
+  }
+  const rawSeat = (order.seatId || order.seat || "").trim();
+  const globalMatch = rawSeat.match(/^ORG-\d+-LOC-\d+-SEAT-0*(\d+)$/i);
+  if (globalMatch) {
+    const seatNum = parseInt(globalMatch[1], 10) || globalMatch[1];
+    return String(seatNum);
+  }
+  const prefixMatch = rawSeat.match(/^(?:.*-)?0*(\d+)$/);
+  if (prefixMatch && prefixMatch[1]) {
+    return String(parseInt(prefixMatch[1], 10) || prefixMatch[1]);
+  }
+  return rawSeat.substring(0, 8);
+}
+
+

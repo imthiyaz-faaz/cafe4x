@@ -72,7 +72,6 @@ export async function ensureSeatAssignmentsTable(db: any): Promise<void> {
         FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
         FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
         FOREIGN KEY (seat_id) REFERENCES seats(id) ON DELETE CASCADE,
-        FOREIGN KEY (employee_id) REFERENCES users(id) ON DELETE CASCADE,
         UNIQUE(location_id, seat_id),
         UNIQUE(organization_id, employee_id)
       );
@@ -700,6 +699,30 @@ export const locationController = {
         }
       }
 
+      // Validate and update table_limit if provided
+      let targetTableLimit: number | null = null;
+      if (body.tableLimit !== undefined && body.tableLimit !== null) {
+        const parsedLimit = Number(body.tableLimit);
+        if (isNaN(parsedLimit) || parsedLimit < 1) {
+          return c.json({ success: false, message: "Table limit must be a positive integer." }, 400);
+        }
+
+        // Check against currently existing tables in this location
+        const countRow = (await db
+          .prepare(`SELECT COUNT(*) as cnt FROM tables WHERE location_id = ?`)
+          .bind(targetId)
+          .get()) as any;
+        const currentTables = Number(countRow?.cnt) || 0;
+        if (parsedLimit < currentTables) {
+          return c.json({
+            success: false,
+            message: `Table limit cannot be less than the number of existing tables (${currentTables}).`,
+          }, 400);
+        }
+
+        targetTableLimit = parsedLimit;
+      }
+
       await db
         .prepare(
           `UPDATE locations
@@ -707,6 +730,7 @@ export const locationController = {
              name = COALESCE(?, name),
              status = COALESCE(?, status),
              total_seats = COALESCE(?, total_seats),
+             table_limit = COALESCE(?, table_limit),
              image = COALESCE(?, image),
              assigned_provider_id = ?,
              assigned_provider_name = ?,
@@ -718,6 +742,7 @@ export const locationController = {
           body.name ? body.name.trim() : null,
           body.status || null,
           body.totalSeats ? Number(body.totalSeats) : null,
+          targetTableLimit !== null ? targetTableLimit : null,
           body.image !== undefined ? body.image : null,
           body.assignedProviderId || null,
           body.assignedProviderName || null,
@@ -1620,89 +1645,79 @@ export const locationController = {
         return c.json({ success: false, message: "Employee not found in this organization" }, 404);
       }
 
-      // Check location-level employee email uniqueness
       const candidateUserEmail = user?.email ? String(user.email).trim().toLowerCase() : fallbackEmail;
+      const now = new Date().toISOString();
+
+      // Unassign any previous seat for this employee in this organization to maintain one seat per employee
       if (candidateUserEmail) {
-        const dupSeatInLoc = (await db
+        const prevSeats = (await db
           .prepare(
-            `SELECT id, display_id as displayId, number
-             FROM seats
-             WHERE organization_id = ? AND location_id = ? AND id != ?
+            `SELECT id, location_id FROM seats 
+             WHERE organization_id = ? AND id != ?
                AND (
                  (employee_email IS NOT NULL AND LOWER(TRIM(employee_email)) = ?)
                  OR
                  (employee IS NOT NULL AND LOWER(TRIM(employee)) = ?)
                )`
           )
-          .bind(org.organizationId, effectiveLocId, seat.id, candidateUserEmail, candidateUserEmail)
-          .get()) as any;
+          .bind(org.organizationId, seat.id, candidateUserEmail, candidateUserEmail)
+          .all()) as any[];
 
-        if (dupSeatInLoc) {
-          return c.json({
-            success: false,
-            message: "This employee email is already assigned to a seat in this location.",
-          }, 409);
+        if (prevSeats && prevSeats.length > 0) {
+          for (const prev of prevSeats) {
+            await db
+              .prepare(
+                `UPDATE seats 
+                 SET employee = NULL, employee_name = NULL, employee_email = NULL, employee_id = NULL, status = 'available', updated_at = ? 
+                 WHERE id = ?`
+              )
+              .bind(now, prev.id)
+              .run();
+
+            try {
+              await db
+                .prepare(
+                  `UPDATE location_table_seats 
+                   SET employee_id = NULL, employee_name = NULL, employee_email = NULL, status = 'available', updated_at = ? 
+                   WHERE id = ?`
+                )
+                .bind(now, prev.id)
+                .run();
+            } catch {}
+
+            try {
+              await db.prepare(`DELETE FROM employee_seat_assignments WHERE seat_id = ?`).bind(prev.id).run();
+            } catch {}
+          }
         }
       }
 
-      // Prevent duplicate assignment: Check if registered employee already has an active assignment on ANOTHER seat
-      if (user) {
-        const duplicateAssignment = (await db
-          .prepare(
-            `SELECT esa.id, esa.seat_id, s.number, s.id as displayId, l.name as locName 
-             FROM employee_seat_assignments esa 
-             JOIN seats s ON esa.seat_id = s.id 
-             JOIN locations l ON s.location_id = l.id 
-             WHERE esa.organization_id = ? AND esa.employee_id = ? AND esa.seat_id != ?`
-          )
-          .bind(org.organizationId, user.id, seat.id)
-          .get()) as any;
-
-        if (duplicateAssignment) {
-          return c.json({
-            success: false,
-            message: `Employee ${user.name} is already assigned to seat ${duplicateAssignment.number || duplicateAssignment.displayId} in ${duplicateAssignment.locName}.`,
-          }, 409);
-        }
-      }
-
-      const now = new Date().toISOString();
       const orderUrl = seat.orderUrl;
-
-      // Upsert into employee_seat_assignments if user exists, or delete if no longer assigned to a user
-      let assignmentId = existingSeatAssignment?.id;
-      if (user) {
-        if (existingSeatAssignment) {
-          await db
-            .prepare(`UPDATE employee_seat_assignments SET employee_id = ?, assigned_at = ?, updated_at = ? WHERE id = ?`)
-            .bind(user.id, now, now, existingSeatAssignment.id)
-            .run();
-        } else {
-          assignmentId = await generateId(db, "ESA");
-          await db
-            .prepare(
-              `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(seat_id) DO UPDATE SET
-                 employee_id = excluded.employee_id,
-                 assigned_at = excluded.assigned_at,
-                 updated_at = excluded.updated_at`
-            )
-            .bind(assignmentId, org.organizationId, effectiveLocId, seat.id, user.id, now, now, now)
-            .run();
-        }
-      } else if (existingSeatAssignment) {
-        // If updating to a custom name/email not tied to a users table record, delete old foreign key assignment
-        await db
-          .prepare(`DELETE FROM employee_seat_assignments WHERE seat_id = ?`)
-          .bind(seat.id)
-          .run();
-        assignmentId = null;
-      }
-
       const finalAssignedEmail = user ? user.email.toLowerCase() : candidateUserEmail;
       const finalAssignedName = user ? user.name : (fallbackName || "Employee");
-      const finalAssignedId = user ? user.id : (body.employeeId || null);
+      const finalAssignedId = user ? user.id : (body.employeeId || (await generateId(db, "EMP")));
+
+      // Upsert into employee_seat_assignments
+      let assignmentId = existingSeatAssignment?.id;
+      if (existingSeatAssignment) {
+        await db
+          .prepare(`UPDATE employee_seat_assignments SET employee_id = ?, assigned_at = ?, updated_at = ? WHERE id = ?`)
+          .bind(finalAssignedId, now, now, existingSeatAssignment.id)
+          .run();
+      } else {
+        assignmentId = await generateId(db, "ESA");
+        await db
+          .prepare(
+            `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(seat_id) DO UPDATE SET
+               employee_id = excluded.employee_id,
+               assigned_at = excluded.assigned_at,
+               updated_at = excluded.updated_at`
+          )
+          .bind(assignmentId, org.organizationId, effectiveLocId, seat.id, finalAssignedId, now, now, now)
+          .run();
+      }
 
       // Update seats table (preserving permanent seat order_url and qr_token)
       await db
@@ -1712,11 +1727,27 @@ export const locationController = {
                employee_name = ?, 
                employee_email = ?, 
                employee_id = ?, 
+               status = 'occupied',
                updated_at = ? 
            WHERE location_id = ? AND id = ?`
         )
         .bind(finalAssignedEmail || finalAssignedName, finalAssignedName, finalAssignedEmail, finalAssignedId, now, effectiveLocId, seat.id)
         .run();
+
+      try {
+        await db
+          .prepare(
+            `UPDATE location_table_seats 
+             SET employee_id = ?, 
+                 employee_name = ?, 
+                 employee_email = ?, 
+                 status = 'occupied',
+                 updated_at = ? 
+             WHERE id = ?`
+          )
+          .bind(finalAssignedId, finalAssignedName, finalAssignedEmail, now, seat.id)
+          .run();
+      } catch {}
 
       return c.json({
         success: true,
@@ -1847,11 +1878,28 @@ export const locationController = {
                employee_name = NULL, 
                employee_email = NULL, 
                employee_id = NULL, 
+               status = 'available',
                updated_at = ? 
            WHERE location_id = ? AND id = ?`
         )
         .bind(now, effectiveLocId, seat.id)
         .run();
+
+      try {
+        await db
+          .prepare(
+            `UPDATE location_table_seats 
+             SET employee = NULL, 
+                 employee_name = NULL, 
+                 employee_email = NULL, 
+                 employee_id = NULL, 
+                 status = 'available',
+                 updated_at = ? 
+             WHERE id = ?`
+          )
+          .bind(now, seat.id)
+          .run();
+      } catch {}
 
       return c.json({
         success: true,

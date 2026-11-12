@@ -8,6 +8,7 @@ interface TableCardProps {
   onEdit: (table: TableItem) => void;
   onToggleStatus: (table: TableItem) => void;
   onDelete: (table: TableItem) => void;
+  onManageProvider?: (table: TableItem) => void;
 }
 
 export const TableCard: React.FC<TableCardProps> = ({
@@ -16,6 +17,7 @@ export const TableCard: React.FC<TableCardProps> = ({
   onEdit,
   onToggleStatus,
   onDelete,
+  onManageProvider,
 }) => {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
@@ -132,15 +134,33 @@ export const TableCard: React.FC<TableCardProps> = ({
 
           {/* Stats info matching design */}
           <div className="col-span-7 space-y-2 text-xs pl-1">
-            {/* Assigned Provider Chip */}
-            <div className="flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-[#8C5835] shrink-0" />
-              <span
-                className="font-semibold text-[#342219] truncate max-w-[130px]"
-                title={table.providerName ? `${table.providerName} (${table.providerEmail || ""})` : "No Provider Assigned"}
-              >
-                {table.providerName || (table.providerId ? "Assigned Provider" : "No Provider")}
-              </span>
+            {/* Assigned Provider Chip & Manage Button */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-1.5">
+                {table.providerName ? (
+                  <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#F6ECE2] text-[9px] font-bold text-[#8C5835]">
+                    {table.providerName.slice(0, 2).toUpperCase()}
+                  </div>
+                ) : (
+                  <Users className="w-3.5 h-3.5 text-[#A8907E] shrink-0" />
+                )}
+                <span
+                  className="font-semibold text-[#342219] truncate max-w-[130px]"
+                  title={table.providerName ? `${table.providerName} (${table.providerEmail || ""})` : "Not Assigned"}
+                >
+                  {table.providerName || "Not Assigned"}
+                </span>
+              </div>
+
+              {onManageProvider && (
+                <button
+                  type="button"
+                  onClick={() => onManageProvider(table)}
+                  className="inline-flex items-center gap-1 text-[10px] font-bold text-[#8C5835] hover:text-[#5C3824] hover:underline transition cursor-pointer"
+                >
+                  <span>Manage Provider</span>
+                </button>
+              )}
             </div>
 
             {/* Total Seats */}

@@ -38,7 +38,7 @@ import { userApi, type UserItem } from "../../services/userApi";
 import { organizationApi } from "../../services/organizationApi";
 import { workingHoursApi } from "../../services/workingHoursApi";
 import { getDateStringsInTimezone } from "../../utils/orderTimeClassification";
-import { formatSeatIdentifier } from "../../utils/seatFormatter";
+import { formatSeatIdentifier, formatOrderSeat } from "../../utils/seatFormatter";
 import { formatOrderId } from "../../utils/orderFormatter";
 
 type ActiveView = "locations" | "employees";
@@ -1728,10 +1728,7 @@ export default function OrdersPage() {
                             order.seat ||
                             (assignedSeat?.number ? `SEAT-${assignedSeat.number}` : "SEAT-1");
 
-                          const displaySeat = formatSeatIdentifier(
-                            rawSeat,
-                            selectedLocation?.name
-                          );
+                          const displaySeat = formatOrderSeat(order, selectedLocation?.name);
 
                           const displayOrderId = formatOrderId(order);
 
@@ -1865,9 +1862,9 @@ export default function OrdersPage() {
                     </span>
                   </div>
                   <div className="bg-[#FAF7F2] p-3 rounded-2xl border border-[#EEE5DC]">
-                    <span className="text-[#8A7667] block text-[10px] uppercase font-bold">Seat</span>
-                    <span className="font-mono font-semibold text-[#342219]">
-                      {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat, selectedLocation?.name)}
+                    <span className="text-[#8A7667] block text-[10px] uppercase font-bold">Seat / Seating</span>
+                    <span className="font-semibold text-[#342219]">
+                      {formatOrderSeat(inspectedOrder, selectedLocation?.name)}
                     </span>
                   </div>
                 </div>
@@ -1910,7 +1907,7 @@ export default function OrdersPage() {
                                   <span>Unit Price: {formatPrice(item.price)}</span>
                                   <span className="text-stone-300">•</span>
                                   <span className="font-semibold text-[#70452D]">
-                                    Seat {formatSeatIdentifier(inspectedOrder.seatId || inspectedOrder.seat, selectedLocation?.name)}
+                                    {formatOrderSeat(inspectedOrder, selectedLocation?.name)}
                                   </span>
                                 </div>
 

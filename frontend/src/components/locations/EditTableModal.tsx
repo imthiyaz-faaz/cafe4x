@@ -29,6 +29,7 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
   const [isActive, setIsActive] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +55,7 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
       setIsActive(table.isActive === 1);
       setProviderId(table.providerId || (locationProviders[0]?.id || ""));
       setError(null);
+      setNameError(null);
       setIsDropdownOpen(false);
     }
   }, [table, isOpen, locationProviders]);
@@ -73,10 +75,19 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNameError(null);
 
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("Table name cannot be empty.");
+      setNameError("Table name cannot be empty.");
+      return;
+    }
+
+    const isDup = existingTables.some(
+      (t) => t.id !== table.id && t.name.trim().toLowerCase() === trimmed.toLowerCase()
+    );
+    if (isDup) {
+      setNameError("This table name is already used in this location.");
       return;
     }
 
@@ -95,14 +106,6 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
       return;
     }
 
-    const isDup = existingTables.some(
-      (t) => t.id !== table.id && t.name.trim().toLowerCase() === trimmed.toLowerCase()
-    );
-    if (isDup) {
-      setError(`A table named '${trimmed}' already exists in this location.`);
-      return;
-    }
-
     setIsSubmitting(true);
     try {
       await onUpdate(table.id, {
@@ -113,7 +116,12 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
       });
       onClose();
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || "Failed to update table.");
+      const respMsg = err?.response?.data?.message || err?.message || "";
+      if (err?.response?.status === 409 || respMsg.toLowerCase().includes("already exists")) {
+        setNameError("This table name is already used in this location.");
+      } else {
+        setError(respMsg || "Failed to update table.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -156,10 +164,23 @@ export const EditTableModal: React.FC<EditTableModalProps> = ({
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (nameError) setNameError(null);
+              }}
               required
-              className="w-full px-3.5 py-2.5 bg-[#FAF8F5] border border-[#E8DED4] rounded-2xl text-xs sm:text-sm text-[#342219] focus:outline-none focus:ring-2 focus:ring-[#8C5835] focus:bg-white transition"
+              className={`w-full px-3.5 py-2.5 bg-[#FAF8F5] border rounded-2xl text-xs sm:text-sm text-[#342219] focus:outline-none transition ${
+                nameError
+                  ? "border-rose-500 ring-1 ring-rose-500 focus:border-rose-500 focus:ring-rose-500 bg-rose-50/20"
+                  : "border-[#E8DED4] focus:ring-2 focus:ring-[#8C5835] focus:bg-white"
+              }`}
             />
+            {nameError && (
+              <p className="mt-1.5 text-xs font-semibold text-rose-600 flex items-center gap-1.5 animate-in fade-in">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                <span>{nameError}</span>
+              </p>
+            )}
           </div>
 
           <div>

@@ -226,7 +226,6 @@ export const qrSessionController = {
             FOREIGN KEY (organization_id) REFERENCES organizations(id) ON DELETE CASCADE,
             FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
             FOREIGN KEY (seat_id) REFERENCES seats(id) ON DELETE CASCADE,
-            FOREIGN KEY (employee_id) REFERENCES users(id) ON DELETE CASCADE,
             UNIQUE(location_id, seat_id),
             UNIQUE(organization_id, employee_id)
           );

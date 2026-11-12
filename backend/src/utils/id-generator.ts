@@ -95,7 +95,8 @@ export type EntityIdType =
   | "SES"
   | "OSN"
   | "WHR"
-  | "ESA";
+  | "ESA"
+  | "EMP";
 
 const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLen: number }> = {
   ORG: { scope: "ORGANIZATIONS", prefix: "ORG", padLen: 6 },
@@ -111,6 +112,7 @@ const ENTITY_CONFIG: Record<EntityIdType, { scope: string; prefix: string; padLe
   OSN: { scope: "ORDERING_SESSIONS", prefix: "OSN", padLen: 6 },
   WHR: { scope: "WORKING_HOURS", prefix: "WHR", padLen: 6 },
   ESA: { scope: "EMPLOYEE_SEAT_ASSIGNMENTS", prefix: "ESA", padLen: 6 },
+  EMP: { scope: "EMPLOYEES", prefix: "EMP", padLen: 6 },
 };
 
 /**

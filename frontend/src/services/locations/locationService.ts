@@ -14,6 +14,7 @@ export interface LocationItem {
   name: string;
   status: "Active" | "Inactive";
   totalSeats: number;
+  tableLimit?: number;
   assignedProviderId?: string;
   assignedProviderEmail?: string;
   assignedProviderName?: string;

@@ -260,56 +260,6 @@ export const TableDetails: React.FC = () => {
                 <Plus className="w-4 h-4" />
                 <span>Add Seats</span>
               </button>
-
-              {/* More Actions Dropdown Menu */}
-              <div className="relative" ref={menuRef}>
-                <button
-                  type="button"
-                  onClick={() => setMenuOpen(!menuOpen)}
-                  className="p-2 rounded-2xl bg-white border border-[#EEE5DC] text-[#70523E] hover:text-[#342219] hover:bg-[#FAF6F1] shadow-2xs transition cursor-pointer"
-                  title="More actions"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
-
-                {menuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 rounded-2xl border border-[#EEE5DC] bg-white p-1.5 shadow-xl z-20 animate-in fade-in zoom-in-95 duration-100">
-                    <button
-                      type="button"
-                      onClick={handleToggleTableActive}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#342219] hover:bg-[#FAF6F1] rounded-xl transition cursor-pointer"
-                    >
-                      {tableData?.isActive === 1 ? (
-                        <>
-                          <XCircle className="w-3.5 h-3.5 text-amber-600" />
-                          <span>Deactivate Table</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>Activate Table</span>
-                        </>
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDownloadQRs}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#342219] hover:bg-[#FAF6F1] rounded-xl transition cursor-pointer"
-                    >
-                      <Download className="w-3.5 h-3.5 text-[#70452D]" />
-                      <span>Download QR Codes</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDeleteTable}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Delete Table</span>
-                    </button>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
 

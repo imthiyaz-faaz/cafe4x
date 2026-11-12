@@ -1,5 +1,6 @@
 import { useOrgCurrency } from '../../utils/currencies';
 import { formatProviderOrderId } from "../../utils/providerOrderFormatter";
+import { formatOrderSeat, formatOrderSeatNumber } from "../../utils/seatFormatter";
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate, useSearchParams, useParams } from "react-router-dom";
 import {
@@ -43,6 +44,7 @@ import deliveredOrdersImg from "../../assets/images/delivered_4k.png";
 import allOrdersImg from "../../assets/images/all_orders_4k.png";
 import { orderApi } from "../../services/orders";
 import type { MenuItem } from "../../services/items";
+import ProviderLocationDashboard from "./ProviderLocationDashboard";
 
 const OFFICE_IMG =
   "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80";
@@ -88,11 +90,13 @@ export interface ProviderOrder {
 
 // Orders are created live by employees and synced via backend & localStorage
 
-export type OrderCategory = "pending" | "canceled" | "delivered" | "all";
+export type OrderCategory = "pending" | "preparing" | "ready" | "canceled" | "delivered" | "all";
 
 
 const categoryDetails: Record<OrderCategory, { title: string; subtitle: string; image: string }> = {
   pending: { title: "Pending Order", subtitle: "Orders awaiting preparation", image: pendingOrdersImg },
+  preparing: { title: "Preparing Order", subtitle: "Orders currently in the kitchen", image: pendingOrdersImg },
+  ready: { title: "Ready Order", subtitle: "Orders ready for delivery or pickup", image: deliveredOrdersImg },
   canceled: { title: "Canceled Order", subtitle: "Orders declined or cancelled", image: cancelledOrdersImg },
   delivered: { title: "Delivered Order", subtitle: "Orders served to customer", image: deliveredOrdersImg },
   all: { title: "All Order", subtitle: "All historical & active orders", image: allOrdersImg },
@@ -110,8 +114,9 @@ export default function ProviderPage() {
   // Detail view when provider clicks a location
   const [selectedLocation, setSelectedLocation] = useState<ProviderLocation | null>(null);
 
-  // Active Category view inside a selected location: null (shows 4 cards) or "pending" | "canceled" | "delivered" | "all"
+  // Active Category view inside a selected location: null (shows 4 cards) or "pending" | "preparing" | "ready" | "canceled" | "delivered" | "all"
   const [selectedCategory, setSelectedCategory] = useState<OrderCategory | null>(null);
+  const [selectedTableFilter, setSelectedTableFilter] = useState<{ id: string | number; name: string } | null>(null);
   const [categorySearch, setCategorySearch] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
 
@@ -370,6 +375,8 @@ export default function ProviderPage() {
 
         // Auto-select location if specified in URL query
         const targetLocParam = searchParams.get("locationId") || searchParams.get("location");
+        const targetStatusParam = searchParams.get("status");
+        const targetTableIdParam = searchParams.get("tableId");
         if (targetLocParam) {
           const matched = mapped.find(
             (l) =>
@@ -378,7 +385,22 @@ export default function ProviderPage() {
           );
           if (matched) {
             setSelectedLocation(matched);
-            setSelectedCategory(null);
+            if (targetStatusParam) {
+              const sLower = targetStatusParam.toLowerCase() as OrderCategory;
+              if (["pending", "preparing", "ready", "canceled", "delivered", "all"].includes(sLower)) {
+                setSelectedCategory(sLower);
+              } else {
+                setSelectedCategory("all");
+              }
+            } else if (targetTableIdParam) {
+              setSelectedCategory("all");
+            } else {
+              setSelectedCategory(null);
+            }
+
+            if (targetTableIdParam) {
+              setSelectedTableFilter({ id: targetTableIdParam, name: `Table ${targetTableIdParam}` });
+            }
           }
         }
       } else {
@@ -937,88 +959,25 @@ export default function ProviderPage() {
               </div>
             )}
 
-            {/* VIEW 2: LOCATION 4 CATEGORIES (EXACT USER SCREENSHOT) & DETAILED ORDERS VIEW */}
+            {/* VIEW 2: LOCATION DASHBOARD (EXACT USER SCREENSHOT) */}
             {activeTab === "provider" && selectedLocation && !selectedCategory && (
-              <div>
-                {/* Top Row with Location Title and Back Button matching screenshot */}
-                <div className="mb-8 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-3 w-3 rounded-full bg-emerald-500 animate-pulse" />
-                    <div>
-                      <h2 className="text-xl font-bold text-[#342219]">
-                        {selectedLocation.name} &bull; Order Categories
-                      </h2>
-                      <p className="text-xs text-[#8A7667]">
-                        Select a category to view and manage employee orders for this location
-                      </p>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedLocation(null);
-                      setSelectedCategory(null);
-                    }}
-                    title="Back to Locations"
-                    className="flex h-10 w-10 items-center justify-center rounded-full bg-[#B38E74] text-white shadow-md transition duration-200 hover:scale-105 hover:bg-[#9E785F]"
-                  >
-                    <ArrowLeft size={20} className="stroke-[2.5]" />
-                  </button>
-                </div>
-
-                {/* The 4 Category Cards (Matching User Screenshot with live badges & click to view orders) */}
-                <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8">
-                  {(["pending", "canceled", "delivered", "all"] as OrderCategory[]).map(
-                    (catKey) => {
-                      const item = categoryDetails[catKey];
-                      const locOrders = orders.filter((o) =>
-                        selectedLocation
-                          ? o.locationName.toLowerCase() === selectedLocation.name.toLowerCase() ||
-                          o.locationName.toLowerCase() === "office" && selectedLocation.name.toLowerCase() === "office"
-                          : true
-                      );
-                      const count = locOrders.filter((o) => {
-                        if (catKey === "pending") return o.status === "Pending" || o.status === "Preparing" || o.status === "Ready";
-                        if (catKey === "canceled") return o.status === "Canceled";
-                        if (catKey === "delivered") return o.status === "Delivered";
-                        return true;
-                      }).length;
-
-                      return (
-                        <div
-                          key={catKey}
-                          onClick={() => {
-                            setSelectedCategory(catKey);
-                            setCategorySearch("");
-                          }}
-                          className="group flex w-[230px] sm:w-[250px] cursor-pointer flex-col overflow-hidden rounded-2xl border border-[#DEC5B0]/70 bg-white shadow-lg transition-all duration-300 hover:-translate-y-1.5 hover:shadow-2xl"
-                        >
-                          {/* Top Graphic Illustration Box showing images from image folder */}
-                          <div className="relative flex h-48 w-full items-center justify-center bg-white p-5 transition group-hover:scale-105 duration-300">
-                            <img
-                              src={item.image}
-                              alt={item.title}
-                              className="h-36 w-36 object-contain drop-shadow-sm select-none"
-                            />
-                            {/* Live count badge */}
-                            <span className="absolute top-3 right-3 rounded-full bg-[#754329] px-2.5 py-0.5 text-xs font-bold text-white shadow-sm">
-                              {count}
-                            </span>
-                          </div>
-
-                          {/* Bottom Card Pill Banner */}
-                          <div className="flex h-12 items-center justify-center border-t border-[#F0E6DB] bg-[#F7F4EF] px-4 transition group-hover:bg-[#EFE8DD]">
-                            <span className="text-sm font-semibold text-[#342219]">
-                              {item.title}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
-              </div>
+              <ProviderLocationDashboard
+                locationId={selectedLocation.id}
+                onBack={() => {
+                  setSelectedLocation(null);
+                  setSelectedCategory(null);
+                  setSelectedTableFilter(null);
+                }}
+                onSelectCategory={(catKey, tableId, tableName) => {
+                  setSelectedCategory(catKey);
+                  if (tableId) {
+                    setSelectedTableFilter({ id: tableId, name: tableName || `Table ${tableId}` });
+                  } else {
+                    setSelectedTableFilter(null);
+                  }
+                  setCategorySearch("");
+                }}
+              />
             )}
 
             {/* VIEW 2.5: ORDERS LIST FOR THE CLICKED CATEGORY */}
@@ -1050,7 +1009,7 @@ export default function ProviderPage() {
                   <div className="flex items-center gap-3">
                     {/* Category Switcher Tabs */}
                     <div className="hidden lg:flex items-center rounded-xl bg-[#FAF8F5] p-1 border border-[#DEC5B0]">
-                      {(["pending", "canceled", "delivered", "all"] as OrderCategory[]).map((cKey) => (
+                      {(["pending", "preparing", "ready", "canceled", "delivered", "all"] as OrderCategory[]).map((cKey) => (
                         <button
                           key={cKey}
                           type="button"
@@ -1094,29 +1053,49 @@ export default function ProviderPage() {
 
                     <button
                       type="button"
-                      onClick={() => setSelectedCategory(null)}
+                      onClick={() => {
+                        setSelectedCategory(null);
+                        setSelectedTableFilter(null);
+                      }}
                       className="flex items-center gap-1.5 rounded-xl border border-[#D5C2B1] bg-white px-4 py-2 text-xs font-bold text-[#6F4228] transition hover:bg-[#FAF6F1] shadow-2xs cursor-pointer"
                     >
                       <ArrowLeft size={16} />
-                      <span>Back to Categories</span>
+                      <span>Back to Location</span>
                     </button>
                   </div>
                 </div>
 
                 {/* Search & Stats Bar */}
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="relative w-full sm:w-80">
-                    <Search
-                      size={16}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A08C7D]"
-                    />
-                    <input
-                      type="text"
-                      value={categorySearch}
-                      onChange={(e) => setCategorySearch(e.target.value)}
-                      placeholder="Search by employee, seat, or order ID..."
-                      className="w-full rounded-xl border border-[#E8DED4] bg-white py-2 pl-9 pr-3 text-xs text-[#342219] shadow-xs outline-none transition placeholder:text-[#B1A69D] focus:border-[#9A6747] focus:ring-2 focus:ring-[#9A6747]/10"
-                    />
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <div className="relative w-full sm:w-80">
+                      <Search
+                        size={16}
+                        className="absolute left-3 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                      />
+                      <input
+                        type="text"
+                        value={categorySearch}
+                        onChange={(e) => setCategorySearch(e.target.value)}
+                        placeholder="Search by employee, seat, or order ID..."
+                        className="w-full rounded-xl border border-[#E8DED4] bg-white py-2 pl-9 pr-3 text-xs text-[#342219] shadow-xs outline-none transition placeholder:text-[#B1A69D] focus:border-[#9A6747] focus:ring-2 focus:ring-[#9A6747]/10"
+                      />
+                    </div>
+
+                    {/* Active Table Filter Chip if table-wise view is active */}
+                    {selectedTableFilter && (
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FAF0E6] text-[#704225] border border-[#E8D6C5] text-xs font-bold shadow-2xs">
+                        <span>Filtered by: {selectedTableFilter.name}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTableFilter(null)}
+                          className="p-0.5 rounded-full hover:bg-[#F3DEC9] text-[#704225] transition cursor-pointer"
+                          title="Remove table filter"
+                        >
+                          <X size={13} />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1133,19 +1112,35 @@ export default function ProviderPage() {
                     // Category filter
                     if (selectedCategory === "pending") {
                       if (!(order.status === "Pending" || order.status === "Preparing" || order.status === "Ready")) return false;
+                    } else if (selectedCategory === "preparing") {
+                      if (order.status !== "Preparing") return false;
+                    } else if (selectedCategory === "ready") {
+                      if (order.status !== "Ready") return false;
                     } else if (selectedCategory === "canceled") {
                       if (order.status !== "Canceled") return false;
                     } else if (selectedCategory === "delivered") {
                       if (order.status !== "Delivered") return false;
                     }
+
+                    // Table filter
+                    if (selectedTableFilter) {
+                      const tId = String(selectedTableFilter.id);
+                      const ordTableId = order.tableId !== undefined && order.tableId !== null ? String(order.tableId) : "";
+                      const ordTableName = (order.tableName || "").toLowerCase();
+                      const filterName = selectedTableFilter.name.toLowerCase();
+                      const matchTable = (ordTableId && ordTableId === tId) || (ordTableName && ordTableName === filterName);
+                      if (!matchTable) return false;
+                    }
+
                     // Text search filter
                     if (categorySearch.trim()) {
                       const q = categorySearch.toLowerCase();
                       const matchName = order.employeeName.toLowerCase().includes(q);
                       const matchId = order.id.toLowerCase().includes(q) || formatProviderOrderId(order).toLowerCase().includes(q);
-                      const matchSeat = order.seat.toLowerCase().includes(q);
+                      const matchSeat = (order.seat || "").toLowerCase().includes(q) || formatOrderSeat(order).toLowerCase().includes(q);
+                      const matchTable = (order.tableName || "").toLowerCase().includes(q);
                       const matchItem = order.items.some((i) => i.name.toLowerCase().includes(q));
-                      return matchName || matchId || matchSeat || matchItem;
+                      return matchName || matchId || matchSeat || matchTable || matchItem;
                     }
                     return true;
                   });
@@ -1178,12 +1173,12 @@ export default function ProviderPage() {
                     filtered.find((o) => o.id === selectedOrderId) || catPaginatedOrders[0] || filtered[0];
 
                   return (
-                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+                    <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:h-[calc(100vh-270px)] lg:min-h-[620px] items-stretch">
                       {/* ========================================================
                           LEFT SIDEBAR: ORDER LIST (MATCHING EXACT USER SCREENSHOT)
                          ======================================================== */}
-                      <div className="flex flex-col rounded-2xl border border-[#E8DED4] bg-white shadow-md overflow-hidden lg:col-span-5">
-                        <div className="flex items-center justify-between border-b border-[#F0E6DB] bg-[#FAF8F5] px-4 py-3">
+                      <div className="flex flex-col h-full min-h-0 rounded-2xl border border-[#E8DED4] bg-white shadow-md overflow-hidden lg:col-span-5">
+                        <div className="shrink-0 flex items-center justify-between border-b border-[#F0E6DB] bg-[#FAF8F5] px-4 py-3">
                           <span className="text-xs font-bold uppercase tracking-wider text-[#754329]">
                             {categoryDetails[selectedCategory].title} Queue ({filtered.length})
                           </span>
@@ -1192,8 +1187,8 @@ export default function ProviderPage() {
                           </span>
                         </div>
 
-                        {/* Scrollable list of orders */}
-                        <div className="divide-y divide-[#F0E6DB] max-h-[600px] overflow-y-auto">
+                        {/* Scrollable list of orders - takes remaining height */}
+                        <div className="flex-1 min-h-0 divide-y divide-[#F0E6DB] overflow-y-auto">
                           {catPaginatedOrders.map((order) => {
                             const isSelected = activeOrder?.id === order.id;
                             // Clean display name: first word e.g. "Imthiyaz", "Rizwan"
@@ -1217,10 +1212,13 @@ export default function ProviderPage() {
                                 {/* Left Chair / Seat Graphic Column with Employee Name */}
                                 <div className="flex flex-col items-center justify-center w-16 shrink-0 text-center">
                                   {/* Realistic Chair Icon matching screenshot */}
-                                  <div className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D2A28] via-[#3D3A37] to-[#1F1C1B] text-white shadow-md border-2 border-stone-600">
+                                  <div
+                                    title={formatOrderSeat(order)}
+                                    className="relative flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-[#2D2A28] via-[#3D3A37] to-[#1F1C1B] text-white shadow-md border-2 border-stone-600"
+                                  >
                                     <Armchair size={24} className="text-stone-200 drop-shadow-sm" />
-                                    <span className="absolute -top-1.5 -right-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-[#8C5835] text-[9px] font-bold text-white border border-white">
-                                      {order.seat}
+                                    <span className="absolute -top-1.5 -right-1.5 flex h-4 min-w-4 px-1 items-center justify-center rounded-full bg-[#8C5835] text-[9px] font-bold text-white border border-white">
+                                      {formatOrderSeatNumber(order)}
                                     </span>
                                   </div>
                                   <span className="mt-1.5 text-xs font-semibold text-[#342219] truncate max-w-[68px]">
@@ -1278,7 +1276,7 @@ export default function ProviderPage() {
                         </div>
 
                         {/* Bottom pagination matching screenshot: 12 < 1 of 1 > Total Records: X */}
-                        <div className="flex items-center justify-between border-t border-[#F0E6DB] bg-[#FAF8F5] px-4 py-2.5 text-xs text-[#70523E]">
+                        <div className="shrink-0 flex items-center justify-between border-t border-[#F0E6DB] bg-[#FAF8F5] px-4 py-2.5 text-xs text-[#70523E]">
                           <div className="flex items-center gap-1.5">
                             {/* Page Size Dropdown */}
                             <select
@@ -1353,7 +1351,7 @@ export default function ProviderPage() {
                       {/* ========================================================
                           RIGHT SIDEBAR: SEPARATED ORDERED ITEMS DETAIL VIEW
                          ======================================================== */}
-                      <div className="flex flex-col rounded-2xl border border-[#E8DED4] bg-white p-6 shadow-md lg:col-span-7">
+                      <div className="flex flex-col h-full min-h-0 rounded-2xl border border-[#E8DED4] bg-white p-6 shadow-md overflow-y-auto lg:col-span-7">
                         {activeOrder ? (
                           <div className="flex flex-col h-full justify-between">
                             <div>
@@ -1386,9 +1384,8 @@ export default function ProviderPage() {
                                     </span>{" "}
                                     at{" "}
                                     <span className="font-semibold text-[#8C5835]">
-                                      Seat {activeOrder.seat}
-                                    </span>{" "}
-                                    ({activeOrder.locationName})
+                                      {formatOrderSeat(activeOrder)}
+                                    </span>
                                   </p>
                                 </div>
 
@@ -1614,14 +1611,14 @@ export default function ProviderPage() {
                                       onClick={() => handleUpdateOrderStatus(activeOrder.id, "Delivered")}
                                       className="rounded-xl bg-[#007BFF] px-5 py-2 text-xs font-bold text-white shadow-md hover:opacity-95 transition cursor-pointer"
                                     >
-                                      Deliver to Seat {activeOrder.seat}
+                                      Deliver to {formatOrderSeat(activeOrder)}
                                     </button>
                                   </>
                                 )}
 
                                 {activeOrder.status === "Delivered" && (
                                   <div className="flex items-center gap-2 text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1.5 rounded-xl border border-emerald-200">
-                                    <CheckCircle2 size={16} /> Delivered to Seat {activeOrder.seat}
+                                    <CheckCircle2 size={16} /> Delivered to {formatOrderSeat(activeOrder)}
                                   </div>
                                 )}
 
@@ -1820,7 +1817,7 @@ export default function ProviderPage() {
                                       {formatProviderOrderId(order)}
                                     </span>
                                     <span className="rounded-md bg-[#FAF6F1] px-2 py-0.5 text-xs font-semibold text-[#593A28]">
-                                      {order.locationName} &bull; Seat {order.seat}
+                                      {formatOrderSeat(order)}
                                     </span>
                                   </div>
 
@@ -2133,6 +2130,7 @@ export default function ProviderPage() {
 
                     itemSummaryMap[baseName].orders.push({
                       orderId: o.id,
+                      order: o,
                       seat: o.seat,
                       employeeName: o.employeeName,
                       qty: lineQty,
@@ -2269,8 +2267,11 @@ export default function ProviderPage() {
                                         >
                                           {/* Seat Pill & Order Code */}
                                           <div className="col-span-6 flex items-center gap-2">
-                                            <span className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs">
-                                              Seat: {sub.employeeName ? sub.employeeName.split("@")[0] : `Seat ${sub.seat}`}
+                                            <span
+                                              title={formatOrderSeat(sub.order)}
+                                              className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white shadow-2xs"
+                                            >
+                                              {formatOrderSeat(sub.order)}
                                             </span>
                                             <span className="font-mono text-[10px] text-gray-400">
                                               {sub.orderId}
@@ -2623,8 +2624,11 @@ export default function ProviderPage() {
                                                 onChange={() => toggleSelectOne(sub.order.id)}
                                                 className="h-4 w-4 rounded border-gray-300 text-[#754329] focus:ring-[#754329] cursor-pointer"
                                               />
-                                              <span className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white">
-                                                Seat: {sub.order.employeeName ? sub.order.employeeName.split("@")[0] : `Seat ${sub.order.seat}`}
+                                              <span
+                                                title={formatOrderSeat(sub.order)}
+                                                className="inline-flex items-center rounded-md bg-[#28A745] px-2 py-0.5 text-[11px] font-bold text-white"
+                                              >
+                                                {formatOrderSeat(sub.order)}
                                               </span>
                                               <span className="font-mono text-[11px] text-blue-600 font-bold">
                                                 {formatProviderOrderId(sub.order)}
@@ -2863,7 +2867,8 @@ export default function ProviderPage() {
               </h3>
               <p className="mt-2 text-xs text-stone-600">
                 Are you sure you want to cancel the order for{" "}
-                <span className="font-semibold text-stone-900">{cancelConfirmOrder.employeeName}</span> at Seat {cancelConfirmOrder.seat}?
+                <span className="font-semibold text-stone-900">{cancelConfirmOrder.employeeName}</span> at{" "}
+                <span className="font-semibold text-stone-900">{formatOrderSeat(cancelConfirmOrder)}</span>?
               </p>
               <div className="mt-5 flex items-center justify-center gap-3">
                 <button

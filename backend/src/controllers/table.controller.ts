@@ -331,6 +331,28 @@ export const tableController = {
         // Safe fallback if location_tables not present yet
       }
 
+      // Upsert into table_provider_assignments
+      try {
+        const locProv = (await db
+          .prepare(`SELECT id FROM location_providers WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+          .bind(effectiveLocId, providerId, org.organizationId)
+          .get()) as any;
+        if (locProv?.id) {
+          await db
+            .prepare(
+              `INSERT INTO table_provider_assignments (table_id, location_provider_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(table_id) DO UPDATE SET
+                 location_provider_id = excluded.location_provider_id,
+                 updated_at = excluded.updated_at`
+            )
+            .bind(newTableId, locProv.id, now, now)
+            .run();
+        }
+      } catch (errTpa) {
+        console.warn("table_provider_assignments insert error:", errTpa);
+      }
+
       // Automatically generate seats 1..seatLimit with independent numbering starting at 1
       const shortCode = loc.short_code || org.shortCode || "FTS";
       for (let sNum = 1; sNum <= seatLimit; sNum++) {
@@ -789,6 +811,35 @@ export const tableController = {
           .run();
       } catch (errSync) {}
 
+      // Maintain table_provider_assignments mapping
+      try {
+        if (targetProviderId) {
+          const locProv = (await db
+            .prepare(`SELECT id FROM location_providers WHERE location_id = ? AND provider_id = ? AND organization_id = ?`)
+            .bind(table.location_id, targetProviderId, org.organizationId)
+            .get()) as any;
+          if (locProv?.id) {
+            await db
+              .prepare(
+                `INSERT INTO table_provider_assignments (table_id, location_provider_id, created_at, updated_at)
+                 VALUES (?, ?, ?, ?)
+                 ON CONFLICT(table_id) DO UPDATE SET
+                   location_provider_id = excluded.location_provider_id,
+                   updated_at = excluded.updated_at`
+              )
+              .bind(tableId, locProv.id, now, now)
+              .run();
+          }
+        } else {
+          await db
+            .prepare(`DELETE FROM table_provider_assignments WHERE table_id = ?`)
+            .bind(tableId)
+            .run();
+        }
+      } catch (errTpa) {
+        console.warn("table_provider_assignments update error:", errTpa);
+      }
+
       return c.json({
         success: true,
         message: "Table updated successfully.",
@@ -882,6 +933,7 @@ export const tableController = {
       }
 
       // Delete table's seats first safely
+      await db.prepare(`DELETE FROM table_provider_assignments WHERE table_id = ?`).bind(tableId).run();
       await db.prepare(`DELETE FROM seats WHERE table_id = ?`).bind(tableId).run();
       await db.prepare(`DELETE FROM tables WHERE id = ?`).bind(tableId).run();
 
@@ -1025,23 +1077,23 @@ export const tableController = {
       }
 
       const db = getUniversalDb(c.env?.DB);
-      // Read current sequence counter for USERS
-      const seqRow = (await db.prepare(`SELECT last_val FROM id_sequences WHERE scope = 'USERS'`).get()) as any;
+      // Read current sequence counter for EMPLOYEES
+      const seqRow = (await db.prepare(`SELECT last_val FROM id_sequences WHERE scope = 'EMPLOYEES'`).get()) as any;
       let nextNum = (Number(seqRow?.last_val) || 0) + 1;
 
-      // Find max ID currently in users table to guarantee no collision
-      const maxUser = (await db.prepare(`SELECT id FROM users WHERE id LIKE 'USR-%' ORDER BY id DESC LIMIT 1`).get()) as any;
-      if (maxUser?.id) {
-        const m = String(maxUser.id).match(/(\d+)$/);
+      // Find max EMP ID in seats or employee_seat_assignments to guarantee no collision
+      const maxEmpInSeats = (await db.prepare(`SELECT employee_id FROM seats WHERE employee_id LIKE 'EMP-%' ORDER BY employee_id DESC LIMIT 1`).get()) as any;
+      if (maxEmpInSeats?.employee_id) {
+        const m = String(maxEmpInSeats.employee_id).match(/(\d+)$/);
         if (m) {
-          const userNum = parseInt(m[1], 10);
-          if (!isNaN(userNum) && userNum >= nextNum) {
-            nextNum = userNum + 1;
+          const empNum = parseInt(m[1], 10);
+          if (!isNaN(empNum) && empNum >= nextNum) {
+            nextNum = empNum + 1;
           }
         }
       }
 
-      const nextEmployeeId = `USR-${String(nextNum).padStart(6, "0")}`;
+      const nextEmployeeId = `EMP-${String(nextNum).padStart(6, "0")}`;
       return c.json({ success: true, nextEmployeeId });
     } catch (err: any) {
       console.error("getNextEmployeeId error:", err);
@@ -1063,7 +1115,7 @@ export const tableController = {
 
       const seat = (await db
         .prepare(
-          `SELECT s.id, s.table_id, s.location_id, s.number, s.status, s.organization_id 
+          `SELECT s.id, s.table_id, s.location_id, s.number, s.status, s.organization_id, s.qr_token, s.order_url 
            FROM seats s 
            JOIN locations l ON s.location_id = l.id 
            WHERE s.id = ? AND s.organization_id = ?`
@@ -1091,140 +1143,81 @@ export const tableController = {
         return c.json({ success: false, message: "Please provide a valid email address" }, 400);
       }
 
-      // Check location-level email uniqueness: verify email is not already assigned to another seat in this location
-      const emailLocationConflict = (await db
+      const now = new Date().toISOString();
+
+      // Check if employee is already assigned to another seat in this organization.
+      // Reassignment rule: unassign previous seat automatically to maintain one seat per employee.
+      const previousSeats = (await db
         .prepare(
-          `SELECT id, number FROM seats 
+          `SELECT id, location_id, number, employee_id FROM seats 
            WHERE organization_id = ? 
-             AND location_id = ? 
              AND id != ? 
              AND (LOWER(TRIM(employee_email)) = ? OR LOWER(TRIM(employee)) = ?)`
         )
-        .bind(org.organizationId, seat.location_id, seatId, employeeEmail, employeeEmail)
-        .get()) as any;
+        .bind(org.organizationId, seatId, employeeEmail, employeeEmail)
+        .all()) as any[];
 
-      if (emailLocationConflict) {
-        return c.json(
-          {
-            success: false,
-            message: `This employee email is already assigned to Seat ${emailLocationConflict.number} in this location.`,
-          },
-          409
-        );
-      }
+      if (previousSeats && previousSeats.length > 0) {
+        for (const prev of previousSeats) {
+          await db
+            .prepare(
+              `UPDATE seats 
+               SET employee_id = NULL, employee_name = NULL, employee_email = NULL, employee = NULL, status = 'available', updated_at = ? 
+               WHERE id = ?`
+            )
+            .bind(now, prev.id)
+            .run();
 
-      // Check organization-wide: verify whether employee already exists in users table
-      let existingUser = (await db
-        .prepare(
-          `SELECT u.id, u.name, u.email, u.mobile_number as mobileNumber
-           FROM users u
-           JOIN user_organizations uo ON u.id = uo.user_id
-           WHERE uo.organization_id = ? AND (LOWER(TRIM(u.email)) = ? OR u.id = ?)`
-        )
-        .bind(org.organizationId, employeeEmail, body.employeeId || "")
-        .get()) as any;
-
-      if (!existingUser) {
-        // Fallback: search users table globally if email matches
-        existingUser = (await db
-          .prepare(`SELECT id, name, email, mobile_number as mobileNumber FROM users WHERE LOWER(TRIM(email)) = ?`)
-          .bind(employeeEmail)
-          .get()) as any;
-
-        if (existingUser) {
-          // Link existing user to this organization
           try {
-            const uorId = await generateId(db, "UOR");
-            const nowIso = new Date().toISOString();
             await db
               .prepare(
-                `INSERT OR IGNORE INTO user_organizations (id, user_id, organization_id, role, created_at)
-                 VALUES (?, ?, ?, 'Staff', ?)`
+                `UPDATE location_table_seats 
+                 SET employee_id = NULL, employee_name = NULL, employee_email = NULL, status = 'available', updated_at = ? 
+                 WHERE id = ?`
               )
-              .bind(uorId, existingUser.id, org.organizationId, nowIso)
+              .bind(now, prev.id)
+              .run();
+          } catch {}
+
+          try {
+            await db
+              .prepare(`DELETE FROM employee_seat_assignments WHERE seat_id = ?`)
+              .bind(prev.id)
               .run();
           } catch {}
         }
       }
 
+      // Determine employee ID without creating any record in the users table.
+      // Employees are managed purely within the employee seat assignment architecture.
       let finalEmployeeId: string;
-      const now = new Date().toISOString();
-
-      if (existingUser) {
-        // Check if existing user is already assigned to another seat in this organization
-        const userSeatConflict = (await db
-          .prepare(
-            `SELECT id, number FROM seats 
-             WHERE organization_id = ? AND employee_id = ? AND id != ?`
-          )
-          .bind(org.organizationId, existingUser.id, seatId)
-          .get()) as any;
-
-        if (userSeatConflict) {
-          return c.json(
-            {
-              success: false,
-              message: `Employee ${existingUser.name} is already assigned to Seat ${userSeatConflict.number}. Please unassign them first.`,
-            },
-            409
-          );
-        }
-
-        finalEmployeeId = existingUser.id;
-        // Optionally update mobileNumber or name if provided
-        if (mobileNumber && !existingUser.mobileNumber) {
-          try {
-            await db.prepare(`UPDATE users SET mobile_number = ? WHERE id = ?`).bind(mobileNumber, existingUser.id).run();
-          } catch {}
-        }
+      if (previousSeats && previousSeats.length > 0 && previousSeats[0]?.employee_id) {
+        finalEmployeeId = previousSeats[0].employee_id;
+      } else if (body.employeeId && !String(body.employeeId).startsWith("USR-")) {
+        finalEmployeeId = String(body.employeeId).trim();
       } else {
-        // Create new employee user record
-        finalEmployeeId = await generateId(db, "USR");
-        const defaultPassword = "ChangeMe123!";
-        const hashedPassword = await hashPassword(defaultPassword);
-        const qrToken = generateSecureQrToken(16);
-        const userName = employeeEmail.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "") || `emp_${Date.now()}`;
+        finalEmployeeId = await generateId(db, "EMP");
+      }
 
-        await db
-          .prepare(
-            `INSERT INTO users (
-              id, display_id, name, user_name, password, password_hash, email, mobile_number, user_type, qr_token, qr_token_created_at, qr_token_status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Employee', ?, ?, 'active', ?)`
-          )
-          .bind(
-            finalEmployeeId,
-            finalEmployeeId,
-            employeeName,
-            userName,
-            defaultPassword,
-            hashedPassword,
-            employeeEmail,
-            mobileNumber || null,
-            qrToken,
-            now,
-            now
-          )
-          .run();
-
-        // Link new user to current organization
-        const uorId = await generateId(db, "UOR");
-        await db
-          .prepare(
-            `INSERT INTO user_organizations (id, user_id, organization_id, role, created_at)
-             VALUES (?, ?, ?, 'Staff', ?)`
-          )
-          .bind(uorId, finalEmployeeId, org.organizationId, now)
-          .run();
+      // Ensure permanent QR token and order URL exist for this seat
+      const orgPrefix = org.shortCode ? `/${org.shortCode}` : "/FTS";
+      let qrToken = seat.qr_token;
+      let orderUrl = seat.order_url;
+      if (!qrToken) {
+        qrToken = generateSeatQrToken();
+        orderUrl = `${orgPrefix}/order/${qrToken}`;
+      } else if (!orderUrl) {
+        orderUrl = `${orgPrefix}/order/${qrToken}`;
       }
 
       // Update seat in seats table
       await db
         .prepare(
           `UPDATE seats 
-           SET employee_id = ?, employee_name = ?, employee_email = ?, employee = ?, status = 'occupied', updated_at = ? 
+           SET employee_id = ?, employee_name = ?, employee_email = ?, employee = ?, status = 'occupied', qr_token = ?, order_url = ?, updated_at = ? 
            WHERE id = ?`
         )
-        .bind(finalEmployeeId, employeeName, employeeEmail, employeeEmail, now, seatId)
+        .bind(finalEmployeeId, employeeName, employeeEmail, employeeEmail, qrToken, orderUrl, now, seatId)
         .run();
 
       // Mirror to location_table_seats
@@ -1232,25 +1225,44 @@ export const tableController = {
         await db
           .prepare(
             `UPDATE location_table_seats 
-             SET employee_id = ?, employee_name = ?, employee_email = ?, status = 'occupied', updated_at = ? 
+             SET employee_id = ?, employee_name = ?, employee_email = ?, status = 'occupied', qr_token = ?, order_url = ?, updated_at = ? 
              WHERE id = ?`
           )
-          .bind(finalEmployeeId, employeeName, employeeEmail, now, seatId)
+          .bind(finalEmployeeId, employeeName, employeeEmail, qrToken, orderUrl, now, seatId)
           .run();
       } catch {}
 
       // Update or insert into employee_seat_assignments
       try {
-        const esaId = await generateId(db, "ESA");
-        await db
+        const existingEsa = (await db
           .prepare(
-            `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(location_id, seat_id) DO UPDATE SET employee_id = excluded.employee_id, updated_at = excluded.updated_at`
+            `SELECT id FROM employee_seat_assignments WHERE seat_id = ? OR (location_id = ? AND seat_id = ?) LIMIT 1`
           )
-          .bind(esaId, org.organizationId, seat.location_id, seatId, finalEmployeeId, now, now, now)
-          .run();
-      } catch {}
+          .bind(seatId, String(seat.location_id), seatId)
+          .get()) as any;
+
+        if (existingEsa && existingEsa.id) {
+          await db
+            .prepare(
+              `UPDATE employee_seat_assignments 
+               SET employee_id = ?, assigned_at = ?, updated_at = ? 
+               WHERE id = ?`
+            )
+            .bind(finalEmployeeId, now, now, existingEsa.id)
+            .run();
+        } else {
+          const esaId = await generateId(db, "ESA");
+          await db
+            .prepare(
+              `INSERT INTO employee_seat_assignments (id, organization_id, location_id, seat_id, employee_id, assigned_at, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .bind(esaId, org.organizationId, String(seat.location_id), seatId, finalEmployeeId, now, now, now)
+            .run();
+        }
+      } catch (esaErr) {
+        console.error("employee_seat_assignments upsert error:", esaErr);
+      }
 
       return c.json({
         success: true,
@@ -1260,6 +1272,9 @@ export const tableController = {
           name: employeeName,
           email: employeeEmail,
           mobileNumber: mobileNumber || null,
+          seatNumber: seat.number,
+          qrToken,
+          orderUrl,
         },
       });
     } catch (err: any) {
@@ -1940,6 +1955,24 @@ export const tableController = {
         .bind(now, seatId)
         .run();
 
+      try {
+        await db
+          .prepare(
+            `UPDATE location_table_seats 
+             SET employee_id = NULL, employee_name = NULL, employee_email = NULL, status = 'available', updated_at = ? 
+             WHERE id = ?`
+          )
+          .bind(now, seatId)
+          .run();
+      } catch {}
+
+      try {
+        await db
+          .prepare(`DELETE FROM employee_seat_assignments WHERE seat_id = ?`)
+          .bind(seatId)
+          .run();
+      } catch {}
+
       return c.json({ success: true, message: "Seat unassigned successfully." });
     } catch (err: any) {
       console.error("unassignSeat error:", err);
@@ -1974,6 +2007,323 @@ export const tableController = {
       return c.json({ success: true, status });
     } catch (err: any) {
       console.error("updateSeatStatus error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/tables/:tableId/provider
+  // Fetch the provider assigned to a table via table_provider_assignments
+  async getTableProvider(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const tableId = c.req.param("tableId");
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify table belongs to organization
+      const table = (await db
+        .prepare(
+          `SELECT t.id, t.location_id, t.name 
+           FROM tables t 
+           JOIN locations l ON t.location_id = l.id 
+           WHERE t.id = ? AND (l.organization_id = ? OR ? IS NULL)`
+        )
+        .bind(tableId, org.organizationId, org.organizationId)
+        .get()) as any;
+
+      if (!table) {
+        return c.json({ success: false, message: "Table not found" }, 404);
+      }
+
+      const row = (await db
+        .prepare(
+          `SELECT 
+             tpa.id as assignmentId,
+             tpa.table_id as tableId,
+             tpa.location_provider_id as locationProviderId,
+             tpa.created_at as assignedAt,
+             lp.provider_id as providerId,
+             lp.location_id as locationId,
+             u.name as providerName,
+             u.user_name as providerUserName,
+             u.email as providerEmail
+           FROM table_provider_assignments tpa
+           JOIN location_providers lp ON tpa.location_provider_id = lp.id
+           JOIN users u ON lp.provider_id = u.id
+           WHERE tpa.table_id = ?`
+        )
+        .bind(tableId)
+        .get()) as any;
+
+      if (!row) {
+        return c.json({
+          success: true,
+          provider: null,
+          message: "No provider assigned to this table.",
+        });
+      }
+
+      return c.json({
+        success: true,
+        provider: {
+          assignmentId: row.assignmentId,
+          tableId: row.tableId,
+          locationProviderId: row.locationProviderId,
+          providerId: row.providerId,
+          name: row.providerName,
+          userName: row.providerUserName,
+          email: row.providerEmail,
+          assignedAt: row.assignedAt,
+        },
+      });
+    } catch (err: any) {
+      console.error("getTableProvider error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // PUT /api/tables/:tableId/provider
+  // Assign or replace the provider for a table (UPSERT)
+  async setTableProvider(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const tableId = c.req.param("tableId");
+      const body = await c.req.json();
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify table exists and belongs to this organization
+      const table = (await db
+        .prepare(
+          `SELECT t.id, t.location_id, t.name 
+           FROM tables t 
+           JOIN locations l ON t.location_id = l.id 
+           WHERE t.id = ? AND l.organization_id = ?`
+        )
+        .bind(tableId, org.organizationId)
+        .get()) as any;
+
+      if (!table) {
+        return c.json({ success: false, message: "Table not found in this organization" }, 404);
+      }
+
+      // Input can specify locationProviderId OR providerId
+      const locationProviderIdInput = body.locationProviderId ? Number(body.locationProviderId) : null;
+      const providerIdInput = body.providerId ? String(body.providerId).trim() : null;
+
+      if (!locationProviderIdInput && !providerIdInput) {
+        return c.json({ success: false, message: "Provider identifier is required." }, 400);
+      }
+
+      // Verify provider exists in location_providers and belongs to the table's location
+      let locProv: any = null;
+      if (locationProviderIdInput) {
+        locProv = (await db
+          .prepare(
+            `SELECT lp.id, lp.location_id, lp.provider_id, lp.organization_id, u.name, u.email, u.user_name
+             FROM location_providers lp
+             JOIN users u ON lp.provider_id = u.id
+             WHERE lp.id = ? AND lp.location_id = ? AND lp.organization_id = ?`
+          )
+          .bind(locationProviderIdInput, table.location_id, org.organizationId)
+          .get()) as any;
+      } else if (providerIdInput) {
+        locProv = (await db
+          .prepare(
+            `SELECT lp.id, lp.location_id, lp.provider_id, lp.organization_id, u.name, u.email, u.user_name
+             FROM location_providers lp
+             JOIN users u ON lp.provider_id = u.id
+             WHERE lp.provider_id = ? AND lp.location_id = ? AND lp.organization_id = ?`
+          )
+          .bind(providerIdInput, table.location_id, org.organizationId)
+          .get()) as any;
+      }
+
+      if (!locProv) {
+        return c.json({
+          success: false,
+          message: "The selected provider is not assigned to this location. Only providers assigned to this location can be assigned to its tables.",
+        }, 400);
+      }
+
+      const now = new Date().toISOString();
+
+      // Upsert into table_provider_assignments (enforced UNIQUE(table_id))
+      await db
+        .prepare(
+          `INSERT INTO table_provider_assignments (table_id, location_provider_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(table_id) DO UPDATE SET
+             location_provider_id = excluded.location_provider_id,
+             updated_at = excluded.updated_at`
+        )
+        .bind(tableId, locProv.id, now, now)
+        .run();
+
+      // Mirror update provider_id in tables & location_tables for backward compatibility
+      await db
+        .prepare(`UPDATE tables SET provider_id = ?, updated_at = ? WHERE id = ?`)
+        .bind(locProv.provider_id, now, tableId)
+        .run();
+
+      try {
+        await db
+          .prepare(`UPDATE location_tables SET provider_id = ?, updated_at = ? WHERE id = ?`)
+          .bind(locProv.provider_id, now, tableId)
+          .run();
+      } catch {}
+
+      return c.json({
+        success: true,
+        message: "Provider assigned to table successfully.",
+        assignment: {
+          tableId: Number(tableId),
+          locationProviderId: locProv.id,
+          providerId: locProv.provider_id,
+          name: locProv.name,
+          userName: locProv.user_name,
+          email: locProv.email,
+          assignedAt: now,
+        },
+      });
+    } catch (err: any) {
+      console.error("setTableProvider error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // DELETE /api/tables/:tableId/provider
+  // Remove the provider assignment from a table
+  async removeTableProvider(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c);
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const tableId = c.req.param("tableId");
+      const db = getUniversalDb(c.env?.DB);
+
+      const table = (await db
+        .prepare(
+          `SELECT t.id, t.location_id 
+           FROM tables t 
+           JOIN locations l ON t.location_id = l.id 
+           WHERE t.id = ? AND l.organization_id = ?`
+        )
+        .bind(tableId, org.organizationId)
+        .get()) as any;
+
+      if (!table) {
+        return c.json({ success: false, message: "Table not found in this organization" }, 404);
+      }
+
+      const now = new Date().toISOString();
+
+      await db
+        .prepare(`DELETE FROM table_provider_assignments WHERE table_id = ?`)
+        .bind(tableId)
+        .run();
+
+      await db
+        .prepare(`UPDATE tables SET provider_id = NULL, updated_at = ? WHERE id = ?`)
+        .bind(now, tableId)
+        .run();
+
+      try {
+        await db
+          .prepare(`UPDATE location_tables SET provider_id = NULL, updated_at = ? WHERE id = ?`)
+          .bind(now, tableId)
+          .run();
+      } catch {}
+
+      return c.json({
+        success: true,
+        message: "Provider assignment removed from table successfully.",
+      });
+    } catch (err: any) {
+      console.error("removeTableProvider error:", err);
+      return c.json({ success: false, message: err.message }, 500);
+    }
+  },
+
+  // GET /api/locations/:locationId/available-providers
+  // Fetch providers from location_providers belonging to the current location
+  async getLocationAvailableProviders(c: Context<AppEnv>) {
+    try {
+      const org = await resolveAuthorizedOrg(c, { allowPublic: true });
+      if (!org) {
+        return c.json({ success: false, message: "Unauthorized or invalid organization context" }, 403);
+      }
+
+      const locationId = c.req.param("locationId");
+      const db = getUniversalDb(c.env?.DB);
+
+      // Verify location belongs to organization
+      let loc: any = null;
+      try {
+        loc = await db
+          .prepare(`SELECT id, name FROM locations WHERE (id = ? OR display_id = ?) AND organization_id = ?`)
+          .bind(locationId, locationId, org.organizationId)
+          .get();
+      } catch {
+        loc = await db
+          .prepare(`SELECT id, name FROM locations WHERE id = ? AND organization_id = ?`)
+          .bind(locationId, org.organizationId)
+          .get();
+      }
+
+      if (!loc) {
+        return c.json({ success: false, message: "Location not found in this organization" }, 404);
+      }
+
+      const effectiveLocId = loc.id;
+
+      // Query from location_providers table joining users
+      const rows = (await db
+        .prepare(
+          `SELECT 
+             lp.id as locationProviderId,
+             lp.location_id as locationId,
+             lp.provider_id as providerId,
+             lp.created_at as assignedToLocationAt,
+             u.id as userId,
+             u.name,
+             u.user_name as userName,
+             u.email,
+             u.user_type as userType
+           FROM location_providers lp
+           JOIN users u ON lp.provider_id = u.id
+           WHERE lp.location_id = ? AND lp.organization_id = ? AND LOWER(u.user_type) = 'provider'
+           ORDER BY u.name ASC`
+        )
+        .bind(effectiveLocId, org.organizationId)
+        .all()) as any[];
+
+      const providers = (rows || []).map((r) => ({
+        locationProviderId: r.locationProviderId,
+        id: r.providerId,
+        providerId: r.providerId,
+        name: r.name || r.userName || "Provider",
+        userName: r.userName || "",
+        email: r.email || "",
+        userType: r.userType || "Provider",
+        assignedToLocationAt: r.assignedToLocationAt,
+      }));
+
+      return c.json({
+        success: true,
+        locationId: effectiveLocId,
+        providers,
+      });
+    } catch (err: any) {
+      console.error("getLocationAvailableProviders error:", err);
       return c.json({ success: false, message: err.message }, 500);
     }
   },

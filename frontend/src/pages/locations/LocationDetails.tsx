@@ -10,6 +10,8 @@ import TableCard from "../../components/locations/TableCard";
 import CreateTableModal from "../../components/locations/CreateTableModal";
 import EditTableModal from "../../components/locations/EditTableModal";
 import AssignCard from "../../components/locations/assigncard";
+import SetTableLimitModal from "../../components/locations/SetTableLimitModal";
+import ManageTableProviderModal from "../../components/locations/ManageTableProviderModal";
 import { tableService, type TableItem, type LocationStatisticsData } from "../../services/tableService";
 import { locationApi, type LocationItem, type LocationProviderSummary } from "../../services/locations";
 
@@ -39,6 +41,9 @@ export const LocationDetails: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isAssignProvidersOpen, setIsAssignProvidersOpen] = useState(false);
+  const [isSetLimitOpen, setIsSetLimitOpen] = useState(false);
+  const [isManageTableProviderOpen, setIsManageTableProviderOpen] = useState(false);
+  const [managingTableProvider, setManagingTableProvider] = useState<TableItem | null>(null);
   const [editingTable, setEditingTable] = useState<TableItem | null>(null);
 
   const effectiveLocId = locationId || "";
@@ -197,6 +202,23 @@ export const LocationDetails: React.FC = () => {
     await loadData();
   };
 
+  const handleSaveTableLimit = async (newLimit: number) => {
+    if (!effectiveLocId) return;
+    await locationApi.updateLocation(effectiveLocId, {
+      tableLimit: newLimit,
+    });
+    await loadData();
+  };
+
+  const handleSaveTableProvider = async (tableId: number, providerId: string | null) => {
+    if (providerId) {
+      await tableService.setTableProvider(tableId, { providerId });
+    } else {
+      await tableService.removeTableProvider(tableId);
+    }
+    await loadData();
+  };
+
   return (
     <Background>
       <div className="flex min-h-screen flex-col pt-20 text-[#4A3E3D]">
@@ -210,18 +232,14 @@ export const LocationDetails: React.FC = () => {
             assignedProviders={locationProviders}
             onBack={handleBack}
             onCreateTable={() => setIsCreateOpen(true)}
-            onEditLocation={() => {
-              if (shortCode) {
-                navigate(`/${shortCode}/location`);
-              } else {
-                navigate("/location");
-              }
-            }}
             onOpenAssignProviders={() => setIsAssignProvidersOpen(true)}
           />
 
           {/* Location Statistics */}
-          <LocationStatistics stats={stats} />
+          <LocationStatistics 
+            stats={stats} 
+            onEditTableLimit={() => setIsSetLimitOpen(true)}
+          />
 
           {/* Search & Filters */}
           <LocationFilters
@@ -266,6 +284,10 @@ export const LocationDetails: React.FC = () => {
                   }}
                   onToggleStatus={handleToggleTableStatus}
                   onDelete={handleDeleteTable}
+                  onManageProvider={(t) => {
+                    setManagingTableProvider(t);
+                    setIsManageTableProviderOpen(true);
+                  }}
                 />
               ))}
             </div>
@@ -303,6 +325,33 @@ export const LocationDetails: React.FC = () => {
           isOpen={isAssignProvidersOpen}
           onClose={() => setIsAssignProvidersOpen(false)}
           onSave={handleSaveProviders}
+        />
+      )}
+
+      {/* Set Table Limit Modal */}
+      {location && (
+        <SetTableLimitModal
+          isOpen={isSetLimitOpen}
+          onClose={() => setIsSetLimitOpen(false)}
+          currentLimit={tableLimit}
+          currentTablesCount={tables.length}
+          locationName={location.name}
+          onSave={handleSaveTableLimit}
+        />
+      )}
+
+      {/* Manage Table Provider Modal */}
+      {location && (
+        <ManageTableProviderModal
+          isOpen={isManageTableProviderOpen}
+          onClose={() => {
+            setIsManageTableProviderOpen(false);
+            setManagingTableProvider(null);
+          }}
+          table={managingTableProvider}
+          locationName={location.name}
+          locationProviders={locationProviders}
+          onSave={handleSaveTableProvider}
         />
       )}
     </Background>

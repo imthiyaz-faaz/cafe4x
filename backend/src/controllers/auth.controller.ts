@@ -55,7 +55,8 @@ export const authController = {
             u.user_type as userType, 
             u.created_at as createdAt
           FROM users u
-          WHERE LOWER(u.email) = ? OR LOWER(u.user_name) = ?`
+          WHERE (LOWER(u.email) = ? OR LOWER(u.user_name) = ?)
+            AND u.user_type IN ('Admin', 'Provider')`
         )
         .bind(identifier, identifier)
         .all()) as any[];

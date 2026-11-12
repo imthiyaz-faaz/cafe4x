@@ -258,6 +258,48 @@ export const tableService = {
     );
     return res.details;
   },
+
+  // Get table's currently assigned provider
+  async getTableProvider(tableId: number | string): Promise<{
+    assignmentId?: number;
+    tableId: number;
+    locationProviderId: number;
+    providerId: string;
+    name: string;
+    userName?: string;
+    email: string;
+    assignedAt?: string;
+  } | null> {
+    const res = await api.get<{ success: boolean; provider: any }>(
+      `/api/tables/${tableId}/provider`
+    );
+    return res?.provider || null;
+  },
+
+  // Assign or replace provider for a table (UPSERT)
+  async setTableProvider(
+    tableId: number | string,
+    payload: { providerId?: string; locationProviderId?: number }
+  ): Promise<any> {
+    const res = await api.put<{ success: boolean; message: string; assignment: any }>(
+      `/api/tables/${tableId}/provider`,
+      payload
+    );
+    return res;
+  },
+
+  // Remove provider from a table
+  async removeTableProvider(tableId: number | string): Promise<void> {
+    await api.delete(`/api/tables/${tableId}/provider`);
+  },
+
+  // Fetch providers from location_providers belonging to the current location
+  async getLocationAvailableProviders(locationId: number | string): Promise<any[]> {
+    const res = await api.get<{ success: boolean; providers: any[] }>(
+      `/api/locations/${locationId}/available-providers`
+    );
+    return res?.providers || [];
+  },
 };
 
 export default tableService;

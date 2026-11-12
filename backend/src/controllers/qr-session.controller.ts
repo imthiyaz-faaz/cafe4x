@@ -718,7 +718,6 @@ export const qrSessionController = {
         // Resolve verified employee (if bound to employee)
         let employee: any = null;
         if (payload.empId) {
-          // Check users table (for Admin/Provider or legacy user accounts)
           const userRow = (await db
             .prepare(
               `SELECT u.id, u.display_id as displayId, u.name, u.email,
@@ -730,62 +729,30 @@ export const qrSessionController = {
             .bind(payload.empId, payload.orgId)
             .get()) as any;
 
-          if (userRow) {
-            const legacyRevoked = userRow.qrTokenStatus && userRow.qrTokenStatus !== "active";
-            const newRevoked = userRow.permTokenStatus && userRow.permTokenStatus !== "active";
-            if (legacyRevoked || newRevoked) {
-              return c.json(
-                {
-                  success: false,
-                  message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
-                  expired: false,
-                  revoked: true,
-                },
-                403
-              );
-            }
-
-            employee = {
-              id: String(userRow.id),
-              displayId: userRow.displayId,
-              name: userRow.name,
-              email: userRow.email,
-            };
-          } else {
-            // Decoupled employee management: check seats, location_table_seats, or employee_seat_assignments
-            const empSeat = (await db
-              .prepare(
-                `SELECT employee_id as employeeId, employee_name as employeeName, employee_email as employeeEmail
-                 FROM location_table_seats
-                 WHERE organization_id = ? AND employee_id = ?
-                 UNION
-                 SELECT employee_id as employeeId, employee_name as employeeName, employee_email as employeeEmail
-                 FROM seats
-                 WHERE organization_id = ? AND employee_id = ?
-                 LIMIT 1`
-              )
-              .bind(payload.orgId, payload.empId, payload.orgId, payload.empId)
-              .get()) as any;
-
-            if (empSeat && empSeat.employeeName) {
-              employee = {
-                id: empSeat.employeeId || payload.empId,
-                displayId: empSeat.employeeId || payload.empId,
-                name: empSeat.employeeName || payload.empName || "Employee",
-                email: empSeat.employeeEmail || "",
-              };
-            } else if (payload.empName) {
-              // Graceful fallback to verified token payload details
-              employee = {
-                id: payload.empId,
-                displayId: payload.empId,
-                name: payload.empName,
-                email: "",
-              };
-            } else {
-              return c.json({ success: false, message: "Assigned employee not found in this organization." }, 404);
-            }
+          if (!userRow) {
+            return c.json({ success: false, message: "Assigned employee not found in this organization." }, 404);
           }
+
+          const legacyRevoked = userRow.qrTokenStatus && userRow.qrTokenStatus !== "active";
+          const newRevoked = userRow.permTokenStatus && userRow.permTokenStatus !== "active";
+          if (legacyRevoked || newRevoked) {
+            return c.json(
+              {
+                success: false,
+                message: "Employee QR credential has been revoked. Please ask your administrator for a new QR code.",
+                expired: false,
+                revoked: true,
+              },
+              403
+            );
+          }
+
+          employee = {
+            id: String(userRow.id),
+            displayId: userRow.displayId,
+            name: userRow.name,
+            email: userRow.email,
+          };
         }
 
         // Resolve location name if locId is present

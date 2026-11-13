@@ -302,7 +302,7 @@ export default function UserOrderPage() {
             : dbItems;
 
           const mapped: UserOrderItem[] = filtered
-            .filter((it) => it.status !== "Out of Stock")
+            .filter((it) => it.status === "Active" || (it.status !== "Out of Stock" && it.status !== "Inactive" && it.status !== "Deactivated"))
             .map((it) => {
               const isBeverage = (it.type || it.category) === "Beverages";
               const parsed = isBeverage ? parsePref(it.preference || it.preferences) : { key: "", options: [] };
@@ -331,7 +331,7 @@ export default function UserOrderPage() {
             const parsed = JSON.parse(cached);
             if (Array.isArray(parsed)) {
               const mapped: UserOrderItem[] = parsed
-                .filter((it: any) => it.status !== "Out of Stock")
+                .filter((it: any) => it.status === "Active" || (it.status !== "Out of Stock" && it.status !== "Inactive" && it.status !== "Deactivated"))
                 .map((it: any) => {
                   const isBeverage = (it.type || it.category) === "Beverages";
                   const p = isBeverage ? parsePref(it.preference || it.preferences) : { key: "", options: [] };

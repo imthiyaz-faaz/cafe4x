@@ -304,7 +304,7 @@ const formatPrice = (amount: number) => {
       name: formData.name.trim(),
       description: formData.description.trim(),
       image: formData.image.trim(),
-      status: formData.status,
+      status: editingItem.status || "Active",
       preference: preferenceStr,
       preferences: preferenceStr,
       amount: parseFloat(formData.amount) || editingItem.amount,
@@ -320,6 +320,23 @@ const formatPrice = (amount: number) => {
     // Sync to SQLite backend
     itemsApi.updateItem(editingItem.id, updatedItem).catch((err) => {
       console.warn("Could not update item in backend:", err);
+    });
+  };
+
+  // Toggle Item Active/Inactive (Activate / Deactivate)
+  const handleToggleItemStatus = (item: MenuItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newStatus: MenuItem["status"] = item.status === "Active" ? "Out of Stock" : "Active";
+    const updatedItem: MenuItem = {
+      ...item,
+      status: newStatus,
+    };
+    const updated = items.map((it) => (it.id === item.id ? updatedItem : it));
+    saveItems(updated);
+
+    // Sync to SQLite backend
+    itemsApi.updateItem(item.id, { status: newStatus }).catch((err) => {
+      console.warn("Could not update item status in backend:", err);
     });
   };
 
@@ -440,7 +457,7 @@ const formatPrice = (amount: number) => {
                               : "bg-[#28A745] text-white"
                               }`}
                           >
-                            {item.status}
+                            {isOutOfStock ? "Deactivated" : "Active"}
                           </span>
                         </div>
 
@@ -486,16 +503,30 @@ const formatPrice = (amount: number) => {
                           )}
                         </div>
 
-                        {/* Price */}
+                        {/* Price & Action */}
                         <div className="mt-3 flex items-center justify-between pt-2 border-t border-[#F5EFE8]">
-                          <div className="flex items-baseline">
+                          <div className="flex flex-col">
                             <span className="text-base font-extrabold text-[#2A1C14]">
                               {formatPrice(item.amount)}
                             </span>
+                            <span className="text-[10px] font-medium text-stone-500">
+                              {item.type}
+                            </span>
                           </div>
-                          <span className="text-[11px] font-medium text-stone-500">
-                            {item.type}
-                          </span>
+
+                          {/* Activate / Deactivate Toggle Button */}
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleItemStatus(item, e)}
+                            className={`inline-flex items-center justify-center rounded-xl px-3 py-1.5 text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                              isOutOfStock
+                                ? "bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-emerald-600/20"
+                                : "bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-600 hover:text-white hover:border-transparent"
+                            }`}
+                            title={isOutOfStock ? "Click to Activate" : "Click to Deactivate"}
+                          >
+                            {isOutOfStock ? "Activate" : "Deactivate"}
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -852,37 +883,6 @@ const formatPrice = (amount: number) => {
                         </span>
                         <span className="text-[10px] text-gray-400 mt-0.5">JPG, PNG (Max 2MB)</span>
                       </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Status */}
-                <div className="grid grid-cols-12 items-center gap-3">
-                  <label className="col-span-3 font-bold text-[#342219]">
-                    Status
-                  </label>
-                  <div className="col-span-9">
-                    <div className="relative">
-                      <select
-                        value={formData.status}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            status: e.target.value as "Active" | "Out of Stock",
-                          })
-                        }
-                        className="w-full appearance-none rounded-md border border-gray-200 bg-white px-3.5 py-2 pl-7 text-xs font-semibold text-[#342219] outline-none focus:border-[#8C5835]"
-                      >
-                        <option value="Active">Active</option>
-                        <option value="Out of Stock">Out of Stock</option>
-                      </select>
-                      <span
-                        className={`pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-2.5 w-2.5 rounded-full ${formData.status === "Active" ? "bg-emerald-500" : "bg-rose-500"
-                          }`}
-                      />
-                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-gray-500">
-                        ▼
-                      </span>
                     </div>
                   </div>
                 </div>

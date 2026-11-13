@@ -6,21 +6,15 @@ import {
   Search,
   ChevronDown,
   Building2,
-  Armchair,
   Package,
   FileBarChart,
-  Repeat,
-  Bell,
   CheckCircle2,
   Coffee,
   Truck,
   RotateCw,
   MoreVertical,
   ArrowRight,
-  Sparkles,
 } from "lucide-react";
-import Background from "../../components/background";
-import ProviderNavbar from "../../components/navbar/providernavbar";
 import { api } from "../../services/apiClient";
 import heroImg from "../../assets/images/hero.png";
 
@@ -125,64 +119,6 @@ export const ProviderLocationDashboard: React.FC<ProviderLocationDashboardProps>
       return matchesSearch && matchesStatus;
     });
   }, [data?.tables, searchTable, statusFilter]);
-
-  // Format relative elapsed time
-  const getRelativeTime = (isoString?: string) => {
-    if (!isoString) return "just now";
-    try {
-      const diffMs = Date.now() - new Date(isoString).getTime();
-      const diffMin = Math.floor(diffMs / 60000);
-      if (diffMin < 1) return "just now";
-      if (diffMin < 60) return `${diffMin} min ago`;
-      const diffHrs = Math.floor(diffMin / 60);
-      if (diffHrs < 24) return `${diffHrs}h ago`;
-      return `${Math.floor(diffHrs / 24)}d ago`;
-    } catch {
-      return "recently";
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    const s = (status || "").toLowerCase();
-    if (s === "pending") {
-      return {
-        bg: "bg-[#FFF4E5]",
-        text: "text-[#D97706]",
-        border: "border-[#FDE68A]",
-        label: "Pending",
-      };
-    }
-    if (s === "preparing") {
-      return {
-        bg: "bg-[#EBF5FF]",
-        text: "text-[#2563EB]",
-        border: "border-[#BFDBFE]",
-        label: "Preparing",
-      };
-    }
-    if (s === "ready") {
-      return {
-        bg: "bg-[#EAF7ED]",
-        text: "text-[#16A34A]",
-        border: "border-[#BBF7D0]",
-        label: "Ready",
-      };
-    }
-    if (s === "delivered") {
-      return {
-        bg: "bg-[#F3E8FF]",
-        text: "text-[#9333EA]",
-        border: "border-[#E9D5FF]",
-        label: "Delivered",
-      };
-    }
-    return {
-      bg: "bg-gray-100",
-      text: "text-gray-700",
-      border: "border-gray-200",
-      label: status,
-    };
-  };
 
   return (
     <div className="space-y-6">

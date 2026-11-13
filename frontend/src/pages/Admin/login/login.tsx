@@ -55,12 +55,18 @@ export default function Login() {
           ? `${fromState.pathname}${fromState.search || ""}`
           : null;
 
-        if (returnUrl && returnUrl !== "/login" && returnUrl !== "/") {
-          navigate(returnUrl, { replace: true });
+        // Providers continue their direct/existing flow
+        if (res.user.userType === "Provider") {
+          if (returnUrl && returnUrl !== "/login" && returnUrl !== "/" && !returnUrl.includes("/choose-organization")) {
+            navigate(returnUrl, { replace: true });
+            return;
+          }
+          const provShort = res.user.shortCode ? `/${res.user.shortCode.toUpperCase()}` : "";
+          navigate(`${provShort}/provider`, { replace: true });
           return;
         }
 
-        // Transition to STATE 2: Authenticated – Organization Not Selected
+        // Admin login flow: Always navigate to Organization Selection page
         navigate("/choose-organization", { replace: true });
         return;
       }

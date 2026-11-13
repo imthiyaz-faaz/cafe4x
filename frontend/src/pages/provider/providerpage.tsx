@@ -66,10 +66,10 @@ export interface ProviderOrder {
   displayId?: string;
   seat: string;
   seatId?: string;
-  seatNumber?: number | string;
-  tableName?: string;
-  tableId?: number | string;
-  seatDisplay?: string;
+  seatNumber?: number | string | null;
+  tableId?: number | string | null;
+  tableName?: string | null;
+  seatDisplay?: string | null;
   locationId?: string;
   locationName: string;
   employeeName: string;

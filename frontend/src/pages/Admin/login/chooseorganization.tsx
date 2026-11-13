@@ -189,25 +189,42 @@ export default function ChooseOrganizationPage() {
             {organizations.length > 0 && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                 {organizations.map((org) => (
-                  <button
+                  <div
                     key={org.id || org.shortCode}
-                    onClick={() => handleSelectOrg(org)}
-                    type="button"
-                    className="group flex items-center gap-4 bg-white/95 hover:bg-white p-5 rounded-2xl shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-[#EEE5DC] text-left cursor-pointer"
+                    className="group flex flex-col justify-between bg-white/95 hover:bg-white p-5 rounded-2xl shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-[#EEE5DC]"
                   >
-                    {/* Dark silhouette avatar box */}
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[#32454E] text-white shadow-sm overflow-hidden">
-                      <User size={36} className="text-white fill-white translate-y-1" />
+                    <div className="flex items-start gap-4">
+                      {/* Dark silhouette avatar box / Org Logo Container */}
+                      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-[#32454E] text-white shadow-sm overflow-hidden">
+                        <User size={34} className="text-white fill-white translate-y-1" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-block rounded-md bg-[#009FB7] px-2.5 py-0.5 text-xs font-bold text-white uppercase tracking-wider shadow-sm">
+                            {org.shortCode}
+                          </span>
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                            Active
+                          </span>
+                        </div>
+                        <h2 className="mt-2 text-lg font-bold text-[#342219] truncate leading-snug group-hover:text-[#8B5738] transition-colors">
+                          {org.name}
+                        </h2>
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h2 className="text-xl font-bold text-[#342219] truncate leading-snug group-hover:text-[#8B5738] transition-colors">
-                        {org.name}
-                      </h2>
-                      <span className="mt-2 inline-block rounded-md bg-[#009FB7] px-2.5 py-0.5 text-xs font-bold text-white uppercase tracking-wider shadow-sm">
-                        {org.shortCode}
-                      </span>
+
+                    <div className="mt-5 pt-3 border-t border-[#F2ECE5] flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleSelectOrg(org)}
+                        className="w-full flex items-center justify-center gap-2 rounded-xl bg-[#69391D] hover:bg-[#522c15] text-white py-2 px-4 text-xs font-bold tracking-wide shadow-sm hover:shadow transition-all cursor-pointer"
+                      >
+                        Open Organization
+                        <span aria-hidden="true">&rarr;</span>
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}

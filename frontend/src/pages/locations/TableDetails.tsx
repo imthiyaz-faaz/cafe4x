@@ -4,15 +4,10 @@ import {
   ArrowLeft,
   Edit,
   Plus,
-  MoreVertical,
   RotateCw,
   Armchair,
   Users,
   ChevronRight,
-  Download,
-  Trash2,
-  CheckCircle,
-  XCircle,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
@@ -43,20 +38,6 @@ export const TableDetails: React.FC = () => {
   const [viewEmployeeSeatId, setViewEmployeeSeatId] = useState<string | null>(null);
   const [targetSeatForAssign, setTargetSeatForAssign] = useState<SeatItem | null>(null);
   const [sourceSeatForTransfer, setSourceSeatForTransfer] = useState<SeatItem | null>(null);
-
-  // More Actions dropdown menu
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = React.useRef<HTMLDivElement>(null);
-
-  React.useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
 
   const loadData = async () => {
     if (!tableId) return;
@@ -124,38 +105,6 @@ export const TableDetails: React.FC = () => {
     } catch (err: any) {
       alert(err?.response?.data?.message || err?.message || "Failed to update seat status.");
     }
-  };
-
-  const handleToggleTableActive = async () => {
-    if (!tableData) return;
-    setMenuOpen(false);
-    try {
-      await tableService.toggleTableStatus(tableData.id);
-      await loadData();
-    } catch (err: any) {
-      alert(err?.response?.data?.message || err?.message || "Failed to toggle status.");
-    }
-  };
-
-  const handleDeleteTable = async () => {
-    if (!tableData) return;
-    setMenuOpen(false);
-    if (tableData.occupiedSeats > 0) {
-      alert(`Cannot delete table with ${tableData.occupiedSeats} assigned employee(s). Please unassign them first.`);
-      return;
-    }
-    if (!window.confirm(`Are you sure you want to permanently delete '${tableData.name}'?`)) return;
-    try {
-      await tableService.deleteTable(tableData.id);
-      handleBackToTables();
-    } catch (err: any) {
-      alert(err?.response?.data?.message || err?.message || "Failed to delete table.");
-    }
-  };
-
-  const handleDownloadQRs = () => {
-    setMenuOpen(false);
-    alert(`Downloading QR codes for all seats in ${tableData?.name || "Table"}...`);
   };
 
   if (isLoading && !tableData) {

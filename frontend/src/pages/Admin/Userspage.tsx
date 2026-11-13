@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import {
   UserRound,
   Plus,
@@ -18,12 +18,18 @@ import {
   Edit,
   Trash2,
   AlertCircle,
+  MapPin,
+  Building2,
+  Loader2,
+  Check,
+  ArrowRight,
 } from "lucide-react";
 import Background from "../../components/background";
 import Navbar from "../../components/navbar/navbar";
 import UserCreate from "../../components/users/usercreate";
 import UsersEdit from "../../components/users/usersedit";
 import { userApi } from "../../services/userApi";
+import { locationApi, type LocationItem } from "../../services/locations";
 
 
 export interface UserItem {
@@ -39,10 +45,12 @@ export interface UserItem {
 }
 
 export default function UsersPage() {
+  const navigate = useNavigate();
   const params = useParams();
   const currentShortCode = params.shortCode ? params.shortCode.toUpperCase() : null;
 
   const [users, setUsers] = useState<UserItem[]>([]);
+  const [locations, setLocations] = useState<LocationItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
@@ -50,11 +58,21 @@ export default function UsersPage() {
     setIsLoading(true);
     setFetchError(null);
     try {
-      const serverUsers = await userApi.getUsers(undefined, currentShortCode || undefined);
+      const [serverUsers, serverLocations] = await Promise.all([
+        userApi.getUsers(undefined, currentShortCode || undefined),
+        locationApi.getLocations(undefined, currentShortCode || undefined),
+      ]);
+
       if (Array.isArray(serverUsers)) {
         setUsers(serverUsers.filter((u: any) => (u.userType || "").toLowerCase() !== "employee") as UserItem[]);
       } else {
         setUsers([]);
+      }
+
+      if (Array.isArray(serverLocations)) {
+        setLocations(serverLocations);
+      } else {
+        setLocations([]);
       }
     } catch (err: any) {
       console.warn("Could not fetch users from server:", err);
@@ -107,6 +125,21 @@ export default function UsersPage() {
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<UserItem | null>(null);
+
+  // Provider Location Assignment Modal State
+  const [assignLocationUser, setAssignLocationUser] = useState<UserItem | null>(null);
+  const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
+  const [initialLocationIds, setInitialLocationIds] = useState<string[]>([]);
+  const [isAssignLocationModalOpen, setIsAssignLocationModalOpen] = useState(false);
+  const [locationSearchQuery, setLocationSearchQuery] = useState("");
+  const [isSavingLocations, setIsSavingLocations] = useState(false);
+  const [locationModalError, setLocationModalError] = useState<string | null>(null);
+
+  // Provider Location Navigation Selection Modal State
+  const [navLocationModalUser, setNavLocationModalUser] = useState<UserItem | null>(null);
+  const [providerNavLocations, setProviderNavLocations] = useState<LocationItem[]>([]);
+  const [isNavLocationModalOpen, setIsNavLocationModalOpen] = useState(false);
+  const [loadingNavUserId, setLoadingNavUserId] = useState<string | null>(null);
 
   // Bulk Upload state
   const [selectedBulkFile, setSelectedBulkFile] = useState<File | null>(null);
@@ -219,6 +252,162 @@ export default function UsersPage() {
     e.stopPropagation();
     setEditingUser(user);
     setIsEditOpen(true);
+  };
+
+  // Handle Provider Location Assignment Click
+  const handleOpenAssignLocationModal = (user: UserItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Find all location IDs currently assigned to this provider
+    const assignedIds = locations
+      .filter((loc) => {
+        const directMatch = String(loc.assignedProviderId) === String(user.id);
+        const listMatch = (loc.assignedProviders || []).some(
+          (p) => String(p.id) === String(user.id)
+        );
+        return directMatch || listMatch;
+      })
+      .map((loc) => String(loc.id));
+
+    setAssignLocationUser(user);
+    setSelectedLocationIds(assignedIds);
+    setInitialLocationIds(assignedIds);
+    setLocationSearchQuery("");
+    setLocationModalError(null);
+    setIsAssignLocationModalOpen(true);
+  };
+
+  const handleToggleLocationSelection = (locId: string) => {
+    setSelectedLocationIds((prev) =>
+      prev.includes(locId) ? prev.filter((id) => id !== locId) : [...prev, locId]
+    );
+  };
+
+  const handleSaveLocationAssignments = async () => {
+    if (!assignLocationUser) return;
+    setIsSavingLocations(true);
+    setLocationModalError(null);
+
+    const providerId = String(assignLocationUser.id);
+    const addedLocationIds = selectedLocationIds.filter((id) => !initialLocationIds.includes(id));
+    const removedLocationIds = initialLocationIds.filter((id) => !selectedLocationIds.includes(id));
+
+    try {
+      // Process additions
+      for (const locId of addedLocationIds) {
+        const targetLoc = locations.find((l) => String(l.id) === locId);
+        const existingProviders = targetLoc?.assignedProviders || [];
+        const existingIds = existingProviders.map((p) => String(p.id));
+        const mergedIds = Array.from(new Set([...existingIds, providerId]));
+
+        await locationApi.assignProvider(locId, {
+          providerIds: mergedIds,
+          assignedProviderId: mergedIds[0],
+        });
+      }
+
+      // Process removals
+      for (const locId of removedLocationIds) {
+        const targetLoc = locations.find((l) => String(l.id) === locId);
+        const existingProviders = targetLoc?.assignedProviders || [];
+        const remainingIds = existingProviders
+          .map((p) => String(p.id))
+          .filter((pid) => pid !== providerId);
+
+        await locationApi.assignProvider(locId, {
+          providerIds: remainingIds,
+          assignedProviderId: remainingIds[0] || undefined,
+        });
+      }
+
+      // Refresh locations list
+      const refreshedLocations = await locationApi.getLocations(
+        undefined,
+        currentShortCode || undefined
+      );
+      setLocations(Array.isArray(refreshedLocations) ? refreshedLocations : []);
+
+      setIsAssignLocationModalOpen(false);
+      setAssignLocationUser(null);
+      setToastMessage({
+        type: "success",
+        message: `Locations successfully updated for ${assignLocationUser.name}`,
+      });
+      setTimeout(() => setToastMessage(null), 4000);
+    } catch (err: any) {
+      console.error("Failed to save location assignments:", err);
+      setLocationModalError(err?.message || "Failed to update location assignments. Please try again.");
+    } finally {
+      setIsSavingLocations(false);
+    }
+  };
+
+  // Navigate to provider workspace for a chosen location
+  const navigateToProviderLocation = (locationItem: LocationItem) => {
+    setIsNavLocationModalOpen(false);
+    setNavLocationModalUser(null);
+
+    const orgSlug = currentShortCode ? currentShortCode.toUpperCase() : "admin";
+    navigate(`/${orgSlug}/admin/locationseats/${locationItem.id}`);
+  };
+
+  // Handle Provider Location Button Click
+  const handleProviderLocationClick = async (user: UserItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (loadingNavUserId) return;
+
+    setLoadingNavUserId(user.id);
+    try {
+      // Fetch fresh assigned locations for this provider
+      const locs = await locationApi.getLocations(
+        { providerId: user.id, shortCode: currentShortCode || undefined },
+        currentShortCode || undefined
+      );
+
+      const assignedLocations = Array.isArray(locs) ? locs : [];
+
+      if (assignedLocations.length === 0) {
+        // Requirement 2: No assigned locations -> display "No locations assigned" and do not navigate
+        setToastMessage({
+          type: "error",
+          message: "No locations assigned",
+        });
+        setTimeout(() => setToastMessage(null), 4000);
+      } else if (assignedLocations.length === 1) {
+        // Requirement 2: Exactly one assigned location -> navigate directly
+        navigateToProviderLocation(assignedLocations[0]);
+      } else {
+        // Requirement 2: Multiple assigned locations -> show selection popup
+        setProviderNavLocations(assignedLocations);
+        setNavLocationModalUser(user);
+        setIsNavLocationModalOpen(true);
+      }
+    } catch (err: any) {
+      console.error("Failed to load provider locations:", err);
+      // Fallback: check currently loaded locations list for this provider
+      const fallbackLocations = locations.filter((loc) => {
+        const directMatch = String(loc.assignedProviderId) === String(user.id);
+        const listMatch = (loc.assignedProviders || []).some(
+          (p) => String(p.id) === String(user.id)
+        );
+        return directMatch || listMatch;
+      });
+
+      if (fallbackLocations.length === 0) {
+        setToastMessage({
+          type: "error",
+          message: "No locations assigned",
+        });
+        setTimeout(() => setToastMessage(null), 4000);
+      } else if (fallbackLocations.length === 1) {
+        navigateToProviderLocation(fallbackLocations[0]);
+      } else {
+        setProviderNavLocations(fallbackLocations);
+        setNavLocationModalUser(user);
+        setIsNavLocationModalOpen(true);
+      }
+    } finally {
+      setLoadingNavUserId(null);
+    }
   };
 
   // User Updated Callback
@@ -559,13 +748,85 @@ export default function UsersPage() {
                       </button>
                     </div>
 
-                    {/* Role Badge */}
-                    <div className="mt-4 flex items-center gap-2">
+                    {/* Role Badge and Actions */}
+                    <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
                       <span className="inline-flex items-center gap-1 rounded-md bg-[#1D2B3A] px-3.5 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-sm">
                         <Shield size={11} className="text-[#7FB3D5]" />
                         {user.userType}
                       </span>
+
+                      {/* Location Action Button for Provider Users */}
+                      {(user.userType || "").toLowerCase() === "provider" && (
+                        <div className="inline-flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={(e) => handleProviderLocationClick(user, e)}
+                            disabled={loadingNavUserId === user.id}
+                            className="inline-flex items-center gap-1.5 rounded-md border border-[#CBB3A1] bg-[#FAF6F1] px-2.5 py-1 text-[11px] font-bold text-[#75472D] shadow-2xs transition hover:border-[#75472D] hover:bg-[#75472D] hover:text-white cursor-pointer disabled:opacity-60"
+                            title="Navigate to Location Workspace"
+                          >
+                            {loadingNavUserId === user.id ? (
+                              <Loader2 size={12} className="animate-spin text-[#75472D]" />
+                            ) : (
+                              <MapPin size={12} />
+                            )}
+                            <span>Location</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => handleOpenAssignLocationModal(user, e)}
+                            className="inline-flex items-center gap-1 rounded-md border border-[#DEC5B0] bg-white px-2 py-1 text-[11px] font-semibold text-[#8C5835] shadow-2xs transition hover:bg-[#FAF6F1] hover:text-[#5C3620] cursor-pointer"
+                            title="Assign Locations"
+                          >
+                            <Edit size={11} />
+                            <span>Assign</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Assigned Locations Display for Provider Users */}
+                    {(() => {
+                      if ((user.userType || "").toLowerCase() !== "provider") return null;
+
+                      const assignedLocs = locations.filter((loc) => {
+                        const directMatch = String(loc.assignedProviderId) === String(user.id);
+                        const listMatch = (loc.assignedProviders || []).some(
+                          (p) => String(p.id) === String(user.id)
+                        );
+                        return directMatch || listMatch;
+                      });
+
+                      if (assignedLocs.length === 0) {
+                        return (
+                          <div className="mt-3 w-full rounded-xl border border-dashed border-[#DEC5B0] bg-[#FAF8F5]/60 px-2.5 py-1.5 text-center">
+                            <span className="text-[11px] font-medium text-[#8A7667]">
+                              No locations assigned
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div className="mt-3 w-full rounded-xl border border-[#EEE5DC] bg-[#FAF8F5] p-2 text-left">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-[#8A7667] mb-1 flex items-center justify-between">
+                            <span>Assigned Locations ({assignedLocs.length})</span>
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {assignedLocs.map((al) => (
+                              <span
+                                key={al.id}
+                                className="inline-flex items-center gap-1 rounded-md border border-[#EAD7C8] bg-white px-2 py-0.5 text-[10px] font-semibold text-[#704225] shadow-2xs truncate max-w-full"
+                                title={al.name}
+                              >
+                                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0" />
+                                <span className="truncate">{al.name}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
@@ -656,6 +917,7 @@ export default function UsersPage() {
           isOpen={isCreateOpen}
           onClose={() => setIsCreateOpen(false)}
           onUserCreated={handleUserCreated}
+          shortCode={currentShortCode}
         />
 
         {/* ========================================================
@@ -766,6 +1028,299 @@ export default function UsersPage() {
                 >
                   <Trash2 size={14} />
                   <span>{isDeleting ? 'Deleting...' : 'Permanently Delete'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            MODAL: PROVIDER LOCATION ASSIGNMENT POPUP
+           ======================================================== */}
+        {isAssignLocationModalOpen && assignLocationUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-[#EEE5DC] bg-white p-6 sm:p-7 shadow-2xl flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-[#F0E6DD] pb-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#F6ECE2] text-[#8C5835] shadow-xs">
+                    <Building2 size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-[#342219] tracking-tight">
+                      Assign Locations
+                    </h3>
+                    <p className="text-xs text-[#8A7667] mt-0.5">
+                      Assign locations for provider <span className="font-bold text-[#75472D]">{assignLocationUser.name}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!isSavingLocations) {
+                      setIsAssignLocationModalOpen(false);
+                      setAssignLocationUser(null);
+                    }
+                  }}
+                  disabled={isSavingLocations}
+                  className="rounded-xl p-1.5 text-[#A08C7D] hover:bg-[#FAF6F1] hover:text-[#342219] transition cursor-pointer disabled:opacity-50"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Error Alert */}
+              {locationModalError && (
+                <div className="mt-4 flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-700">
+                  <AlertCircle size={16} className="shrink-0 text-red-600" />
+                  <span>{locationModalError}</span>
+                </div>
+              )}
+
+              {/* Search & Selection Summary */}
+              <div className="mt-4 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="relative flex-1">
+                  <Search
+                    size={16}
+                    className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                  />
+                  <input
+                    type="text"
+                    value={locationSearchQuery}
+                    onChange={(e) => setLocationSearchQuery(e.target.value)}
+                    placeholder="Search locations..."
+                    className="w-full rounded-xl border border-[#DEC5B0] bg-[#FAF8F5] py-2 pl-9 pr-3 text-xs text-[#342219] placeholder-[#A08C7D] focus:border-[#75472D] focus:bg-white focus:outline-hidden"
+                  />
+                </div>
+                <div className="flex items-center gap-2 text-xs font-semibold text-[#75472D] bg-[#FAF6F1] px-3 py-2 rounded-xl border border-[#E8DED4] self-start sm:self-auto shrink-0">
+                  <span>{selectedLocationIds.length} of {locations.length} selected</span>
+                </div>
+              </div>
+
+              {/* Locations Checkbox List */}
+              <div className="mt-4 overflow-y-auto pr-1 flex-1 min-h-[220px]">
+                {(() => {
+                  const query = locationSearchQuery.trim().toLowerCase();
+                  const filteredLocs = locations.filter(
+                    (loc) =>
+                      !query ||
+                      loc.name.toLowerCase().includes(query) ||
+                      (loc.displayId || "").toLowerCase().includes(query)
+                  );
+
+                  if (filteredLocs.length === 0) {
+                    return (
+                      <div className="flex flex-col items-center justify-center p-8 text-center text-xs text-[#8A7667]">
+                        <Building2 size={32} className="text-[#CBB3A1] mb-2" />
+                        <p className="font-semibold">No locations found</p>
+                        <p className="text-[11px] mt-0.5 text-[#A08C7D]">
+                          {query ? "Try a different search term" : "No locations available in this organization"}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {filteredLocs.map((loc) => {
+                        const locIdStr = String(loc.id);
+                        const isChecked = selectedLocationIds.includes(locIdStr);
+
+                        return (
+                          <div
+                            key={loc.id}
+                            onClick={() => !isSavingLocations && handleToggleLocationSelection(locIdStr)}
+                            className={`group flex items-start gap-3 p-3.5 rounded-2xl border transition-all duration-150 cursor-pointer ${
+                              isChecked
+                                ? "bg-[#FAF4ED] border-[#75472D] shadow-xs"
+                                : "bg-white hover:bg-[#FAF8F5] border-[#EEE5DC] hover:border-[#DEC5B0]"
+                            }`}
+                          >
+                            {/* Custom Checkbox */}
+                            <div className="pt-0.5 shrink-0">
+                              <div
+                                className={`flex h-5 w-5 items-center justify-center rounded-md border transition-all ${
+                                  isChecked
+                                    ? "bg-[#75472D] border-[#75472D] text-white"
+                                    : "border-[#CBB3A1] bg-white group-hover:border-[#75472D]"
+                                }`}
+                              >
+                                {isChecked && <Check size={14} strokeWidth={3} />}
+                              </div>
+                            </div>
+
+                            {/* Location Details */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-1.5">
+                                <span className="inline-block rounded-md bg-[#009FB7] px-1.5 py-0.5 text-[9px] font-bold text-white uppercase tracking-wider shadow-2xs">
+                                  {loc.displayId || `LOC-${loc.id}`}
+                                </span>
+                                <span
+                                  className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-semibold ${
+                                    loc.status === "Active"
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                      : "bg-gray-100 text-gray-600 border border-gray-200"
+                                  }`}
+                                >
+                                  <span
+                                    className={`h-1.5 w-1.5 rounded-full ${
+                                      loc.status === "Active" ? "bg-emerald-500" : "bg-gray-400"
+                                    }`}
+                                  />
+                                  {loc.status}
+                                </span>
+                              </div>
+                              <h4 className="mt-1 text-sm font-bold text-[#342219] truncate">
+                                {loc.name}
+                              </h4>
+                              <p className="text-[11px] text-[#8A7667]">
+                                {loc.totalSeats || 0} Total Seats
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Footer */}
+              <div className="mt-6 flex items-center justify-end gap-3 border-t border-[#F0E6DD] pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAssignLocationModalOpen(false);
+                    setAssignLocationUser(null);
+                  }}
+                  disabled={isSavingLocations}
+                  className="rounded-xl border border-gray-200 px-5 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveLocationAssignments}
+                  disabled={isSavingLocations}
+                  className="flex items-center gap-1.5 rounded-xl bg-[#69391D] hover:bg-[#522c15] text-white px-5 py-2 text-xs font-bold shadow-md transition hover:shadow-lg disabled:opacity-50 cursor-pointer"
+                >
+                  {isSavingLocations ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin text-white" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <span>Save</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================
+            MODAL: PROVIDER ASSIGNED LOCATIONS SELECTION / NAVIGATION POPUP
+            (Matching the Choose Organization screen style)
+           ======================================================== */}
+        {isNavLocationModalOpen && navLocationModalUser && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+            <div className="relative w-full max-w-4xl overflow-hidden rounded-3xl border border-[#EEE5DC] bg-[#FAF8F5] p-6 sm:p-8 shadow-2xl flex flex-col max-h-[90vh]">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-[#F0E6DD] pb-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F6ECE2] text-[#8C5835] shadow-xs">
+                    <Building2 size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl font-black text-[#342219] tracking-tight">
+                      Choose a <span className="text-[#8B5738]">Location<span className="text-[#C99A6B]">.</span></span>
+                    </h3>
+                    <p className="text-xs text-[#8A7667] mt-0.5">
+                      Assigned locations for provider <span className="font-bold text-[#75472D]">{navLocationModalUser.name}</span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsNavLocationModalOpen(false);
+                    setNavLocationModalUser(null);
+                  }}
+                  className="rounded-xl p-1.5 text-[#A08C7D] hover:bg-white hover:text-[#342219] transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Locations Grid matching Choose Organization screen cards */}
+              <div className="mt-6 overflow-y-auto pr-1 flex-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {providerNavLocations.map((loc) => (
+                    <div
+                      key={loc.id}
+                      className="group flex flex-col justify-between bg-white hover:bg-white/95 p-5 rounded-2xl shadow-sm hover:shadow-xl hover:-translate-y-1 transition-all duration-300 border border-[#EEE5DC] hover:border-[#DEC5B0]"
+                    >
+                      <div className="flex items-start gap-3.5">
+                        {/* Dark silhouette avatar box / Location Icon Container */}
+                        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl bg-[#32454E] text-white shadow-xs overflow-hidden">
+                          <MapPin size={26} className="text-[#8FBCC8]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="inline-block rounded-md bg-[#009FB7] px-2 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider shadow-xs">
+                              {loc.displayId || `LOC-${loc.id}`}
+                            </span>
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                                loc.status === "Active"
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  : "bg-gray-100 text-gray-600 border border-gray-200"
+                              }`}
+                            >
+                              <span
+                                className={`h-1.5 w-1.5 rounded-full ${
+                                  loc.status === "Active" ? "bg-emerald-500" : "bg-gray-400"
+                                }`}
+                              />
+                              {loc.status}
+                            </span>
+                          </div>
+                          <h4 className="mt-2 text-base font-bold text-[#342219] truncate leading-snug group-hover:text-[#8B5738] transition-colors">
+                            {loc.name}
+                          </h4>
+                          <p className="text-[11px] font-medium text-[#8A7667] mt-0.5">
+                            {loc.totalSeats || 0} Total Seats
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 pt-3 border-t border-[#F2ECE5]">
+                        <button
+                          type="button"
+                          onClick={() => navigateToProviderLocation(loc)}
+                          className="w-full flex items-center justify-center gap-1.5 rounded-xl bg-[#69391D] hover:bg-[#522c15] text-white py-2 px-3 text-xs font-bold tracking-wide shadow-xs hover:shadow transition-all cursor-pointer"
+                        >
+                          <span>Open Location</span>
+                          <ArrowRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="mt-6 flex justify-end border-t border-[#F0E6DD] pt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsNavLocationModalOpen(false);
+                    setNavLocationModalUser(null);
+                  }}
+                  className="rounded-xl border border-gray-200 bg-white px-5 py-2 text-xs font-semibold text-gray-600 transition hover:bg-gray-50 cursor-pointer"
+                >
+                  Close
                 </button>
               </div>
             </div>

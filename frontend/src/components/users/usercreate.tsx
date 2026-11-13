@@ -1,20 +1,23 @@
-import React, { useState, useRef } from "react";
-import { Loader2, CheckCircle2 } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { Loader2, CheckCircle2, MapPin, Check, X, Search, ChevronDown } from "lucide-react";
 import type { UserItem } from "../../pages/Admin/Userspage";
 import CreateFormModal, { FormRow } from "../common/CreateFormModal";
 import { validateUserCreation, validateEmailFormat, type UserValidationResult } from "../../utils/validation";
 import { userApi } from "../../services/userApi";
+import { locationApi, type LocationItem } from "../../services/locations";
 
 interface UserCreateProps {
   isOpen: boolean;
   onClose: () => void;
   onUserCreated: (newUser: UserItem) => void;
+  shortCode?: string | null;
 }
 
 export default function UserCreate({
   isOpen,
   onClose,
   onUserCreated,
+  shortCode,
 }: UserCreateProps) {
   const [formData, setFormData] = useState({
     name: "",
@@ -26,6 +29,14 @@ export default function UserCreate({
     mobileNumber: "",
   });
 
+  // Available locations for assignment when userType is Provider
+  const [availableLocations, setAvailableLocations] = useState<LocationItem[]>([]);
+  const [selectedLocationIds, setSelectedLocationIds] = useState<string[]>([]);
+  const [isLoadingLocations, setIsLoadingLocations] = useState(false);
+  const [locationSearchQuery, setLocationSearchQuery] = useState("");
+  const [isLocationDropdownOpen, setIsLocationDropdownOpen] = useState(false);
+  const locationDropdownRef = useRef<HTMLDivElement | null>(null);
+
   const [errors, setErrors] = useState<UserValidationResult["errors"]>({});
   const [generalError, setGeneralError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -33,6 +44,49 @@ export default function UserCreate({
   const [usernameAvailable, setUsernameAvailable] = useState<boolean | null>(null);
   const usernameTimerRef = useRef<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Fetch available locations when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    let isMounted = true;
+    setIsLoadingLocations(true);
+    locationApi
+      .getLocations(undefined, shortCode || undefined)
+      .then((locs) => {
+        if (!isMounted) return;
+        setAvailableLocations(Array.isArray(locs) ? locs : []);
+      })
+      .catch((err) => {
+        console.warn("Could not fetch locations for assignment:", err);
+        if (isMounted) setAvailableLocations([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingLocations(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, shortCode]);
+
+  // Click outside listener for location dropdown
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        locationDropdownRef.current &&
+        !locationDropdownRef.current.contains(e.target as Node)
+      ) {
+        setIsLocationDropdownOpen(false);
+      }
+    };
+    if (isLocationDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isLocationDropdownOpen]);
 
   if (!isOpen) return null;
 
@@ -44,6 +98,9 @@ export default function UserCreate({
     setIsSubmitting(false);
     setUsernameChecking(false);
     setUsernameAvailable(null);
+    setSelectedLocationIds([]);
+    setIsLocationDropdownOpen(false);
+    setLocationSearchQuery("");
     onClose();
   };
 
@@ -218,6 +275,44 @@ export default function UserCreate({
         mobileNumber: formData.mobileNumber.trim(),
       });
 
+      // 4. If creating a Provider and locations were selected, assign them via existing API
+      if (
+        (formData.userType || "").toLowerCase() === "provider" &&
+        selectedLocationIds.length > 0 &&
+        createdUser?.id
+      ) {
+        try {
+          const assignPromises = selectedLocationIds.map(async (locId) => {
+            // Fetch current providers for this location
+            const existingLoc = availableLocations.find((l) => String(l.id) === String(locId));
+            const existingProviderIds = (existingLoc?.assignedProviders || [])
+              .map((p) => p.id)
+              .filter(Boolean);
+
+            const mergedProviderIds = Array.from(
+              new Set([...existingProviderIds, createdUser.id])
+            );
+
+            return locationApi.assignProvider(locId, {
+              providerIds: mergedProviderIds,
+              assignedProviderId: mergedProviderIds[0],
+              assignedProviderName:
+                mergedProviderIds[0] === createdUser.id
+                  ? createdUser.name
+                  : existingLoc?.assignedProviderName,
+              assignedProviderEmail:
+                mergedProviderIds[0] === createdUser.id
+                  ? createdUser.email
+                  : existingLoc?.assignedProviderEmail,
+            });
+          });
+
+          await Promise.all(assignPromises);
+        } catch (assignErr) {
+          console.warn("Could not assign locations during provider creation:", assignErr);
+        }
+      }
+
       onUserCreated({
         ...createdUser,
         mobileNumber: createdUser.mobileNumber || "",
@@ -233,6 +328,9 @@ export default function UserCreate({
         email: "",
         mobileNumber: "",
       });
+      setSelectedLocationIds([]);
+      setIsLocationDropdownOpen(false);
+      setLocationSearchQuery("");
       setErrors({});
       setGeneralError("");
       onClose();
@@ -393,8 +491,12 @@ export default function UserCreate({
           <select
             value={formData.userType}
             onChange={(e) => {
-              setFormData((prev) => ({ ...prev, userType: e.target.value }));
+              const nextType = e.target.value;
+              setFormData((prev) => ({ ...prev, userType: nextType }));
               if (errors.userType) setErrors((prev) => ({ ...prev, userType: undefined }));
+              if (nextType !== "Provider") {
+                setSelectedLocationIds([]);
+              }
             }}
             className={`w-full appearance-none rounded-md border bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none transition ${
               errors.userType
@@ -413,6 +515,143 @@ export default function UserCreate({
           <p className="mt-1 text-xs font-semibold text-red-500">{errors.userType}</p>
         )}
       </FormRow>
+
+      {/* Locations Assignment (Only shown when User Type is Provider) */}
+      {(formData.userType || "").toLowerCase() === "provider" && (
+        <FormRow label="Assign Locations" labelAlign="top">
+          <div className="relative w-full" ref={locationDropdownRef}>
+            {/* Trigger Button */}
+            <button
+              type="button"
+              onClick={() => setIsLocationDropdownOpen((prev) => !prev)}
+              className="w-full flex items-center justify-between rounded-md border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-[#342219] outline-none transition hover:border-[#8C5835] focus:border-[#8C5835] cursor-pointer"
+            >
+              <div className="flex items-center gap-2 truncate">
+                <MapPin size={14} className="text-[#8C5835] shrink-0" />
+                <span className="truncate">
+                  {selectedLocationIds.length === 0
+                    ? "Select locations (optional)..."
+                    : `${selectedLocationIds.length} location(s) selected`}
+                </span>
+              </div>
+              <ChevronDown
+                size={14}
+                className={`text-gray-500 transition-transform ${
+                  isLocationDropdownOpen ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            {/* Selected Location Badges */}
+            {selectedLocationIds.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {selectedLocationIds.map((locId) => {
+                  const loc = availableLocations.find((l) => String(l.id) === String(locId));
+                  return (
+                    <span
+                      key={locId}
+                      className="inline-flex items-center gap-1 rounded-md border border-[#EAD7C8] bg-[#FAF3EB] px-2 py-0.5 text-[11px] font-semibold text-[#704225]"
+                    >
+                      <span>{loc?.name || `Location ${locId}`}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedLocationIds((prev) => prev.filter((id) => id !== locId));
+                        }}
+                        className="rounded-full p-0.5 text-[#8A7667] hover:bg-[#EAD7C8] hover:text-[#2B180D] transition cursor-pointer"
+                      >
+                        <X size={10} className="stroke-[2.5]" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Dropdown Menu */}
+            {isLocationDropdownOpen && (
+              <div className="absolute left-0 top-full z-50 mt-1.5 w-full rounded-xl border border-[#DEC5B0]/80 bg-white p-3 shadow-xl animate-in fade-in-50 zoom-in-95 duration-150">
+                {/* Search Bar */}
+                <div className="relative mb-2">
+                  <Search
+                    size={13}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[#A08C7D]"
+                  />
+                  <input
+                    type="text"
+                    value={locationSearchQuery}
+                    onChange={(e) => setLocationSearchQuery(e.target.value)}
+                    placeholder="Search locations..."
+                    className="w-full rounded-lg border border-[#E8DED4] bg-[#FAF8F5]/80 py-1.5 pl-8 pr-2.5 text-xs text-[#342219] placeholder:text-[#A08C7D] outline-none focus:border-[#8C5835] focus:bg-white"
+                  />
+                </div>
+
+                {/* Locations list */}
+                <div className="max-h-48 overflow-y-auto space-y-1 pr-1">
+                  {isLoadingLocations ? (
+                    <div className="py-4 text-center text-xs text-[#8A7667] flex items-center justify-center gap-2">
+                      <Loader2 size={14} className="animate-spin text-[#8C5835]" />
+                      <span>Loading locations...</span>
+                    </div>
+                  ) : availableLocations.length === 0 ? (
+                    <p className="py-3 text-center text-xs text-[#8A7667]">
+                      No locations found in this organization.
+                    </p>
+                  ) : (
+                    availableLocations
+                      .filter((l) => {
+                        const q = locationSearchQuery.trim().toLowerCase();
+                        if (!q) return true;
+                        return (
+                          l.name.toLowerCase().includes(q) ||
+                          (l.displayId && l.displayId.toLowerCase().includes(q))
+                        );
+                      })
+                      .map((loc) => {
+                        const isSelected = selectedLocationIds.includes(String(loc.id));
+                        return (
+                          <div
+                            key={loc.id}
+                            onClick={() => {
+                              const sId = String(loc.id);
+                              setSelectedLocationIds((prev) =>
+                                prev.includes(sId)
+                                  ? prev.filter((id) => id !== sId)
+                                  : [...prev, sId]
+                              );
+                            }}
+                            className={`flex items-center justify-between rounded-lg px-2.5 py-1.5 text-xs font-semibold cursor-pointer transition ${
+                              isSelected
+                                ? "bg-[#FAF3EB] text-[#75472D]"
+                                : "hover:bg-[#FAF8F5] text-[#342219]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-2 truncate">
+                              <div
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                                  isSelected
+                                    ? "border-[#75472D] bg-[#75472D] text-white"
+                                    : "border-gray-300 bg-white"
+                                }`}
+                              >
+                                {isSelected && <Check size={11} className="stroke-[3]" />}
+                              </div>
+                              <span className="truncate">{loc.name}</span>
+                            </div>
+                            <span className="text-[10px] text-[#8A7667] shrink-0">
+                              {loc.totalSeats || 0} seats
+                            </span>
+                          </div>
+                        );
+                      })
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </FormRow>
+      )}
 
       {/* Email */}
       <FormRow label="Email" required>

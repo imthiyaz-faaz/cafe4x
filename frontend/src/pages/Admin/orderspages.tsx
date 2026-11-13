@@ -1718,18 +1718,7 @@ export default function OrdersPage() {
                       </thead>
                       <tbody className="divide-y divide-[#EEE5DC]/70 text-[#342219]">
                         {locationOrders.map((order) => {
-                          const assignedSeat = order.employeeId
-                            ? seatMap.get(order.employeeId)
-                            : (order.employeeEmail ? seatMap.get(order.employeeEmail.toLowerCase().trim()) : null);
-
-                          const rawSeat =
-                            assignedSeat?.displayId ||
-                            order.seatId ||
-                            order.seat ||
-                            (assignedSeat?.number ? `SEAT-${assignedSeat.number}` : "SEAT-1");
-
                           const displaySeat = formatOrderSeat(order, selectedLocation?.name);
-
                           const displayOrderId = formatOrderId(order);
 
                           // Formatted items summary string e.g. "Tea x1, Coffee x1"
